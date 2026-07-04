@@ -1,0 +1,45 @@
+<mujoco model="humansl_torso_dual_gen3">
+  <compiler angle="radian"/>
+  <option integrator="implicitfast" timestep="0.002"/>
+
+  <asset>
+    <model name="gen3_arm" file="assets/kinova_gen3/gen3.xml"/>
+  </asset>
+
+  <worldbody>
+    <light directional="true" pos="0 0 3" dir="0 0 -1" diffuse="0.7 0.7 0.7"/>
+    <geom name="floor" type="plane" size="0 0 0.05" rgba="0.3 0.3 0.35 1"/>
+    <site name="world_origin" pos="0 0 0" size="0.025" rgba="1.0 0.45 0.0 1"/>
+
+    <body name="torso" mocap="true" pos="0.0 0 1.1">
+      <site name="torso_center" pos="0.14 0 0" size="0.02"/>
+      <geom type="box" size="0.12 0.18 0.28" rgba="0.7 0.5 0.4 0.7"
+            contype="1" conaffinity="1"/>
+      <frame pos="-0.16 -0.1 0.14" axisangle="1 0 0 0.845708">
+        <site name="right_arm_base" pos="0 0 0" size="0.02"/>
+        <attach model="gen3_arm" body="base_link" prefix="right_"/>
+      </frame>
+      <frame pos="-0.16 0.1 0.14" axisangle="1 0 0 -0.845708">
+        <site name="left_arm_base" pos="0 0 0" size="0.02"/>
+        <attach model="gen3_arm" body="base_link" prefix="left_"/>
+      </frame>
+    </body>
+
+    <body name="right_target" mocap="true" pos="0 0 0">
+      <geom type="sphere" size="0.015" rgba="0.1 0.9 0.1 0.5"
+            contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="left_target" mocap="true" pos="0 0 0">
+      <geom type="sphere" size="0.015" rgba="0.9 0.1 0.1 0.5"
+            contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+
+  <contact>
+    <!-- torso is mocap (world weld), which disables MuJoCo's automatic
+         parent-child filtering at the arm mounts -->
+    <exclude body1="right_base_link" body2="right_shoulder_link"/>
+    <exclude body1="left_base_link" body2="left_shoulder_link"/>
+  </contact>
+</mujoco>
