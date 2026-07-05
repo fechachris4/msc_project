@@ -1,27 +1,27 @@
 """Live plot comparing the direct (MuJoCo-measured) right EE position
 against the FK-composed position from controller.kinematics.
 
-Run standalone from the repo root:
+Run standalone from the repo root (macOS needs mjpython for the viewer):
 
-    python -m plotting.fk_validation
+    mjpython -m plotting.fk_validation
+
+The matplotlib window runs in a separate process: mjpython keeps the OS main
+thread for the MuJoCo viewer, and the macOS matplotlib backend also requires
+a main thread, so the two cannot share one process.
 
 On exit the figure is saved to plots/fk_validation_<timestamp>.png.
 """
 
+import multiprocessing
+import queue as queue_module
+import sys
 import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import mujoco
-import mujoco.viewer
-
-from controller import kinematics
-from sim import world
-
 BUFFER_SIZE = 2000
-PLOT_EVERY_N_STEPS = 25
+PLOT_EVERY_N_SAMPLES = 25
 PLOTS_DIR = Path(__file__).resolve().parent.parent / "plots"
 
 
@@ -29,6 +29,9 @@ class FKValidationPlot:
     """Live figure with direct vs FK right-EE position, one pair of lines per axis."""
 
     def __init__(self):
+        import matplotlib.pyplot as plt
+
+        self.plt = plt
         plt.ion()
         self.fig, self.ax = plt.subplots()
         self.ax.set_xlabel("sim time (s)")
@@ -48,25 +51,21 @@ class FKValidationPlot:
             for name, (_, color) in self.series.items()
         }
         self.ax.legend(loc="upper right")
-        self.step_count = 0
+        self.sample_count = 0
 
-    def record(self):
-        """Sample direct and FK EE positions at the current sim state."""
-        mujoco_pos = world.data.site_xpos[world.right_ee_id]
-        fk_pos, _ = kinematics.right_ee_positions()
-
-        self.times.append(world.data.time)
+    def record(self, sim_time, direct_pos, fk_pos):
+        self.times.append(sim_time)
         for axis, (direct_name, fk_name) in enumerate(
             [("MuJoCo X", "FK X"), ("MuJoCo Y", "FK Y"), ("MuJoCo Z", "FK Z")]
         ):
-            self.series[direct_name][0].append(mujoco_pos[axis])
+            self.series[direct_name][0].append(direct_pos[axis])
             self.series[fk_name][0].append(fk_pos[axis])
 
-        self.step_count += 1
-        if self.step_count % PLOT_EVERY_N_STEPS == 0:
-            self._redraw()
+        self.sample_count += 1
+        if self.sample_count % PLOT_EVERY_N_SAMPLES == 0:
+            self.redraw()
 
-    def _redraw(self):
+    def redraw(self):
         for name, (buffer, _) in self.series.items():
             self.lines[name].set_data(self.times, buffer)
         self.ax.relim()
@@ -82,23 +81,76 @@ class FKValidationPlot:
         return path
 
 
-def main():
+def plotter_process(sample_queue):
+    """Runs in its own process so matplotlib gets its own main thread.
+
+    Consumes (sim_time, direct_pos, fk_pos) tuples; a None sentinel ends the
+    run and saves the figure.
+    """
     plot = FKValidationPlot()
+    running = True
+    while running:
+        try:
+            item = sample_queue.get(timeout=0.05)
+        except queue_module.Empty:
+            plot.plt.pause(0.01)  # keep the window responsive while idle
+            continue
+        if item is None:
+            running = False
+        else:
+            plot.record(*item)
 
-    with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
-        while viewer.is_running():
-            step_start = time.time()
-            mujoco.mj_step(world.model, world.data)
+    plot.redraw()
+    path = plot.save()
+    print(f"Saved plot to {path}")
 
-            plot.record()
-            viewer.sync()
 
-            time_until_next_step = world.model.opt.timestep - (time.time() - step_start)
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
+def start_plotter():
+    """Spawn the plotting process; returns (process, queue)."""
+    ctx = multiprocessing.get_context("spawn")
+    # Under mjpython, respawning via the mjpython binary would grab another
+    # Cocoa main loop; spawn the child with the plain interpreter instead.
+    exe = Path(sys.executable)
+    if exe.name == "mjpython":
+        for candidate in (exe.parent / "python3", exe.parent / "python"):
+            if candidate.exists():
+                multiprocessing.set_executable(str(candidate))
+                break
+    sample_queue = ctx.Queue()
+    process = ctx.Process(target=plotter_process, args=(sample_queue,), daemon=True)
+    process.start()
+    return process, sample_queue
 
-    saved = plot.save()
-    print(f"Saved plot to {saved}")
+
+def main():
+    import mujoco
+    import mujoco.viewer
+
+    from controller import kinematics
+    from sim import world
+
+    process, sample_queue = start_plotter()
+
+    try:
+        with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
+            while viewer.is_running():
+                step_start = time.time()
+                mujoco.mj_step(world.model, world.data)
+
+                direct_pos = world.data.site_xpos[world.right_ee_id].copy()
+                fk_pos, _ = kinematics.right_ee_positions()
+                sample_queue.put((world.data.time, direct_pos, fk_pos))
+
+                viewer.sync()
+
+                time_until_next_step = world.model.opt.timestep - (
+                    time.time() - step_start
+                )
+                if time_until_next_step > 0:
+                    time.sleep(time_until_next_step)
+    finally:
+        sample_queue.put(None)
+        process.join(timeout=10)
 
 
 if __name__ == "__main__":
