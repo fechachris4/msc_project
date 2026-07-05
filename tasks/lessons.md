@@ -8,3 +8,9 @@
 
 - Pattern: Replacing `tasks/todo.md` wholesale during a small planning update risks clobbering prior review history.
   Rule: For task tracking files, preserve existing sections and use targeted patches that append or update only the active checklist/review.
+
+- Pattern: The default Homebrew Python can miss project robotics dependencies even when a conda environment has them installed.
+  Rule: When `import mujoco` or `import numpy` fails in the default interpreter, check available project interpreters/environments before treating verification as blocked.
+
+- Pattern: Reconstructing a relative pose from MuJoCo's already-computed world end-effector pose can be mistaken for an independent forward-kinematics implementation.
+  Rule: When a function is meant to express `T_base_ee(q)`, name whether it uses MuJoCo FK as the source of truth or computes FK independently from joint coordinates.
