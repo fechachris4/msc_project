@@ -38,8 +38,9 @@ position against the FK-composed one (world → torso mocap → Kinova base → 
 python -m plotting.fk_validation
 ```
 
-Runs headless (no viewer, so plain python is fine), prints the max
-direct-vs-FK error, and saves the figure to `plots/fk_validation.png`.
+Live plot while the sim runs headless (no MuJoCo viewer, so plain python
+is fine — matplotlib needs the main thread on macOS). Close the plot window
+to stop; the figure is saved to `plots/fk_validation.png`.
 
 ## Layout
 
