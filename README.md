@@ -56,7 +56,8 @@ controller/
   reference.py             desired EE poses (edit + apply), world or torso frame
   pd.py                    (placeholder) PD controller
 plotting/
-  fk_validation.py         direct-vs-FK EE validation plot, standalone
+  live_plot.py             generic live time-series plot (reusable, no MuJoCo)
+  fk_validation.py         direct-vs-FK EE validation: sampler + LivePlot
 tests/
   test_kinematics.py       kinematics unit tests
 ```
