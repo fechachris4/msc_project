@@ -38,8 +38,9 @@ position against the FK-composed one (world → torso mocap → Kinova base → 
 mjpython -m plotting.fk_validation
 ```
 
-Close the viewer window to end a run; the figure is saved to
-`plots/fk_validation_<timestamp>.png`.
+The time series appear in the [Rerun](https://rerun.io) viewer (its own app,
+so it coexists with mjpython). Use the viewer's save function to keep a run
+as a `.rrd` file.
 
 ## Layout
 
@@ -54,7 +55,6 @@ controller/
   pd.py                    (placeholder) PD controller
 plotting/
   fk_validation.py         FKValidationPlot class + standalone entry point
-plots/                     saved figures (gitignored)
 tests/
   test_kinematics.py       kinematics unit tests
 ```
