@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working rules
+
+- Commit directly to main. No worktrees, no branches, no PRs unless I explicitly ask.
+- No "Insight" boxes or teaching asides unless I ask a conceptual question.
+- This is a solo research repo. Smallest change that works. Ask before restructuring.
+
 ## Project
 
 MSc research project simulating a dual-arm Kinova Gen3 manipulator mounted on a torso base in MuJoCo. The current milestone (per `tasks/todo.md`) is a torso-box + dual-Gen3 base scene with a working passive-viewer simulation loop; `controller/pd.py` is a placeholder for the PD/torque controller work planned next.
