@@ -53,6 +53,7 @@ sim/
   assets/kinova_gen3/      vendored Kinova Gen3 model
 controller/
   kinematics.py            frame transforms and FK for the right EE
+  reference.py             desired EE poses (edit + apply), world or torso frame
   pd.py                    (placeholder) PD controller
 plotting/
   fk_validation.py         direct-vs-FK EE validation plot, standalone
