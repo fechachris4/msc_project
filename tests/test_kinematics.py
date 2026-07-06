@@ -1,6 +1,3 @@
-import importlib
-import sys
-import types
 import unittest
 
 import numpy as np
@@ -14,60 +11,6 @@ def rotation_z(theta):
         [s, c, 0.0],
         [0.0, 0.0, 1.0],
     ])
-
-
-class KinematicsTest(unittest.TestCase):
-    def setUp(self):
-        self.previous_sim = sys.modules.get("sim")
-
-        world = types.SimpleNamespace()
-        world.right_ee_id = 0
-        world.left_ee_id = 1
-        world.torso_mocap_id = 0
-        world.kinova_right_base_id = 1
-        world.kinova_left_base_id = 2
-
-        data = types.SimpleNamespace()
-        data.site_xpos = np.array([
-            [0.8, -0.3, 1.4],
-            [0.0, 0.0, 0.0],
-        ])
-        data.site_xmat = np.array([
-            rotation_z(-0.3).reshape(-1),
-            np.eye(3).reshape(-1),
-        ])
-        data.xpos = np.array([
-            [0.1, 0.2, 1.0],
-            [0.25, -0.15, 1.2],
-            [0.0, 0.0, 0.0],
-        ])
-        data.xmat = np.array([
-            rotation_z(0.4).reshape(-1),
-            rotation_z(0.9).reshape(-1),
-            np.eye(3).reshape(-1),
-        ])
-        world.data = data
-
-        sim = types.ModuleType("sim")
-        sim.world = world
-        sys.modules["sim"] = sim
-        sys.modules.pop("controller.kinematics", None)
-
-    def tearDown(self):
-        sys.modules.pop("controller.kinematics", None)
-        if self.previous_sim is None:
-            sys.modules.pop("sim", None)
-        else:
-            sys.modules["sim"] = self.previous_sim
-
-    def test_right_ee_positions_matches_direct_right_ee_pose(self):
-        kinematics = importlib.import_module("controller.kinematics")
-
-        pos, rot = kinematics.right_ee_positions()
-
-        expected_pos, expected_rot = kinematics.direct_right_ee_pose()
-        np.testing.assert_allclose(pos, expected_pos)
-        np.testing.assert_allclose(rot, expected_rot)
 
 
 class RotationHelpersTest(unittest.TestCase):
@@ -173,6 +116,45 @@ class AnalyticalFKTest(unittest.TestCase):
         for prefix in ("right_", "left_"):
             chain = kinematics.KinematicChain(self.world.model, prefix)
             self.assertEqual(len(chain.joint_ids), 7)
+
+
+class WorldFrameEETest(unittest.TestCase):
+    """right/left_ee_positions must match MuJoCo's world EE pose while
+    reading the EE pose only on the comparison side."""
+
+    def _check(self, ee_positions, site_id_name):
+        import mujoco
+        import controller.kinematics as kinematics
+        from sim import world
+
+        site_id = mujoco.mj_name2id(
+            world.model, mujoco.mjtObj.mjOBJ_SITE, site_id_name
+        )
+        rng = np.random.default_rng(7)
+        for jnt_id in range(world.model.njnt):
+            adr = world.model.jnt_qposadr[jnt_id]
+            if world.model.jnt_limited[jnt_id]:
+                low, high = world.model.jnt_range[jnt_id]
+            else:
+                low, high = -np.pi, np.pi
+            world.data.qpos[adr] = rng.uniform(low, high)
+        mujoco.mj_kinematics(world.model, world.data)
+
+        pos, rot = ee_positions()
+        np.testing.assert_allclose(
+            pos, world.data.site_xpos[site_id], atol=1e-9
+        )
+        np.testing.assert_allclose(
+            rot, world.data.site_xmat[site_id].reshape(3, 3), atol=1e-9
+        )
+
+    def test_right_ee_positions_matches_mujoco(self):
+        import controller.kinematics as kinematics
+        self._check(kinematics.right_ee_positions, "right_pinch_site")
+
+    def test_left_ee_positions_matches_mujoco(self):
+        import controller.kinematics as kinematics
+        self._check(kinematics.left_ee_positions, "left_pinch_site")
 
 
 if __name__ == "__main__":
