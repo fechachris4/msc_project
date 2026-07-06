@@ -15,7 +15,7 @@ def rotation_z(theta):
 
 class RotationHelpersTest(unittest.TestCase):
     def test_rotation_from_quat_matches_z_rotation(self):
-        from controller.kinematics import rotation_from_quat
+        from controller.transforms import rotation_from_quat
         # quat [w, x, y, z] for a rotation of 0.6 rad about z
         half = 0.3
         quat = np.array([np.cos(half), 0.0, 0.0, np.sin(half)])
@@ -24,7 +24,7 @@ class RotationHelpersTest(unittest.TestCase):
         )
 
     def test_rotation_about_axis_matches_z_rotation(self):
-        from controller.kinematics import rotation_about_axis
+        from controller.transforms import rotation_about_axis
         np.testing.assert_allclose(
             rotation_about_axis(np.array([0.0, 0.0, 1.0]), 0.6),
             rotation_z(0.6),
@@ -32,7 +32,7 @@ class RotationHelpersTest(unittest.TestCase):
         )
 
     def test_rotation_about_arbitrary_axis_is_orthonormal(self):
-        from controller.kinematics import rotation_about_axis
+        from controller.transforms import rotation_about_axis
         axis = np.array([1.0, 2.0, -0.5])
         axis /= np.linalg.norm(axis)
         rot = rotation_about_axis(axis, 1.234)
@@ -73,7 +73,9 @@ class AnalyticalFKTest(unittest.TestCase):
         import controller.kinematics as kinematics
         mujoco = self.mujoco
         world = self.world
-        chain = kinematics.KinematicChain(world.model, prefix)
+        chain = kinematics.KinematicChain(
+            world.model, prefix + "base_link", prefix + "pinch_site"
+        )
         base_id = mujoco.mj_name2id(
             world.model, mujoco.mjtObj.mjOBJ_BODY, prefix + "base_link"
         )
@@ -114,17 +116,18 @@ class AnalyticalFKTest(unittest.TestCase):
     def test_chain_has_seven_joints(self):
         import controller.kinematics as kinematics
         for prefix in ("right_", "left_"):
-            chain = kinematics.KinematicChain(self.world.model, prefix)
+            chain = kinematics.KinematicChain(
+                self.world.model, prefix + "base_link", prefix + "pinch_site"
+            )
             self.assertEqual(len(chain.joint_ids), 7)
 
 
 class WorldFrameEETest(unittest.TestCase):
-    """right/left_ee_positions must match MuJoCo's world EE pose while
+    """frames.right/left_ee_pose must match MuJoCo's world EE pose while
     reading the EE pose only on the comparison side."""
 
-    def _check(self, ee_positions, site_id_name):
+    def _check(self, ee_pose, site_id_name):
         import mujoco
-        import controller.kinematics as kinematics
         from sim import world
 
         site_id = mujoco.mj_name2id(
@@ -140,7 +143,7 @@ class WorldFrameEETest(unittest.TestCase):
             world.data.qpos[adr] = rng.uniform(low, high)
         mujoco.mj_kinematics(world.model, world.data)
 
-        pos, rot = ee_positions()
+        pos, rot = ee_pose()
         np.testing.assert_allclose(
             pos, world.data.site_xpos[site_id], atol=1e-9
         )
@@ -148,13 +151,13 @@ class WorldFrameEETest(unittest.TestCase):
             rot, world.data.site_xmat[site_id].reshape(3, 3), atol=1e-9
         )
 
-    def test_right_ee_positions_matches_mujoco(self):
-        import controller.kinematics as kinematics
-        self._check(kinematics.right_ee_positions, "right_pinch_site")
+    def test_right_ee_pose_matches_mujoco(self):
+        from controller import frames
+        self._check(frames.right_ee_pose, "right_pinch_site")
 
-    def test_left_ee_positions_matches_mujoco(self):
-        import controller.kinematics as kinematics
-        self._check(kinematics.left_ee_positions, "left_pinch_site")
+    def test_left_ee_pose_matches_mujoco(self):
+        from controller import frames
+        self._check(frames.left_ee_pose, "left_pinch_site")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,12 @@ radians, composed as R = Rz(yaw) @ Ry(pitch) @ Rx(roll).
 import mujoco
 import numpy as np
 
-from controller import kinematics
+from controller import frames
+from controller.transforms import (
+    pose_from_transform,
+    rotation_from_rpy,
+    transform_from_pose,
+)
 from sim import targets
 
 FRAME = "torso"
@@ -28,17 +33,6 @@ LEFT_POS = [0.45, 0.20, 0.10]
 LEFT_RPY = [0.0, 0.0, 0.0]
 
 
-def rotation_from_rpy(rpy):
-    roll, pitch, yaw = rpy
-    cr, sr = np.cos(roll), np.sin(roll)
-    cp, sp = np.cos(pitch), np.sin(pitch)
-    cy, sy = np.cos(yaw), np.sin(yaw)
-    Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-    Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-    Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-    return Rz @ Ry @ Rx
-
-
 def _quat_from_rotation(rot):
     quat = np.zeros(4)
     mujoco.mju_mat2Quat(quat, rot.flatten())
@@ -46,13 +40,13 @@ def _quat_from_rotation(rot):
 
 
 def _world_pose(pos, rpy):
-    T = kinematics.transform_from_pose(np.asarray(pos, dtype=float), rotation_from_rpy(rpy))
+    T = transform_from_pose(np.asarray(pos, dtype=float), rotation_from_rpy(rpy))
     if FRAME == "torso":
-        T_W_T = kinematics.transform_from_pose(*kinematics.torso_mocap_position())
+        T_W_T = transform_from_pose(*frames.torso_pose())
         T = T_W_T @ T
     elif FRAME != "world":
         raise ValueError(f"FRAME must be 'world' or 'torso', got {FRAME!r}")
-    return kinematics.pose_from_transform(T)
+    return pose_from_transform(T)
 
 
 def apply():
