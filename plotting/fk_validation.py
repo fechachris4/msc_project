@@ -32,6 +32,8 @@ def main():
     )
     while plot.is_open():
         mujoco.mj_step(world.model, world.data)
+        # refresh site poses: mj_step advances qpos after computing them
+        mujoco.mj_kinematics(world.model, world.data)
         t, direct_pos, fk_pos = sample()
         plot.add(t, {"direct (MuJoCo)": direct_pos, "FK": fk_pos})
 
