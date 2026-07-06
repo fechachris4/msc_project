@@ -7,7 +7,7 @@ controller/transforms.py (pure math) and controller/kinematics.py (chain FK).
 Frames: W = world, T = torso mocap body, K = arm base_link, E = EE site.
 """
 
-from controller.kinematics import KinematicChain
+from controller.kinematics import extract_chain, fk
 from controller.transforms import (
     pose_from_transform,
     rotation_from_quat,
@@ -25,8 +25,8 @@ def mount_transform(model, base_body_id):
     )
 
 
-right_chain = KinematicChain(world.model, "right_base_link", "right_pinch_site")
-left_chain = KinematicChain(world.model, "left_base_link", "left_pinch_site")
+right_chain = extract_chain(world.model, "right_base_link", "right_pinch_site")
+left_chain = extract_chain(world.model, "left_base_link", "left_pinch_site")
 
 T_T_KR = mount_transform(world.model, world.kinova_right_base_id)
 T_T_KL = mount_transform(world.model, world.kinova_left_base_id)
@@ -47,7 +47,7 @@ def _ee_pose_world(T_T_K, chain):
     No EE pose is read from MuJoCo.
     """
     T_W_T = transform_from_pose(*torso_pose())
-    return pose_from_transform(T_W_T @ T_T_K @ chain.fk(world.data.qpos))
+    return pose_from_transform(T_W_T @ T_T_K @ fk(chain, world.data.qpos))
 
 
 def right_ee_pose():

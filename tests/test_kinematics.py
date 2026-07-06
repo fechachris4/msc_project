@@ -44,7 +44,7 @@ class RotationHelpersTest(unittest.TestCase):
 class AnalyticalFKTest(unittest.TestCase):
     """Validate analytical FK against MuJoCo at random configurations.
 
-    Independent computation: KinematicChain reads only MjModel constants
+    Independent computation: extract_chain reads only MjModel constants
     and qpos; MuJoCo's site_xpos/site_xmat is the reference.
     """
 
@@ -73,7 +73,7 @@ class AnalyticalFKTest(unittest.TestCase):
         import controller.kinematics as kinematics
         mujoco = self.mujoco
         world = self.world
-        chain = kinematics.KinematicChain(
+        chain = kinematics.extract_chain(
             world.model, prefix + "base_link", prefix + "pinch_site"
         )
         base_id = mujoco.mj_name2id(
@@ -89,7 +89,7 @@ class AnalyticalFKTest(unittest.TestCase):
                 data.qpos[adr] = value
             mujoco.mj_kinematics(world.model, data)
 
-            T_K_E = chain.fk(data.qpos)
+            T_K_E = kinematics.fk(chain, data.qpos)
 
             base_pos = data.xpos[base_id]
             base_rot = data.xmat[base_id].reshape(3, 3)
@@ -116,7 +116,7 @@ class AnalyticalFKTest(unittest.TestCase):
     def test_chain_has_seven_joints(self):
         import controller.kinematics as kinematics
         for prefix in ("right_", "left_"):
-            chain = kinematics.KinematicChain(
+            chain = kinematics.extract_chain(
                 self.world.model, prefix + "base_link", prefix + "pinch_site"
             )
             self.assertEqual(len(chain.joint_ids), 7)
