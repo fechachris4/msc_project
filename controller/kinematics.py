@@ -1,3 +1,4 @@
+import mujoco
 import numpy as np
 
 from sim import world
@@ -37,6 +38,86 @@ def rotation_about_axis(axis, angle):
         [-ky, kx, 0.0],
     ])
     return np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * cross @ cross
+
+class KinematicChain:
+    """Analytical FK for one arm: {prefix}base_link -> {prefix}pinch_site.
+
+    Built once from MjModel constants (body offsets, joint axes/anchors,
+    qpos addresses). fk() reads nothing from MjData — only the passed qpos.
+    """
+
+    def __init__(self, model, prefix):
+        site_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_SITE, prefix + "pinch_site"
+        )
+        base_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, prefix + "base_link"
+        )
+        if site_id < 0 or base_id < 0:
+            raise ValueError(f"missing site or base_link for prefix {prefix!r}")
+
+        # Walk parents from the site's body up to base_link (exclusive),
+        # then reverse to get base-to-tip order.
+        body_ids = []
+        body_id = model.site_bodyid[site_id]
+        while body_id != base_id:
+            if body_id == 0:
+                raise ValueError(
+                    f"{prefix}pinch_site does not descend from {prefix}base_link"
+                )
+            body_ids.append(body_id)
+            body_id = model.body_parentid[body_id]
+        body_ids.reverse()
+
+        # Per body: fixed parent offset, plus (axis, anchor, qpos adr) if jointed.
+        self.joint_ids = []
+        self.qpos_adrs = []
+        self._steps = []
+        for body_id in body_ids:
+            T_fixed = transform_from_pose(
+                model.body_pos[body_id].copy(),
+                rotation_from_quat(model.body_quat[body_id]),
+            )
+            if model.body_jntnum[body_id] == 0:
+                self._steps.append((T_fixed, None, None, None))
+                continue
+            if model.body_jntnum[body_id] != 1:
+                raise ValueError(f"body {body_id} has multiple joints")
+            jnt_id = model.body_jntadr[body_id]
+            if model.jnt_type[jnt_id] != mujoco.mjtJoint.mjJNT_HINGE:
+                raise ValueError(f"joint {jnt_id} is not a hinge")
+            self.joint_ids.append(jnt_id)
+            self.qpos_adrs.append(int(model.jnt_qposadr[jnt_id]))
+            self._steps.append((
+                T_fixed,
+                model.jnt_axis[jnt_id].copy(),
+                model.jnt_pos[jnt_id].copy(),
+                int(model.jnt_qposadr[jnt_id]),
+            ))
+
+        self._T_site = transform_from_pose(
+            model.site_pos[site_id].copy(),
+            rotation_from_quat(model.site_quat[site_id]),
+        )
+
+    def fk(self, qpos):
+        """T_K_E(q): EE site pose in the base_link frame, as a 4x4 transform."""
+        T = np.eye(4)
+        for T_fixed, axis, anchor, adr in self._steps:
+            T = T @ T_fixed
+            if adr is None:
+                continue
+            rot = rotation_about_axis(axis, qpos[adr])
+            T_joint = np.eye(4)
+            T_joint[:3, :3] = rot
+            T_joint[:3, 3] = anchor - rot @ anchor
+            T = T @ T_joint
+        return T @ self._T_site
+
+
+right_chain = KinematicChain(world.model, "right_")
+left_chain = KinematicChain(world.model, "left_")
+
 
 def direct_left_ee_pose():
     pos = world.data.site_xpos[world.left_ee_id].copy()
