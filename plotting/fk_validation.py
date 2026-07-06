@@ -1,5 +1,5 @@
 """Live FK validation: compare MuJoCo's measured right EE position with the
-analytical FK (KinematicChain, computed from qpos and model constants only),
+analytical FK (extract_chain/fk, computed from qpos and model constants only),
 plotted while the simulation runs (headless — no MuJoCo viewer, so plain
 python works):
 
