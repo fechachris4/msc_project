@@ -34,3 +34,15 @@ kinova_left_base_id = mujoco.mj_name2id(
     "left_base_link",
 )
 
+right_target_id = mujoco.mj_name2id(
+    model,
+    mujoco.mjtObj.mjOBJ_BODY,
+    "right_target",
+)
+
+left_target_id = mujoco.mj_name2id(
+    model,
+    mujoco.mjtObj.mjOBJ_BODY,
+    "left_target",
+)
+
