@@ -1,48 +1,54 @@
-"""Live plot comparing the direct (MuJoCo-measured) right EE position
-against the FK-composed position from controller.kinematics.
+"""FK validation: compare the direct (MuJoCo-measured) right EE position
+with the FK-composed position from controller.kinematics.
 
-Run standalone from the repo root (macOS needs mjpython for the viewer):
+Simulates headless for DURATION seconds, then plots direct vs FK per axis
+and saves the figure to plots/. No viewer, so plain python works:
 
-    mjpython -m plotting.fk_validation
-
-Plots appear in the Rerun viewer, which opens as its own app — no matplotlib
-main-thread conflicts with mjpython. Use the viewer's "Save" to keep a run.
+    python -m plotting.fk_validation
 """
 
-import time
-
+import matplotlib.pyplot as plt
 import mujoco
-import mujoco.viewer
-import rerun as rr
+import numpy as np
 
 from controller import kinematics
 from sim import world
 
-AXES = ("x", "y", "z")
+DURATION = 5.0  # seconds of simulation
 
 
-def main():
-    rr.init("fk_validation", spawn=True)
+def simulate():
+    n_steps = int(DURATION / world.model.opt.timestep)
+    times = np.empty(n_steps)
+    direct = np.empty((n_steps, 3))
+    fk = np.empty((n_steps, 3))
 
-    with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
-        while viewer.is_running():
-            step_start = time.time()
-            mujoco.mj_step(world.model, world.data)
+    for i in range(n_steps):
+        mujoco.mj_step(world.model, world.data)
+        times[i] = world.data.time
+        direct[i] = world.data.site_xpos[world.right_ee_id]
+        fk[i], _ = kinematics.right_ee_positions()
 
-            direct_pos = world.data.site_xpos[world.right_ee_id]
-            fk_pos, _ = kinematics.right_ee_positions()
+    return times, direct, fk
 
-            rr.set_time("sim_time", duration=world.data.time)
-            for axis, name in enumerate(AXES):
-                rr.log(f"right_ee/{name}/mujoco", rr.Scalars(direct_pos[axis]))
-                rr.log(f"right_ee/{name}/fk", rr.Scalars(fk_pos[axis]))
 
-            viewer.sync()
+def plot(times, direct, fk):
+    fig, axes = plt.subplots(3, 1, sharex=True, figsize=(8, 8))
+    for axis, (ax, label) in enumerate(zip(axes, "XYZ")):
+        ax.plot(times, direct[:, axis], label="direct (MuJoCo)")
+        ax.plot(times, fk[:, axis], "--", label="FK")
+        ax.set_ylabel(f"{label} (m)")
+        ax.legend()
+    axes[-1].set_xlabel("sim time (s)")
+    fig.suptitle("Right EE position: direct vs FK")
 
-            time_until_next_step = world.model.opt.timestep - (time.time() - step_start)
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
+    max_error = np.abs(direct - fk).max()
+    print(f"max |direct - FK| error: {max_error:.2e} m")
+
+    fig.savefig("plots/fk_validation.png", dpi=150)
+    print("Saved plots/fk_validation.png")
+    plt.show()
 
 
 if __name__ == "__main__":
-    main()
+    plot(*simulate())

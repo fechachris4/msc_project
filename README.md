@@ -35,12 +35,11 @@ FK validation — live plot comparing the directly measured right end-effector
 position against the FK-composed one (world → torso mocap → Kinova base → EE):
 
 ```bash
-mjpython -m plotting.fk_validation
+python -m plotting.fk_validation
 ```
 
-The time series appear in the [Rerun](https://rerun.io) viewer (its own app,
-so it coexists with mjpython). Use the viewer's save function to keep a run
-as a `.rrd` file.
+Runs headless (no viewer, so plain python is fine), prints the max
+direct-vs-FK error, and saves the figure to `plots/fk_validation.png`.
 
 ## Layout
 
@@ -54,7 +53,7 @@ controller/
   kinematics.py            frame transforms and FK for the right EE
   pd.py                    (placeholder) PD controller
 plotting/
-  fk_validation.py         live direct-vs-FK EE plot (Rerun), standalone
+  fk_validation.py         direct-vs-FK EE validation plot, standalone
 tests/
   test_kinematics.py       kinematics unit tests
 ```
