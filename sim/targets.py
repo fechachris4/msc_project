@@ -20,6 +20,15 @@ def set_left_target(pos):
     world.data.mocap_pos[_mocap_index(world.left_target_id)] = pos
 
 
+def reset_to_ee():
+    """Place each target at its arm's current end-effector position.
+
+    Call after mj_forward/mj_step so site positions are up to date.
+    """
+    set_right_target(world.data.site_xpos[world.right_ee_id])
+    set_left_target(world.data.site_xpos[world.left_ee_id])
+
+
 def right_target_position():
     return world.data.mocap_pos[_mocap_index(world.right_target_id)].copy()
 
