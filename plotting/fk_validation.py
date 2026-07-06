@@ -12,14 +12,14 @@ analytical forward kinematics, not just frame algebra.
 
 import mujoco
 
-from controller import kinematics
+from controller import frames
 from plotting.live_plot import LivePlot
 from sim import world
 
 
 def sample():
     """One comparison sample: (sim time, direct EE xyz, FK-composed EE xyz)."""
-    fk_pos, _ = kinematics.right_ee_positions()
+    fk_pos, _ = frames.right_ee_pose()
     direct_pos = world.data.site_xpos[world.right_ee_id].copy()
     return world.data.time, direct_pos, fk_pos
 
