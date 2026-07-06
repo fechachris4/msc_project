@@ -98,5 +98,82 @@ class RotationHelpersTest(unittest.TestCase):
         np.testing.assert_allclose(rot @ axis, axis, atol=1e-12)
 
 
+class AnalyticalFKTest(unittest.TestCase):
+    """Validate analytical FK against MuJoCo at random configurations.
+
+    Independent computation: KinematicChain reads only MjModel constants
+    and qpos; MuJoCo's site_xpos/site_xmat is the reference.
+    """
+
+    N_SAMPLES = 50
+    ATOL = 1e-9
+
+    @classmethod
+    def setUpClass(cls):
+        import mujoco
+        from sim import world
+        cls.mujoco = mujoco
+        cls.world = world
+
+    def _random_qpos(self, rng, chain):
+        model = self.world.model
+        q = {}
+        for jnt_id, adr in zip(chain.joint_ids, chain.qpos_adrs):
+            if model.jnt_limited[jnt_id]:
+                low, high = model.jnt_range[jnt_id]
+            else:
+                low, high = -np.pi, np.pi
+            q[adr] = rng.uniform(low, high)
+        return q
+
+    def _check_arm(self, prefix):
+        import controller.kinematics as kinematics
+        mujoco = self.mujoco
+        world = self.world
+        chain = kinematics.KinematicChain(world.model, prefix)
+        base_id = mujoco.mj_name2id(
+            world.model, mujoco.mjtObj.mjOBJ_BODY, prefix + "base_link"
+        )
+        site_id = mujoco.mj_name2id(
+            world.model, mujoco.mjtObj.mjOBJ_SITE, prefix + "pinch_site"
+        )
+        rng = np.random.default_rng(42)
+        data = mujoco.MjData(world.model)
+        for _ in range(self.N_SAMPLES):
+            for adr, value in self._random_qpos(rng, chain).items():
+                data.qpos[adr] = value
+            mujoco.mj_kinematics(world.model, data)
+
+            T_K_E = chain.fk(data.qpos)
+
+            base_pos = data.xpos[base_id]
+            base_rot = data.xmat[base_id].reshape(3, 3)
+            ee_pos_expected = data.site_xpos[site_id]
+            ee_rot_expected = data.site_xmat[site_id].reshape(3, 3)
+
+            np.testing.assert_allclose(
+                base_rot @ T_K_E[:3, 3] + base_pos,
+                ee_pos_expected,
+                atol=self.ATOL,
+            )
+            np.testing.assert_allclose(
+                base_rot @ T_K_E[:3, :3],
+                ee_rot_expected,
+                atol=self.ATOL,
+            )
+
+    def test_right_arm_fk_matches_mujoco(self):
+        self._check_arm("right_")
+
+    def test_left_arm_fk_matches_mujoco(self):
+        self._check_arm("left_")
+
+    def test_chain_has_seven_joints(self):
+        import controller.kinematics as kinematics
+        for prefix in ("right_", "left_"):
+            chain = kinematics.KinematicChain(self.world.model, prefix)
+            self.assertEqual(len(chain.joint_ids), 7)
+
+
 if __name__ == "__main__":
     unittest.main()
