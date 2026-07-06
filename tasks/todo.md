@@ -25,16 +25,16 @@ Verification passed for `python3 -m py_compile main.py`, `xmllint --noout sim/sc
 ## GitHub Publish Plan
 
 - [x] Check whether this directory is already a git repository.
-- [ ] Confirm whether to initialize a new repository here.
-- [ ] Confirm GitHub repository name and visibility.
-- [ ] Stage the intended project files only.
-- [ ] Commit with a clear message.
-- [ ] Push to GitHub.
-- [ ] Record publish result here.
+- [x] Confirm whether to initialize a new repository here.
+- [x] Confirm GitHub repository name and visibility.
+- [x] Stage the intended project files only.
+- [x] Commit with a clear message.
+- [x] Push to GitHub.
+- [x] Record publish result here.
 
 ## GitHub Publish Status
 
-Blocked before implementation: `/Users/christian/Projects/Code/msc_project` is not currently a git repository, and `gh auth status` reports the saved token for `fechachris4` is invalid. Need confirmation to initialize a new repository here, plus a valid GitHub login before pushing.
+Done: repository initialized and published to `https://github.com/fechachris4/msc_project` (remote `origin`). Earlier "not a git repository / invalid gh token" note is obsolete.
 
 ## Kinova FK Completion Plan
 
