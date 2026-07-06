@@ -49,6 +49,7 @@ main.py                    bare sim loop (viewer + mj_step)
 sim/
   scene.xml                MJCF scene: torso + dual Kinova Gen3
   world.py                 model/data loading, cached body & site IDs
+  targets.py               set/read EE target positions (mocap spheres)
   assets/kinova_gen3/      vendored Kinova Gen3 model
 controller/
   kinematics.py            frame transforms and FK for the right EE
