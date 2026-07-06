@@ -15,9 +15,11 @@ class TestResolveWorld(unittest.TestCase):
         np.testing.assert_allclose(pos, [1.0, 2.0, 3.0])
         np.testing.assert_allclose(rot, rotation_from_rpy([0.1, 0.2, 0.3]))
 
-    def test_frame_defaults_to_world(self):
-        pos, _ = resolve_world({"pos": [0.5, 0.0, 0.0], "rpy": [0.0, 0.0, 0.0]})
+    def test_position_only_record_gives_full_pose(self):
+        # The simple case: world position in, full pose (identity rotation) out.
+        pos, rot = resolve_world({"pos": [0.5, 0.0, 0.0]})
         np.testing.assert_allclose(pos, [0.5, 0.0, 0.0])
+        np.testing.assert_allclose(rot, np.eye(3))
 
     def test_torso_frame_composes_with_torso_pose(self):
         # Torso at (1, 0, 0.5), yawed +90°: torso-x maps to world-y.

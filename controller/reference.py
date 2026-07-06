@@ -1,19 +1,19 @@
 """Desired end-effector poses — the reference the controller will track.
 
-Each reference is one record: a pose expressed in a named frame.
+The simple case: state a world-frame position, optionally an orientation,
+and you get a full pose back. A record is just:
 
-  frame: "world" — absolute pose, world frame (the default interpretation)
-         "torso" — pose relative to the torso body
-  pos:   [x, y, z] in meters
-  rpy:   [roll, pitch, yaw] in radians, R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
+    {"pos": [x, y, z]}                          # world frame, no rotation
+    {"pos": [...], "rpy": [roll, pitch, yaw]}   # world frame, oriented
+    {"frame": "torso", "pos": [...]}            # opt-in: torso-relative
 
-resolve_world() is the pure primitive: record + torso pose in, world pose
-out. It never reads MuJoCo state, so a controller can call it every tick
-(e.g. to keep a torso-frame target attached to a moving torso).
+Positions in meters; rpy in radians, R = Rz(yaw) @ Ry(pitch) @ Rx(roll);
+rpy omitted means identity orientation.
 
-apply() is the one-shot convenience: resolve both records against the torso
-pose *right now* and write them into the target mocap bodies. A torso-frame
-target does NOT follow the torso afterwards — call apply() again to update.
+resolve_world() is pure (never reads MuJoCo): record in, world (pos, rot)
+out. apply() resolves both records against the current torso pose and
+writes them into the target mocap bodies once — a torso-frame target does
+not follow the torso afterwards.
 """
 
 import mujoco
@@ -27,8 +27,10 @@ from controller.transforms import (
 )
 from sim import targets
 
-RIGHT = {"frame": "torso", "pos": [0.45, -0.20, 0.10], "rpy": [0.0, 0.0, 0.0]}
-LEFT = {"frame": "torso", "pos": [0.45, 0.20, 0.10], "rpy": [0.0, 0.0, 0.0]}
+# World frame. Same points as before: 0.45 m in front of the torso
+# (torso is at world z = 1.1), 0.20 m to each side, 0.10 m above center.
+RIGHT = {"pos": [0.45, -0.20, 1.20]}
+LEFT = {"pos": [0.45, 0.20, 1.20]}
 
 
 def resolve_world(ref, torso_pose=None):
@@ -39,7 +41,8 @@ def resolve_world(ref, torso_pose=None):
     """
     frame = ref.get("frame", "world")
     T = transform_from_pose(
-        np.asarray(ref["pos"], dtype=float), rotation_from_rpy(ref["rpy"])
+        np.asarray(ref["pos"], dtype=float),
+        rotation_from_rpy(ref.get("rpy", [0.0, 0.0, 0.0])),
     )
     if frame == "torso":
         if torso_pose is None:
