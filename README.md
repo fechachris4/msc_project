@@ -54,7 +54,7 @@ controller/
   kinematics.py            frame transforms and FK for the right EE
   pd.py                    (placeholder) PD controller
 plotting/
-  fk_validation.py         FKValidationPlot class + standalone entry point
+  fk_validation.py         live direct-vs-FK EE plot (Rerun), standalone
 tests/
   test_kinematics.py       kinematics unit tests
 ```
