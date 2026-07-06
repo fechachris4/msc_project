@@ -12,14 +12,6 @@ def transform_from_pose(pos, rot):
 def pose_from_transform(transform):
     return transform[:3, 3].copy(), transform[:3, :3].copy()
 
-def inverse_transform(transform):
-    inverse = np.eye(4)
-    rot = transform[:3, :3]
-    pos = transform[:3, 3]
-    inverse[:3, :3] = rot.T
-    inverse[:3, 3] = -rot.T @ pos
-    return inverse
-
 def rotation_from_quat(quat):
     """Rotation matrix from a MuJoCo quaternion [w, x, y, z]."""
     w, x, y, z = quat / np.linalg.norm(quat)
