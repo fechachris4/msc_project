@@ -1,10 +1,13 @@
-"""Live FK validation: compare the direct (MuJoCo-measured) right EE position
-with the FK-composed position from controller.kinematics, plotted while the
-simulation runs (headless — no MuJoCo viewer, so plain python works):
+"""Live FK validation: compare MuJoCo's measured right EE position with the
+analytical FK (KinematicChain, computed from qpos and model constants only),
+plotted while the simulation runs (headless — no MuJoCo viewer, so plain
+python works):
 
     python -m plotting.fk_validation
 
 Close the plot window to stop; the figure is saved to plots/fk_validation.png.
+The two traces are computed independently — agreement here validates the
+analytical forward kinematics, not just frame algebra.
 """
 
 import mujoco
