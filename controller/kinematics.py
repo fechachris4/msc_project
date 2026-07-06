@@ -134,33 +134,30 @@ def torso_mocap_position():
     rot = world.data.xmat[world.torso_mocap_id].reshape(3, 3).copy()
     return pos, rot
 
-def kinova_right_base_link_position():
-    pos = world.data.xpos[world.kinova_right_base_id].copy()
-    rot = world.data.xmat[world.kinova_right_base_id].reshape(3, 3).copy()
-    return pos, rot
-
-def kinova_left_base_link_position():
-    pos = world.data.xpos[world.kinova_left_base_id].copy()
-    rot = world.data.xmat[world.kinova_left_base_id].reshape(3, 3).copy()
-    return pos, rot
+# Fixed mounts: {prefix}base_link pose in the torso frame, from model constants
+# (base_link's parent in sim/scene.xml is the torso mocap body).
+T_T_KR = transform_from_pose(
+    world.model.body_pos[world.kinova_right_base_id].copy(),
+    rotation_from_quat(world.model.body_quat[world.kinova_right_base_id]),
+)
+T_T_KL = transform_from_pose(
+    world.model.body_pos[world.kinova_left_base_id].copy(),
+    rotation_from_quat(world.model.body_quat[world.kinova_left_base_id]),
+)
 
 def right_ee_positions():
     """
-    W = world
-    T = torso mocap body
-    K = Kinova base_link
-    E = end-effector site, right_pinch_site
-    R = right
-    L = left
+    W = world, T = torso mocap body, K = Kinova base_link, E = EE site.
 
-    T_W_E(q, t) = T_W_T(t) · T_T_K(t) · T_K_E(q)
+    T_W_E(q, t) = T_W_T(t) · T_T_K · T_K_E(q)
+
+    T_W_T is the commanded torso pose (read from data — an input, not an FK
+    output); T_T_K is a fixed mount from model constants; T_K_E(q) is the
+    analytical chain FK. No EE pose is read from MuJoCo.
     """
     T_W_T = transform_from_pose(*torso_mocap_position())
-    T_W_KR = transform_from_pose(*kinova_right_base_link_position())
-    T_W_E_direct = transform_from_pose(*direct_right_ee_pose())
+    return pose_from_transform(T_W_T @ T_T_KR @ right_chain.fk(world.data.qpos))
 
-    T_T_KR = inverse_transform(T_W_T) @ T_W_KR
-    T_KR_E = inverse_transform(T_W_KR) @ T_W_E_direct
-    T_W_E = T_W_T @ T_T_KR @ T_KR_E
-
-    return pose_from_transform(T_W_E)
+def left_ee_positions():
+    T_W_T = transform_from_pose(*torso_mocap_position())
+    return pose_from_transform(T_W_T @ T_T_KL @ left_chain.fk(world.data.qpos))
