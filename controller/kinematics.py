@@ -48,7 +48,7 @@ def extract_chain(model, base_body, ee_site):
     body_ids = []
     body_id = model.site_bodyid[site_id]
     while body_id != base_id:
-        if body_id == 0:
+        if body_id == 0:  # world's parent is itself — without this the walk never ends
             raise ValueError(f"{ee_site!r} does not descend from {base_body!r}")
         body_ids.append(body_id)
         body_id = model.body_parentid[body_id]
@@ -66,8 +66,6 @@ def extract_chain(model, base_body, ee_site):
         if model.body_jntnum[body_id] == 0:
             steps.append((T_fixed, None, None, None))
             continue
-        if model.body_jntnum[body_id] != 1:
-            raise ValueError(f"body {body_id} has multiple joints")
         jnt_id = model.body_jntadr[body_id]
         if model.jnt_type[jnt_id] != mujoco.mjtJoint.mjJNT_HINGE:
             raise ValueError(f"joint {jnt_id} is not a hinge")
