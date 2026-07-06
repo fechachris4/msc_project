@@ -70,5 +70,33 @@ class KinematicsTest(unittest.TestCase):
         np.testing.assert_allclose(rot, expected_rot)
 
 
+class RotationHelpersTest(unittest.TestCase):
+    def test_rotation_from_quat_matches_z_rotation(self):
+        from controller.kinematics import rotation_from_quat
+        # quat [w, x, y, z] for a rotation of 0.6 rad about z
+        half = 0.3
+        quat = np.array([np.cos(half), 0.0, 0.0, np.sin(half)])
+        np.testing.assert_allclose(
+            rotation_from_quat(quat), rotation_z(0.6), atol=1e-12
+        )
+
+    def test_rotation_about_axis_matches_z_rotation(self):
+        from controller.kinematics import rotation_about_axis
+        np.testing.assert_allclose(
+            rotation_about_axis(np.array([0.0, 0.0, 1.0]), 0.6),
+            rotation_z(0.6),
+            atol=1e-12,
+        )
+
+    def test_rotation_about_arbitrary_axis_is_orthonormal(self):
+        from controller.kinematics import rotation_about_axis
+        axis = np.array([1.0, 2.0, -0.5])
+        axis /= np.linalg.norm(axis)
+        rot = rotation_about_axis(axis, 1.234)
+        np.testing.assert_allclose(rot @ rot.T, np.eye(3), atol=1e-12)
+        np.testing.assert_allclose(np.linalg.det(rot), 1.0, atol=1e-12)
+        np.testing.assert_allclose(rot @ axis, axis, atol=1e-12)
+
+
 if __name__ == "__main__":
     unittest.main()

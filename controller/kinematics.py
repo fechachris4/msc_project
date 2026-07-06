@@ -19,6 +19,25 @@ def inverse_transform(transform):
     inverse[:3, 3] = -rot.T @ pos
     return inverse
 
+def rotation_from_quat(quat):
+    """Rotation matrix from a MuJoCo quaternion [w, x, y, z]."""
+    w, x, y, z = quat / np.linalg.norm(quat)
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+        [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+        [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+    ])
+
+def rotation_about_axis(axis, angle):
+    """Rodrigues rotation about a unit axis."""
+    kx, ky, kz = axis
+    cross = np.array([
+        [0.0, -kz, ky],
+        [kz, 0.0, -kx],
+        [-ky, kx, 0.0],
+    ])
+    return np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * cross @ cross
+
 def direct_left_ee_pose():
     pos = world.data.site_xpos[world.left_ee_id].copy()
     rot = world.data.site_xmat[world.left_ee_id].reshape(3, 3).copy()
