@@ -30,8 +30,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
     │   └── → world-aligned 6x7 Jacobian (validated vs mj_jacSite)
     ├── controller/kinematics.py       (analytical FK — TEST REFERENCE only)
     ├── controller/desired_pos.py      (desired EE poses → world targets, once)
-    ├── controller/pd.py               (pure math: e → twist v = Kp*e → qdot via DLS)
-    ├── controller/servo.py            (plumbing: errors, ctrl integration, apply_ctrl)
+    ├── controller/servo.py            (controller: e → v = Kp*e → qdot via DLS → apply_ctrl)
     ├── main.py                        (viewer loop: closed loop via servo.apply_ctrl)
     └── plotting/
         ├── live_plot.py               (generic live time-series plot)
@@ -48,14 +47,13 @@ MISSING LINKS in the pipeline:  scripted base motion → metrics (RMSE/peak) →
 | `sim/scene.xml` | Torso + dual Gen3 scene, targets, contact excludes | Validated | `assets/kinova_gen3/gen3.xml` | `world.py` | Loads in all tests | High | Touch only if needed |
 | `sim/assets/kinova_gen3/` | Vendored Gen3 MJCF (position-servo actuators) | Validated (kinematics + closed loop) | — | scene, `pin_fk.py` | Indirect via FK tests | High | Touch only if needed |
 | `sim/world.py` | Model/data load, checked id lookups | Implemented | scene.xml | everything | Indirect (all tests import it) | High | Do not touch |
-| `sim/targets.py` | Set/read target mocap poses | Implemented | `world.py` | desired_pos, servo | Indirect via `test_pd` wrapper tests | Medium-High | Touch only if needed |
+| `sim/targets.py` | Set/read target mocap poses | Implemented | `world.py` | desired_pos, servo | Indirect via `test_servo` wrapper tests | Medium-High | Touch only if needed |
 | `controller/transforms.py` | Pure SE(3)/rotation math | Validated | numpy | kinematics, frames, desired_pos | `test_kinematics.RotationHelpersTest`, `test_transforms` (vs Pinocchio) | High | Do not touch |
 | `controller/kinematics.py` | Analytical FK from MjModel constants | Validated, **demoted to test reference** | transforms | `test_pin_fk.py` only | `AnalyticalFKTest` vs MuJoCo, 50 cfg/arm, 1e-9 | High | Do not touch |
 | `controller/pin_fk.py` | Pinocchio-backed `T_K_E(q)` — control path FK | Validated | pinocchio, `gen3.xml` | `frames.py` | `test_pin_fk` vs analytical FK, 1e-9 | High | Do not touch |
 | `controller/frames.py` | World-frame EE pose + Jacobian | Validated (incl. moved torso) | pin_fk, transforms, world | desired_pos, servo, plotting | `WorldFrameEETest` (static + 50 random torso poses), `JacobianWorldTest` vs `mj_jacSite` | High | Touch only if needed |
 | `controller/desired_pos.py` | Desired EE poses, resolved to world once | Implemented; `resolve_world` validated | frames, transforms, targets | `main.py`, plotting | `test_reference` (pure math) | Medium-High | Touch only if needed |
-| `controller/pd.py` | Pure control math: P law + DLS inversion | Validated | numpy, pinocchio | servo | `test_pd`: pure errors, DLS vs pinv, closed-loop convergence | High | Touch only if needed |
-| `controller/servo.py` | MuJoCo plumbing: errors, setpoint integration | Validated | frames, pd, targets, world | main, plotting | `test_pd`: wrapper offsets, arm selection, `ClosedLoopConvergenceTest` | High | Touch only if needed |
+| `controller/servo.py` | The controller: P law + DLS (pure math) + MuJoCo plumbing (errors, setpoint integration, qdot limits) | Validated | frames, targets, world | main, plotting | `test_servo`: pure errors, DLS vs pinv, wrapper offsets, arm selection, `ClosedLoopConvergenceTest` | High | Touch only if needed |
 | `main.py` | Viewer loop, closed loop, arm selection CLI | Implemented | desired_pos, servo, world | user | Loop body shared with `ClosedLoopConvergenceTest` via `apply_ctrl` | Medium-High | Grows with base motion |
 | `plotting/live_plot.py` | Generic live plot | Implemented | matplotlib | position_error, fk_validation | None (visually exercised) | Medium | Do not touch |
 | `plotting/position_error.py` + `right/`,`left/` | Live closed-loop error plots | Implemented | servo, world, live_plot | user | Visual only | Medium | Touch only if needed |
@@ -88,7 +86,7 @@ MISSING LINKS in the pipeline:  scripted base motion → metrics (RMSE/peak) →
    [v (m/s); ω (rad/s)], validated against `mj_jacSite` at 1e-9 across random
    configurations and random torso poses (`JacobianWorldTest`).
 
-6. **Reactive controller (`controller/pd.py` + `controller/servo.py`)** —
+6. **Reactive controller (`controller/servo.py`)** —
    resolved-rate P law (v = Kp·e) with damped-least-squares inversion, driving
    position-servo setpoints as an integrator (ctrl += qdot·dt). Validated by
    pure-math tests (errors, DLS→pinv limit) and `ClosedLoopConvergenceTest`:
@@ -133,13 +131,12 @@ sim/assets/kinova_gen3/gen3.xml (vendored, position-servo actuators)
 │       ├── controller/frames.py  (pin_fk + transforms; pose + Jacobian)
 │       ├── controller/kinematics.py  (transforms; TEST REFERENCE ONLY)
 │       ├── controller/desired_pos.py  (frames + transforms + targets)
-│       ├── controller/servo.py  (frames + pd + targets)
+│       ├── controller/servo.py  (frames + targets; P law + DLS inside)
 │       │   ├── main.py  (viewer closed loop)
 │       │   └── plotting/position_error.py → right/, left/ entry points
 │       └── plotting/right/fk_validation.py (frames, no controller)
 │           └── plotting/live_plot.py  (matplotlib only, MuJoCo-free)
-├── controller/pd.py  (pure math: numpy + pinocchio only)
-└── tests/  (test_kinematics, test_pin_fk, test_reference, test_transforms, test_pd)
+└── tests/  (test_kinematics, test_pin_fk, test_reference, test_transforms, test_servo)
 ```
 
 Note the deliberate redundancy: `kinematics.py` (analytical) and `pin_fk.py`
@@ -191,8 +188,8 @@ revisit only if the NMPC comparison demands torque-level authority.
 - `controller/pin_fk.py` — done and frozen.
 - `controller/frames.py` composition (`T_W_T · T_T_K · T_K_E`) and Jacobian —
   validated including moved torso; matches the hardware sensing story.
-- `controller/pd.py` P law + DLS split — the two equations are separated on
-  purpose (control law vs kinematic inversion); keep them separable.
+- `controller/servo.py` control math — the P law and DLS inversion are the
+  pure functions above the MuJoCo plumbing (`qdot_from_error` and friends).
 - The circular-FK investigation — found, fixed, documented (2026-07-06 spec).
 - `sim/scene.xml` mount geometry and contact excludes — working.
 - `plotting/live_plot.py` — good enough for live monitoring; thesis figures are

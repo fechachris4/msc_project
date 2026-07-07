@@ -1,7 +1,7 @@
-"""Pose error in controller.pd.
+"""Pose error in controller.servo.
 
 Pure math: zero at coincidence, known injected offsets recovered exactly.
-Wrapper integration: drive the real pipeline (target mocap -> pd wrappers
+Wrapper integration: drive the real pipeline (target mocap -> servo wrappers
 -> frames FK) at randomized arm configurations.
 """
 
@@ -26,21 +26,21 @@ def random_axis_angle(rng):
 
 class PoseErrorPureTest(unittest.TestCase):
     def test_zero_at_coincidence(self):
-        from controller import pd
+        from controller import servo
 
         rng = np.random.default_rng(7)
         for _ in range(N_SAMPLES):
             pos = rng.uniform(-1.0, 1.0, 3)
             rot = rotation_from_rpy(rng.uniform(-np.pi, np.pi, 3))
             np.testing.assert_allclose(
-                pd.position_error(pos, pos), np.zeros(3), atol=PURE_TOL
+                servo.position_error(pos, pos), np.zeros(3), atol=PURE_TOL
             )
             np.testing.assert_allclose(
-                pd.rotation_error(rot, rot), np.zeros(3), atol=PURE_TOL
+                servo.rotation_error(rot, rot), np.zeros(3), atol=PURE_TOL
             )
 
     def test_known_offset_recovered(self):
-        from controller import pd
+        from controller import servo
 
         rng = np.random.default_rng(8)
         for _ in range(N_SAMPLES):
@@ -53,10 +53,10 @@ class PoseErrorPureTest(unittest.TestCase):
             ref_rot = rotation_about_axis(axis, angle) @ ee_rot
 
             np.testing.assert_allclose(
-                pd.position_error(ref_pos, ee_pos), delta_pos, atol=PURE_TOL
+                servo.position_error(ref_pos, ee_pos), delta_pos, atol=PURE_TOL
             )
             np.testing.assert_allclose(
-                pd.rotation_error(ref_rot, ee_rot), axis * angle, atol=PURE_TOL
+                servo.rotation_error(ref_rot, ee_rot), axis * angle, atol=PURE_TOL
             )
 
 
@@ -130,23 +130,23 @@ class QdotFromErrorTest(unittest.TestCase):
         return J, e_pos, e_rot
 
     def test_tracks_task_velocity_at_small_damping(self):
-        from controller import pd
+        from controller import servo
 
         rng = np.random.default_rng(10)
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
-            v = np.concatenate([pd.KP_POS * e_pos, pd.KP_ROT * e_rot])
-            qdot = pd.qdot_from_error(J, e_pos, e_rot, damping=1e-6)
+            v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
+            qdot = servo.qdot_from_error(J, e_pos, e_rot, damping=1e-6)
             np.testing.assert_allclose(J @ qdot, v, atol=1e-8)
 
     def test_matches_pinv_as_damping_vanishes(self):
-        from controller import pd
+        from controller import servo
 
         rng = np.random.default_rng(11)
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
-            v = np.concatenate([pd.KP_POS * e_pos, pd.KP_ROT * e_rot])
-            qdot = pd.qdot_from_error(J, e_pos, e_rot, damping=1e-9)
+            v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
+            qdot = servo.qdot_from_error(J, e_pos, e_rot, damping=1e-9)
             np.testing.assert_allclose(
                 qdot, np.linalg.pinv(J) @ v, atol=1e-6
             )

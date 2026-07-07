@@ -13,9 +13,9 @@ Per control step, all SI (meters, radians; mm only at prints/plots):
 ```
 target mocap pose (world) + joint angles qpos      sim/targets, MuJoCo
   -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  controller/frames (Pinocchio FK)
-  -> pose error  e = ref - actual (world)          controller/servo + pd
-  -> commanded twist v = Kp*e  [m/s; rad/s]        controller/pd (P law)
-  -> joint rates qdot via damped least squares     controller/pd (inversion)
+  -> pose error  e = ref - actual (world)          controller/servo
+  -> commanded twist v = Kp*e  [m/s; rad/s]        controller/servo (P law)
+  -> joint rates qdot via damped least squares     controller/servo (DLS)
   -> integrate position-servo setpoints (rad)      controller/servo -> data.ctrl
   -> mj_step
 ```
@@ -88,8 +88,8 @@ controller/
   kinematics.py            analytical FK from MjModel constants [test reference only]
   frames.py                world-frame EE pose + Jacobian: T_W_T · T_T_K · T_K_E
   desired_pos.py           desired EE poses; resolved to world targets once
-  pd.py                    P law (v = Kp*e) + DLS inversion (v -> qdot), pure math
-  servo.py                 MuJoCo plumbing: errors, setpoint integration, data.ctrl
+  servo.py                 the controller: P law + DLS (pure math) and the MuJoCo
+                           plumbing (errors, setpoint integration, data.ctrl)
 plotting/
   live_plot.py             generic live time-series plot (no MuJoCo)
   position_error.py        shared live position-error plot implementation
