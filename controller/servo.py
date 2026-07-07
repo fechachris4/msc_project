@@ -70,3 +70,12 @@ def left_ctrl(dt):
     """Updated left-arm servo targets (does not write data.ctrl)."""
     return _ctrl(dt, left_pose_error, frames.left_jacobian_world,
                  world.left_ctrl_adrs, _LEFT_BOUNDS)
+
+
+def apply_ctrl(dt):
+    """Write both arms' updated servo setpoints into data.ctrl.
+
+    The one loop-body block every front-end (viewer, plots, tests) must
+    share — call it once per step, before mj_step."""
+    world.data.ctrl[world.right_ctrl_adrs] = right_ctrl(dt)
+    world.data.ctrl[world.left_ctrl_adrs] = left_ctrl(dt)

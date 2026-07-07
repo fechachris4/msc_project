@@ -212,8 +212,7 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
 
         dt = world.model.opt.timestep
         for _ in range(int(self.SIM_SECONDS / dt)):
-            world.data.ctrl[world.right_ctrl_adrs] = servo.right_ctrl(dt)
-            world.data.ctrl[world.left_ctrl_adrs] = servo.left_ctrl(dt)
+            servo.apply_ctrl(dt)
             mujoco.mj_step(world.model, world.data)
 
         for name, *_, err in arms:

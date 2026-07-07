@@ -16,14 +16,18 @@ saved to plots/<arm>_position_error.png.
 import mujoco
 import numpy as np
 
-from controller import desired_pos
+from controller import desired_pos, servo
 from plotting.live_plot import LivePlot
 from sim import world
 
 
 def run(arm_name, pose_error):
-    """arm_name: "right" or "left"; pose_error: pd.<arm>_pose_error."""
+    """arm_name: "right" or "left"; pose_error: servo.<arm>_pose_error.
+
+    Closed loop: the P controller runs every step, so the plot shows the
+    controlled response (same loop body as main.py via servo.apply_ctrl)."""
     desired_pos.apply()
+    servo.init_ctrl()
 
     plot = LivePlot(
         rows=["d_x (mm)", "d_y (mm)", "d_z (mm)", "|d| (mm)"],
@@ -31,6 +35,7 @@ def run(arm_name, pose_error):
         title=f"{arm_name} EE displacement from target (world frame)",
     )
     while plot.is_open():
+        servo.apply_ctrl(world.model.opt.timestep)
         mujoco.mj_step(world.model, world.data)
         # refresh poses: mj_step advances qpos after computing them
         mujoco.mj_kinematics(world.model, world.data)

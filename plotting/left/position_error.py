@@ -1,5 +1,5 @@
-from controller import pd
+from controller import servo
 from plotting.position_error import run
 
 if __name__ == "__main__":
-    run("left", pd.left_pose_error)
+    run("left", servo.left_pose_error)
