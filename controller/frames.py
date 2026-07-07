@@ -1,13 +1,6 @@
-"""Frame compositions for the torso + dual-Gen3 scene. Scene-specific glue.
+import mujoco
 
-This is the disposable layer: it knows about sim.world, the "right_"/"left_"
-naming convention, and the torso mount. The reusable layers live in
-controller/transforms.py (pure math) and controller/kinematics.py (chain FK).
-
-Frames: W = world, T = torso mocap body, K = arm base_link, E = EE site.
-"""
-
-from controller.kinematics import extract_chain, fk
+from controller.pin_fk import build_pin_model, pin_T_K_E
 from controller.transforms import (
     pose_from_transform,
     rotation_from_quat,
@@ -24,38 +17,56 @@ def mount_transform(model, base_body_id):
         rotation_from_quat(model.body_quat[base_body_id]),
     )
 
+def arm_qpos_adrs(model, prefix):
+    """Global qpos addresses of one arm's 7 joints, base to tip."""
+    adrs = []
+    for i in range(1, 8):
+        jnt_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}joint_{i}"
+        )
+        assert jnt_id >= 0, f"{prefix}joint_{i} not in model"
+        adrs.append(int(model.jnt_qposadr[jnt_id]))
+    return adrs
 
-right_chain = extract_chain(world.model, "right_base_link", "right_pinch_site")
-left_chain = extract_chain(world.model, "left_base_link", "left_pinch_site")
+
+# One arm model serves both arms: left/right are the same MJCF, and the
+# mount difference lives in T_T_K, not in T_K_E.
+pin_model, pin_data, ee_frame_id = build_pin_model(
+    "sim/assets/kinova_gen3/gen3.xml", "base_link", "pinch_site"
+)
+right_qpos_adrs = arm_qpos_adrs(world.model, "right_")
+left_qpos_adrs = arm_qpos_adrs(world.model, "left_")
 
 T_T_KR = mount_transform(world.model, world.kinova_right_base_id)
 T_T_KL = mount_transform(world.model, world.kinova_left_base_id)
 
 
 def torso_pose():
-    """Commanded torso mocap pose in the world frame."""
+    """T_W_T: torso pose in the world frame, as MuJoCo measures it"""
     pos = world.data.xpos[world.torso_mocap_id].copy()
     rot = world.data.xmat[world.torso_mocap_id].reshape(3, 3).copy()
     return pos, rot
 
 
-def _ee_pose_world(T_T_K, chain):
+def _ee_pose_world(T_T_K, qpos_adrs):
     """T_W_E(q, t) = T_W_T(t) · T_T_K · T_K_E(q).
 
-    T_W_T is the commanded torso pose (an input, not an FK output); T_T_K is
-    a fixed mount from model constants; T_K_E(q) is the analytical chain FK.
+    T_W_T is the torso pose in the world frame, as MuJoCo measures it; T_T_K is
+    a fixed mount from model constants; T_K_E(q) is Pinocchio FK.
     No EE pose is read from MuJoCo.
     """
     T_W_T = transform_from_pose(*torso_pose())
-    return pose_from_transform(T_W_T @ T_T_K @ fk(chain, world.data.qpos))
+    T_K_E = pin_T_K_E(pin_model, pin_data, ee_frame_id,
+                      world.data.qpos[qpos_adrs])
+    return pose_from_transform(T_W_T @ T_T_K @ T_K_E)
 
 
 def right_ee_pose():
-    return _ee_pose_world(T_T_KR, right_chain)
+    return _ee_pose_world(T_T_KR, right_qpos_adrs)
 
 
 def left_ee_pose():
-    return _ee_pose_world(T_T_KL, left_chain)
+    return _ee_pose_world(T_T_KL, left_qpos_adrs)
 
 
 def measured_right_ee_pose():
