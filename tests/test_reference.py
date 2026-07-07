@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from controller.reference import resolve_world
+from controller.desired_pos import resolve_world
 from controller.transforms import rotation_from_rpy
 
 
