@@ -3,10 +3,10 @@ import time
 import mujoco
 import mujoco.viewer
 
-from controller import reference
+from controller import desired_pos
 from sim import world
 
-reference.apply()
+desired_pos.apply()
 
 with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
     while viewer.is_running():
