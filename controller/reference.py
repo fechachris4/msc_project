@@ -1,53 +1,30 @@
 """Desired end-effector poses — the reference the controller will track.
 
-Each reference is one record: a pose expressed in a named frame.
+RIGHT and LEFT are torso-frame initial placements: pos [x, y, z] in meters,
+rpy [roll, pitch, yaw] in radians (R = Rz(yaw) @ Ry(pitch) @ Rx(roll)).
 
-  frame: "world" — absolute pose, world frame (the default interpretation)
-         "torso" — pose relative to the torso body
-  pos:   [x, y, z] in meters
-  rpy:   [roll, pitch, yaw] in radians, R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
-
-resolve_world() is the pure primitive: record + torso pose in, world pose
-out. It never reads MuJoCo state, so a controller can call it every tick
-(e.g. to keep a torso-frame target attached to a moving torso).
-
-apply() is the one-shot convenience: resolve both records against the torso
-pose *right now* and write them into the target mocap bodies. A torso-frame
-target does NOT follow the torso afterwards — call apply() again to update.
+apply() resolves them against the torso pose once and writes world-frame
+poses into the target mocap bodies. The targets stay fixed in the world
+afterwards — that is the task: world-frame pose hold while the base moves.
 """
 
 import mujoco
 import numpy as np
 
 from controller import frames
-from controller.transforms import (
-    pose_from_transform,
-    rotation_from_rpy,
-    transform_from_pose,
-)
+from controller.transforms import rotation_from_rpy
 from sim import targets
 
-RIGHT = {"frame": "torso", "pos": [0.45, -0.20, 0.10], "rpy": [0.0, 0.0, 0.0]}
-LEFT = {"frame": "torso", "pos": [0.45, 0.20, 0.10], "rpy": [0.0, 0.0, 0.0]}
+RIGHT = {"pos": [0.45, -0.20, 0.10], "rpy": [0.0, 0.0, 0.0]}
+LEFT = {"pos": [0.45, 0.20, 0.10], "rpy": [0.0, 0.0, 0.0]}
 
 
-def resolve_world(ref, torso_pose=None):
-    """World-frame (pos, rot) for a reference record.
-
-    torso_pose is a (position, rotation matrix) pair for the torso in the
-    world frame; only required when ref["frame"] == "torso".
-    """
-    frame = ref.get("frame", "world")
-    T = transform_from_pose(
-        np.asarray(ref["pos"], dtype=float), rotation_from_rpy(ref["rpy"])
-    )
-    if frame == "torso":
-        if torso_pose is None:
-            raise ValueError("torso-frame reference needs a torso_pose")
-        T = transform_from_pose(*torso_pose) @ T
-    elif frame != "world":
-        raise ValueError(f"frame must be 'world' or 'torso', got {frame!r}")
-    return pose_from_transform(T)
+def resolve_world(pos, rpy, torso_pose):
+    """World-frame (pos, rot) of a torso-frame reference."""
+    torso_pos, torso_rot = torso_pose
+    world_pos = torso_pos + torso_rot @ np.asarray(pos, dtype=float)
+    world_rot = torso_rot @ rotation_from_rpy(rpy)
+    return world_pos, world_rot
 
 
 def _quat_from_rotation(rot):
@@ -59,10 +36,10 @@ def _quat_from_rotation(rot):
 def apply():
     torso_pose = frames.torso_pose()
 
-    pos, rot = resolve_world(RIGHT, torso_pose)
+    pos, rot = resolve_world(RIGHT["pos"], RIGHT["rpy"], torso_pose)
     targets.set_right_target(pos)
     targets.set_right_target_quat(_quat_from_rotation(rot))
 
-    pos, rot = resolve_world(LEFT, torso_pose)
+    pos, rot = resolve_world(LEFT["pos"], LEFT["rpy"], torso_pose)
     targets.set_left_target(pos)
     targets.set_left_target_quat(_quat_from_rotation(rot))
