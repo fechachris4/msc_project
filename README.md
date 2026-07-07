@@ -1,13 +1,33 @@
 # MSc Project — SRL MuJoCo Simulation
 
 MuJoCo simulation of a torso-mounted dual Kinova Gen3 (supernumerary robotic
-limbs) setup, working toward torque NMPC "chicken-head" base-motion
-stabilization.
+limbs). Current phase: a **reactive baseline controller** that holds a
+world-frame end-effector pose while the torso (the human) moves —
+"chicken-head" stabilization. Predictive control comes later, measured
+against this baseline.
+
+## Pipeline
+
+Per control step, all SI (meters, radians; mm only at prints/plots):
+
+```
+target mocap pose (world) + joint angles qpos      sim/targets, MuJoCo
+  -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  controller/frames (Pinocchio FK)
+  -> pose error  e = ref - actual (world)          controller/servo + pd
+  -> commanded twist v = Kp*e  [m/s; rad/s]        controller/pd (P law)
+  -> joint rates qdot via damped least squares     controller/pd (inversion)
+  -> integrate position-servo setpoints (rad)      controller/servo -> data.ctrl
+  -> mj_step
+```
+
+The EE pose is never read from MuJoCo in the control path — it is composed
+from the torso pose (future: Vicon) and arm FK (future: joint encoders),
+mirroring what the hardware will provide.
 
 ## Setup
 
-Requires the project virtual environment (Python 3.14 with `mujoco` and
-`matplotlib`):
+Requires the project virtual environment (Python 3.14 with `mujoco`,
+`pinocchio`, `numpy`, `matplotlib`):
 
 ```bash
 source .venv/bin/activate
@@ -21,51 +41,74 @@ If `.venv` is missing, recreate it from the Python.org framework install:
 
 **macOS note:** anything that opens the MuJoCo viewer must be run with
 `mjpython` (installed with the `mujoco` package), not plain `python` —
-`launch_passive` needs the main thread on macOS.
+`launch_passive` needs the main thread on macOS. Run everything from the
+repo root (model paths are CWD-relative).
 
 ## Running
 
-Bare simulation (viewer only):
+Closed-loop simulation with viewer (controlled arms selectable):
 
 ```bash
-mjpython main.py
+mjpython main.py [right|left|both]   # default: both
 ```
 
-FK validation — live plot comparing the directly measured right end-effector
-position against the FK-composed one (world → torso mocap → Kinova base → EE):
+Live position-error plot, one arm, headless (plain `python` is fine —
+no MuJoCo viewer; close the plot window to stop and save the figure):
 
 ```bash
-python -m plotting.fk_validation
+python -m plotting.right.position_error
+python -m plotting.left.position_error
 ```
 
-Live plot while the sim runs headless (no MuJoCo viewer, so plain python
-is fine — matplotlib needs the main thread on macOS). Close the plot window
-to stop; the figure is saved to `plots/fk_validation.png`.
+FK validation — MuJoCo's directly measured right EE position vs. the
+independently composed FK (world → torso → Kinova base → EE):
+
+```bash
+python -m plotting.right.fk_validation
+```
+
+Tests:
+
+```bash
+python -m unittest discover tests
+```
 
 ## Layout
 
 ```
-main.py                    bare sim loop (viewer + mj_step)
+main.py                    viewer loop: closed-loop world-frame pose hold
 sim/
-  scene.xml                MJCF scene: torso + dual Kinova Gen3
-  world.py                 model/data loading, cached body & site IDs
-  targets.py               set/read EE target positions (mocap spheres)
+  scene.xml                MJCF scene: torso mocap body + dual Kinova Gen3 + targets
+  world.py                 model/data singletons, checked id lookups
+  targets.py               set/read EE target poses (mocap spheres, world frame)
   assets/kinova_gen3/      vendored Kinova Gen3 model
 controller/
-  kinematics.py            frame transforms and FK for the right EE
-  reference.py             desired EE poses (edit + apply), world or torso frame
-  pd.py                    (placeholder) PD controller
+  transforms.py            pure SE(3)/rotation math (NumPy only)
+  pin_fk.py                Pinocchio FK for one arm: T_K_E(q)   [control path]
+  kinematics.py            analytical FK from MjModel constants [test reference only]
+  frames.py                world-frame EE pose + Jacobian: T_W_T · T_T_K · T_K_E
+  desired_pos.py           desired EE poses; resolved to world targets once
+  pd.py                    P law (v = Kp*e) + DLS inversion (v -> qdot), pure math
+  servo.py                 MuJoCo plumbing: errors, setpoint integration, data.ctrl
 plotting/
-  live_plot.py             generic live time-series plot (reusable, no MuJoCo)
-  fk_validation.py         direct-vs-FK EE validation: sampler + LivePlot
-tests/
-  test_kinematics.py       kinematics unit tests
+  live_plot.py             generic live time-series plot (no MuJoCo)
+  position_error.py        shared live position-error plot implementation
+  right/, left/            per-arm entry points (position_error, fk_validation)
+tests/                     unit + closed-loop tests (python -m unittest discover tests)
 ```
+
+Two FK implementations exist deliberately: `pin_fk.py` (Pinocchio) is the
+control path; `kinematics.py` (analytical, from MjModel constants only) is
+an independent cross-check that catches regressions in the Pinocchio path.
+Do not unify them.
 
 ## Conventions
 
-- Frames: `T_A_B` denotes the pose of frame B expressed in frame A
-  (see the docstring in `controller/kinematics.py`).
-- Positions in meters, world frame unless stated otherwise.
-- Each concern lives in its own module; scripts are runnable standalone via
-  `python -m <package>.<module>`.
+- Frames: `T_A_B` denotes the pose of frame B expressed in frame A.
+  W = world, T = torso, K = Kinova arm base, E = end-effector site.
+- Poses are passed as `(pos (3,) meters, R 3x3)` pairs; quaternions are
+  MuJoCo order `[w, x, y, z]`.
+- All internal math is SI (meters, radians). Millimetres appear only at
+  human-facing boundaries (prints, plots).
+- End-effector references are world-frame: resolved against the torso once
+  at startup, then held fixed in the world while the base moves.
