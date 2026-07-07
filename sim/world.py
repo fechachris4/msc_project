@@ -46,3 +46,14 @@ left_target_id = mujoco.mj_name2id(
     "left_target",
 )
 
+# ctrl indices of one arm's 7 position servos (ctrl index = actuator id)
+right_ctrl_adrs = [
+    mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"right_joint_{i}")
+    for i in range(1, 8)
+]
+left_ctrl_adrs = [
+    mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"left_joint_{i}")
+    for i in range(1, 8)
+]
+assert -1 not in right_ctrl_adrs and -1 not in left_ctrl_adrs
+

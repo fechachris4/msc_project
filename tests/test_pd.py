@@ -120,5 +120,109 @@ class PoseErrorWrapperTest(unittest.TestCase):
             )
 
 
+class QdotFromErrorTest(unittest.TestCase):
+    """DLS law, pure math: tracks the commanded twist, tends to pinv."""
+
+    def _random_case(self, rng):
+        J = rng.normal(size=(6, 7))  # full rank with probability 1
+        e_pos = rng.uniform(-0.2, 0.2, 3)
+        e_rot = rng.uniform(-0.5, 0.5, 3)
+        return J, e_pos, e_rot
+
+    def test_tracks_task_velocity_at_small_damping(self):
+        from controller import pd
+
+        rng = np.random.default_rng(10)
+        for _ in range(N_SAMPLES):
+            J, e_pos, e_rot = self._random_case(rng)
+            v = np.concatenate([pd.KP_POS * e_pos, pd.KP_ROT * e_rot])
+            qdot = pd.qdot_from_error(J, e_pos, e_rot, damping=1e-6)
+            np.testing.assert_allclose(J @ qdot, v, atol=1e-8)
+
+    def test_matches_pinv_as_damping_vanishes(self):
+        from controller import pd
+
+        rng = np.random.default_rng(11)
+        for _ in range(N_SAMPLES):
+            J, e_pos, e_rot = self._random_case(rng)
+            v = np.concatenate([pd.KP_POS * e_pos, pd.KP_ROT * e_rot])
+            qdot = pd.qdot_from_error(J, e_pos, e_rot, damping=1e-9)
+            np.testing.assert_allclose(
+                qdot, np.linalg.pinv(J) @ v, atol=1e-6
+            )
+
+
+HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
+        1.57079633]
+
+
+class ClosedLoopConvergenceTest(unittest.TestCase):
+    """The real proof: under gravity, the P controller must drive both
+    arms from home to a feasible world-frame target pose.
+
+    Targets are FK poses of perturbed reachable configurations, feasible
+    by construction — this tests the controller, not the reachability of
+    any particular task point. (The desired_pos task points are exercised
+    in main.py; the left one sits at joint_6's ctrl limit and keeps a
+    ~6 mm residual there by design of the clip, not a controller bug.)"""
+
+    SIM_SECONDS = 3.0
+    POS_TOL = 0.005  # m
+    ROT_TOL = 0.05   # rad
+
+    def test_converges_static_base(self):
+        from controller import frames, pd
+        from sim import targets, world
+
+        def reset():
+            mujoco.mj_resetData(world.model, world.data)
+            mujoco.mj_forward(world.model, world.data)
+
+        self.addCleanup(reset)
+
+        mujoco.mj_resetData(world.model, world.data)
+        rng = np.random.default_rng(12)
+        home = np.array(HOME)
+
+        arms = (
+            ("right", frames.right_qpos_adrs, frames.right_ee_pose,
+             targets.set_right_target, targets.set_right_target_quat,
+             pd.right_pose_error),
+            ("left", frames.left_qpos_adrs, frames.left_ee_pose,
+             targets.set_left_target, targets.set_left_target_quat,
+             pd.left_pose_error),
+        )
+
+        for _, qpos_adrs, ee_pose, set_pos, set_quat, _err in arms:
+            world.data.qpos[qpos_adrs] = home + rng.uniform(-0.3, 0.3, 7)
+            mujoco.mj_kinematics(world.model, world.data)
+            pos, rot = ee_pose()
+            quat = np.zeros(4)
+            mujoco.mju_mat2Quat(quat, rot.flatten())
+            set_pos(pos)
+            set_quat(quat)
+
+        for _, qpos_adrs, *_rest in arms:
+            world.data.qpos[qpos_adrs] = home
+        mujoco.mj_forward(world.model, world.data)
+        pd.init_ctrl()
+
+        e0 = {name: np.linalg.norm(err()[0])
+              for name, *_, err in arms}
+
+        dt = world.model.opt.timestep
+        for _ in range(int(self.SIM_SECONDS / dt)):
+            world.data.ctrl[world.right_ctrl_adrs] = pd.right_ctrl(dt)
+            world.data.ctrl[world.left_ctrl_adrs] = pd.left_ctrl(dt)
+            mujoco.mj_step(world.model, world.data)
+
+        for name, *_, err in arms:
+            e_pos, e_rot = err()
+            e_norm = np.linalg.norm(e_pos)
+            self.assertLess(e_norm, self.POS_TOL, name)
+            self.assertLess(e_norm, e0[name] / 10.0, name)
+            self.assertLess(np.linalg.norm(e_rot), self.ROT_TOL, name)
+
+
 if __name__ == "__main__":
     unittest.main()
