@@ -26,7 +26,7 @@ def sample():
 
 def main():
     plot = LivePlot(
-        rows=["X (m)", "Y (m)", "Z (m)"],
+        rows=["X (mm)", "Y (mm)", "Z (mm)"],
         signals={"direct (MuJoCo)": {}, "FK": {"style": "--"}},
         title="Right EE position: direct vs FK",
     )
@@ -35,7 +35,8 @@ def main():
         # refresh site poses: mj_step advances qpos after computing them
         mujoco.mj_kinematics(world.model, world.data)
         t, direct_pos, fk_pos = sample()
-        plot.add(t, {"direct (MuJoCo)": direct_pos, "FK": fk_pos})
+        plot.add(t, {"direct (MuJoCo)": direct_pos * 1000.0,
+                     "FK": fk_pos * 1000.0})
 
     plot.save("plots/fk_validation.png")
     print("Saved plots/fk_validation.png")
