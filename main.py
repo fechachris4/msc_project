@@ -16,7 +16,7 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
-from controller import desired_pos, servo
+from controller import desired_pos, frames, servo
 from sim import motion, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
@@ -43,9 +43,14 @@ with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
             for side in world.SIDES:
                 e_pos, _ = servo.pose_error(side)
                 e_mm = e_pos * 1000.0
+                # Jacobian singular values, descending: sigma_min -> 0 means
+                # a task direction is being lost (near-singular, DLS working).
+                sigma = np.linalg.svd(frames.jacobian_world(side),
+                                      compute_uv=False)
                 print(f"t={world.data.time:6.2f}s  {side:5s} "
                       f"|e|={np.linalg.norm(e_mm):.1f} mm  "
-                      f"e_pos=[{e_mm[0]: 7.1f} {e_mm[1]: 7.1f} {e_mm[2]: 7.1f}]")
+                      f"e_pos=[{e_mm[0]: 7.1f} {e_mm[1]: 7.1f} {e_mm[2]: 7.1f}]  "
+                      f"sigma=[{' '.join(f'{s:.3f}' for s in sigma)}]")
         step += 1
 
         viewer.sync()
