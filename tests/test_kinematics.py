@@ -228,5 +228,73 @@ class WorldFrameEETest(unittest.TestCase):
         self._check_moved_torso(frames.left_ee_pose, "left_pinch_site")
 
 
+class JacobianWorldTest(unittest.TestCase):
+    """frames.right/left_jacobian_world vs MuJoCo's mj_jacSite at random
+    configurations AND random torso poses. The torso is mocap (no dofs),
+    so the arm dof columns are the complete Jacobian."""
+
+    N_SAMPLES = 50
+    ATOL = 1e-9
+
+    def test_jacobians_match_mujoco(self):
+        import mujoco
+        from controller import frames
+        from sim import world
+
+        arms = []
+        for prefix, jac in (("right_", frames.right_jacobian_world),
+                            ("left_", frames.left_jacobian_world)):
+            site_id = mujoco.mj_name2id(
+                world.model, mujoco.mjtObj.mjOBJ_SITE, prefix + "pinch_site"
+            )
+            dof_adrs = [
+                int(world.model.jnt_dofadr[mujoco.mj_name2id(
+                    world.model, mujoco.mjtObj.mjOBJ_JOINT,
+                    f"{prefix}joint_{i}"
+                )])
+                for i in range(1, 8)
+            ]
+            arms.append((jac, site_id, dof_adrs))
+
+        mocap_idx = world.model.body_mocapid[world.torso_mocap_id]
+        init_pos = world.data.mocap_pos[mocap_idx].copy()
+        init_quat = world.data.mocap_quat[mocap_idx].copy()
+
+        def restore():
+            world.data.mocap_pos[mocap_idx] = init_pos
+            world.data.mocap_quat[mocap_idx] = init_quat
+            mujoco.mj_kinematics(world.model, world.data)
+
+        self.addCleanup(restore)
+
+        rng = np.random.default_rng(13)
+        jacp = np.zeros((3, world.model.nv))
+        jacr = np.zeros((3, world.model.nv))
+        for _ in range(self.N_SAMPLES):
+            world.data.mocap_pos[mocap_idx] = (
+                np.array([0.0, 0.0, 1.1]) + rng.uniform(-0.5, 0.5, 3)
+            )
+            quat = rng.standard_normal(4)
+            world.data.mocap_quat[mocap_idx] = quat / np.linalg.norm(quat)
+            for jnt_id in range(world.model.njnt):
+                adr = world.model.jnt_qposadr[jnt_id]
+                if world.model.jnt_limited[jnt_id]:
+                    low, high = world.model.jnt_range[jnt_id]
+                else:
+                    low, high = -np.pi, np.pi
+                world.data.qpos[adr] = rng.uniform(low, high)
+            mujoco.mj_kinematics(world.model, world.data)
+            mujoco.mj_comPos(world.model, world.data)
+
+            for jac, site_id, dof_adrs in arms:
+                mujoco.mj_jacSite(world.model, world.data, jacp, jacr,
+                                  site_id)
+                J_expected = np.vstack(
+                    [jacp[:, dof_adrs], jacr[:, dof_adrs]]
+                )
+                np.testing.assert_allclose(jac(), J_expected,
+                                           atol=self.ATOL)
+
+
 if __name__ == "__main__":
     unittest.main()

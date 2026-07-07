@@ -1,4 +1,6 @@
 import mujoco
+import numpy as np
+import pinocchio as pin
 
 from controller.pin_fk import build_pin_model, pin_T_K_E
 from controller.transforms import (
@@ -67,6 +69,31 @@ def right_ee_pose():
 
 def left_ee_pose():
     return _ee_pose_world(T_T_KL, left_qpos_adrs)
+
+
+def _jacobian_world(T_T_K, qpos_adrs):
+    """World-aligned EE frame Jacobian, 6x7: linear rows then angular.
+
+    Pinocchio computes it aligned with the arm base K; both blocks are
+    rotated by R_W_K = R_W_T @ R_T_K. The base is kinematic (mocap), so
+    the joint columns are the complete Jacobian."""
+    q = np.asarray(world.data.qpos[qpos_adrs], dtype=float)
+    J_K = pin.computeFrameJacobian(pin_model, pin_data, q, ee_frame_id,
+                                   pin.LOCAL_WORLD_ALIGNED)
+    _, torso_rot = torso_pose()
+    R_W_K = torso_rot @ T_T_K[:3, :3]
+    J = np.empty_like(J_K)
+    J[:3] = R_W_K @ J_K[:3]
+    J[3:] = R_W_K @ J_K[3:]
+    return J
+
+
+def right_jacobian_world():
+    return _jacobian_world(T_T_KR, right_qpos_adrs)
+
+
+def left_jacobian_world():
+    return _jacobian_world(T_T_KL, left_qpos_adrs)
 
 
 def measured_right_ee_pose():
