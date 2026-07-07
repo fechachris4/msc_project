@@ -3,6 +3,17 @@ import unittest
 import numpy as np
 
 
+def geodesic_angle(R_a, R_b):
+    # atan2(sin, cos) form: arccos((tr-1)/2) alone loses precision below
+    # ~1e-7 rad near identity, which is coarser than the 1e-9 tolerance.
+    R = R_a.T @ R_b
+    sin_theta = 0.5 * np.linalg.norm(
+        [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]
+    )
+    cos_theta = (np.trace(R) - 1.0) / 2.0
+    return float(np.arctan2(sin_theta, cos_theta))
+
+
 def rotation_z(theta):
     c = np.cos(theta)
     s = np.sin(theta)
@@ -174,7 +185,7 @@ class WorldFrameEETest(unittest.TestCase):
         self.addCleanup(restore)
 
         rng = np.random.default_rng(11)
-        for _ in range(20):
+        for _ in range(50):
             world.data.mocap_pos[mocap_idx] = (
                 np.array([0.0, 0.0, 1.1]) + rng.uniform(-0.5, 0.5, 3)
             )
@@ -193,8 +204,11 @@ class WorldFrameEETest(unittest.TestCase):
             np.testing.assert_allclose(
                 pos, world.data.site_xpos[site_id], atol=1e-9
             )
-            np.testing.assert_allclose(
-                rot, world.data.site_xmat[site_id].reshape(3, 3), atol=1e-9
+            self.assertLess(
+                geodesic_angle(
+                    rot, world.data.site_xmat[site_id].reshape(3, 3)
+                ),
+                1e-9,
             )
 
     def test_right_ee_pose_matches_mujoco(self):
