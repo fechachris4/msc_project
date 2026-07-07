@@ -49,7 +49,8 @@ repo root (model paths are CWD-relative).
 Closed-loop simulation with viewer (controlled arms selectable):
 
 ```bash
-mjpython main.py [right|left|both]   # default: both
+mjpython main.py [right|left|both]        # default: both, static base
+mjpython main.py both move                # with scripted base sway
 ```
 
 Live position-error plot, one arm, headless (plain `python` is fine —
@@ -58,6 +59,7 @@ no MuJoCo viewer; close the plot window to stop and save the figure):
 ```bash
 python -m plotting.position_error right
 python -m plotting.position_error left
+python -m plotting.position_error right move   # with base motion
 ```
 
 FK validation — MuJoCo's directly measured right EE position vs. the
@@ -81,6 +83,7 @@ sim/
   scene.xml                MJCF scene: torso mocap body + dual Kinova Gen3 + targets
   world.py                 model/data singletons, checked id lookups
   targets.py               set/read EE target poses (mocap spheres, world frame)
+  motion.py                scripted base motion: sinusoidal torso disturbance
   assets/kinova_gen3/      vendored Kinova Gen3 model
 controller/
   transforms.py            pure SE(3)/rotation math (NumPy only)
