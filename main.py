@@ -16,8 +16,7 @@ step = 0
 with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
     while viewer.is_running():
         step_start = time.time()
-        world.data.ctrl[world.right_ctrl_adrs] = servo.right_ctrl(world.model.opt.timestep)
-        world.data.ctrl[world.left_ctrl_adrs] = servo.left_ctrl(world.model.opt.timestep)
+        servo.apply_ctrl(world.model.opt.timestep)
         mujoco.mj_step(world.model, world.data)
 
         if step % PRINT_EVERY == 0:
