@@ -1,7 +1,8 @@
 """Load the scene and cache the model ids the rest of the code addresses.
 
 model/data are module-level singletons: one simulation per process, shared
-by controller, plotting, and tests alike.
+by controller, plotting, and tests alike. Per-arm ids are dicts keyed by
+side ("right" | "left") — SIDES is the canonical tuple.
 """
 
 import mujoco
@@ -9,6 +10,8 @@ import mujoco
 model = mujoco.MjModel.from_xml_path("sim/scene.xml")
 data = mujoco.MjData(model)
 mujoco.mj_forward(model, data)
+
+SIDES = ("right", "left")
 
 
 def _named_id(objtype, name):
@@ -18,23 +21,18 @@ def _named_id(objtype, name):
     return obj_id
 
 
-right_ee_id = _named_id(mujoco.mjtObj.mjOBJ_SITE, "right_pinch_site")
-left_ee_id = _named_id(mujoco.mjtObj.mjOBJ_SITE, "left_pinch_site")
+ee_site_id = {s: _named_id(mujoco.mjtObj.mjOBJ_SITE, f"{s}_pinch_site")
+              for s in SIDES}
 
 # Body ids (index data.xpos/xmat), NOT mocap indices (data.mocap_pos);
 # convert via model.body_mocapid[body_id] where a mocap index is needed.
 torso_body_id = _named_id(mujoco.mjtObj.mjOBJ_BODY, "torso")
-kinova_right_base_id = _named_id(mujoco.mjtObj.mjOBJ_BODY, "right_base_link")
-kinova_left_base_id = _named_id(mujoco.mjtObj.mjOBJ_BODY, "left_base_link")
-right_target_id = _named_id(mujoco.mjtObj.mjOBJ_BODY, "right_target")
-left_target_id = _named_id(mujoco.mjtObj.mjOBJ_BODY, "left_target")
+arm_base_id = {s: _named_id(mujoco.mjtObj.mjOBJ_BODY, f"{s}_base_link")
+               for s in SIDES}
+target_body_id = {s: _named_id(mujoco.mjtObj.mjOBJ_BODY, f"{s}_target")
+                  for s in SIDES}
 
 # ctrl indices of one arm's 7 position servos (ctrl index = actuator id)
-right_ctrl_adrs = [
-    _named_id(mujoco.mjtObj.mjOBJ_ACTUATOR, f"right_joint_{i}")
-    for i in range(1, 8)
-]
-left_ctrl_adrs = [
-    _named_id(mujoco.mjtObj.mjOBJ_ACTUATOR, f"left_joint_{i}")
-    for i in range(1, 8)
-]
+ctrl_adrs = {s: [_named_id(mujoco.mjtObj.mjOBJ_ACTUATOR, f"{s}_joint_{i}")
+                 for i in range(1, 8)]
+             for s in SIDES}

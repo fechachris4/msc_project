@@ -61,12 +61,12 @@ class PoseErrorPureTest(unittest.TestCase):
 
 
 class PoseErrorWrapperTest(unittest.TestCase):
-    def _randomize_arm(self, rng, prefix):
+    def _randomize_arm(self, rng, side):
         from sim import world
 
         for i in range(1, 8):
             jnt_id = mujoco.mj_name2id(
-                world.model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}joint_{i}"
+                world.model, mujoco.mjtObj.mjOBJ_JOINT, f"{side}_joint_{i}"
             )
             if world.model.jnt_limited[jnt_id]:
                 low, high = world.model.jnt_range[jnt_id]
@@ -76,15 +76,18 @@ class PoseErrorWrapperTest(unittest.TestCase):
                 low, high
             )
 
-    def _check_arm(self, rng, ee_pose, set_pos, set_quat, pose_error):
-        ee_pos, ee_rot = ee_pose()
+    def _check_arm(self, rng, side):
+        from controller import frames, servo
+        from sim import targets
+
+        ee_pos, ee_rot = frames.ee_pose(side)
 
         # Target at the FK pose -> zero error.
         quat = np.zeros(4)
         mujoco.mju_mat2Quat(quat, ee_rot.flatten())
-        set_pos(ee_pos)
-        set_quat(quat)
-        e_pos, e_rot = pose_error()
+        targets.set_target(side, ee_pos)
+        targets.set_target_quat(side, quat)
+        e_pos, e_rot = servo.pose_error(side)
         np.testing.assert_allclose(e_pos, np.zeros(3), atol=WRAP_TOL)
         np.testing.assert_allclose(e_rot, np.zeros(3), atol=WRAP_TOL)
 
@@ -94,30 +97,23 @@ class PoseErrorWrapperTest(unittest.TestCase):
         mujoco.mju_mat2Quat(
             quat, (rotation_about_axis(axis, angle) @ ee_rot).flatten()
         )
-        set_pos(ee_pos + delta_pos)
-        set_quat(quat)
-        e_pos, e_rot = pose_error()
+        targets.set_target(side, ee_pos + delta_pos)
+        targets.set_target_quat(side, quat)
+        e_pos, e_rot = servo.pose_error(side)
         np.testing.assert_allclose(e_pos, delta_pos, atol=WRAP_TOL)
         np.testing.assert_allclose(e_rot, axis * angle, atol=WRAP_TOL)
 
     def test_wrappers_recover_offsets(self):
-        from controller import frames, servo
-        from sim import targets, world
+        from sim import world
 
         rng = np.random.default_rng(9)
         for _ in range(5):
-            self._randomize_arm(rng, "right_")
-            self._randomize_arm(rng, "left_")
+            for side in world.SIDES:
+                self._randomize_arm(rng, side)
             mujoco.mj_kinematics(world.model, world.data)
 
-            self._check_arm(
-                rng, frames.right_ee_pose, targets.set_right_target,
-                targets.set_right_target_quat, servo.right_pose_error,
-            )
-            self._check_arm(
-                rng, frames.left_ee_pose, targets.set_left_target,
-                targets.set_left_target_quat, servo.left_pose_error,
-            )
+            for side in world.SIDES:
+                self._check_arm(rng, side)
 
 
 class QdotFromErrorTest(unittest.TestCase):
@@ -170,21 +166,21 @@ class ArmSelectionTest(unittest.TestCase):
         self.addCleanup(reset)
 
         mujoco.mj_resetData(world.model, world.data)
-        world.data.qpos[frames.right_qpos_adrs] = HOME
-        world.data.qpos[frames.left_qpos_adrs] = HOME
+        for side in world.SIDES:
+            world.data.qpos[frames.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
         desired_pos.apply()
         servo.init_ctrl()
 
-        before_left = world.data.ctrl[world.left_ctrl_adrs].copy()
-        before_right = world.data.ctrl[world.right_ctrl_adrs].copy()
+        before = {side: world.data.ctrl[world.ctrl_adrs[side]].copy()
+                  for side in world.SIDES}
         servo.apply_ctrl(world.model.opt.timestep, arms=("right",))
 
         np.testing.assert_array_equal(
-            world.data.ctrl[world.left_ctrl_adrs], before_left
+            world.data.ctrl[world.ctrl_adrs["left"]], before["left"]
         )
         self.assertTrue(np.any(
-            world.data.ctrl[world.right_ctrl_adrs] != before_right
+            world.data.ctrl[world.ctrl_adrs["right"]] != before["right"]
         ))
 
 
@@ -216,43 +212,35 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
         rng = np.random.default_rng(12)
         home = np.array(HOME)
 
-        arms = (
-            ("right", frames.right_qpos_adrs, frames.right_ee_pose,
-             targets.set_right_target, targets.set_right_target_quat,
-             servo.right_pose_error),
-            ("left", frames.left_qpos_adrs, frames.left_ee_pose,
-             targets.set_left_target, targets.set_left_target_quat,
-             servo.left_pose_error),
-        )
-
-        for _, qpos_adrs, ee_pose, set_pos, set_quat, _err in arms:
-            world.data.qpos[qpos_adrs] = home + rng.uniform(-0.3, 0.3, 7)
+        for side in world.SIDES:
+            world.data.qpos[frames.qpos_adrs[side]] = \
+                home + rng.uniform(-0.3, 0.3, 7)
             mujoco.mj_kinematics(world.model, world.data)
-            pos, rot = ee_pose()
+            pos, rot = frames.ee_pose(side)
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
-            set_pos(pos)
-            set_quat(quat)
+            targets.set_target(side, pos)
+            targets.set_target_quat(side, quat)
 
-        for _, qpos_adrs, *_rest in arms:
-            world.data.qpos[qpos_adrs] = home
+        for side in world.SIDES:
+            world.data.qpos[frames.qpos_adrs[side]] = home
         mujoco.mj_forward(world.model, world.data)
         servo.init_ctrl()
 
-        e0 = {name: np.linalg.norm(err()[0])
-              for name, *_, err in arms}
+        e0 = {side: np.linalg.norm(servo.pose_error(side)[0])
+              for side in world.SIDES}
 
         dt = world.model.opt.timestep
         for _ in range(int(self.SIM_SECONDS / dt)):
             servo.apply_ctrl(dt)
             mujoco.mj_step(world.model, world.data)
 
-        for name, *_, err in arms:
-            e_pos, e_rot = err()
+        for side in world.SIDES:
+            e_pos, e_rot = servo.pose_error(side)
             e_norm = np.linalg.norm(e_pos)
-            self.assertLess(e_norm, self.POS_TOL, name)
-            self.assertLess(e_norm, e0[name] / 10.0, name)
-            self.assertLess(np.linalg.norm(e_rot), self.ROT_TOL, name)
+            self.assertLess(e_norm, self.POS_TOL, side)
+            self.assertLess(e_norm, e0[side] / 10.0, side)
+            self.assertLess(np.linalg.norm(e_rot), self.ROT_TOL, side)
 
 
 if __name__ == "__main__":

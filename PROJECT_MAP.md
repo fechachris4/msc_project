@@ -35,7 +35,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
     └── plotting/
         ├── live_plot.py               (generic live time-series plot)
         ├── position_error.py          (shared live error plot, closed loop)
-        └── right/, left/              (per-arm entry points; right also has fk_validation)
+        └── fk_validation.py           (live direct-vs-FK comparison, right arm)
 
 MISSING LINKS in the pipeline:  scripted base motion → metrics (RMSE/peak) → thesis plots
 ```
@@ -56,8 +56,8 @@ MISSING LINKS in the pipeline:  scripted base motion → metrics (RMSE/peak) →
 | `controller/servo.py` | The controller: P law + DLS (pure math) + MuJoCo plumbing (errors, setpoint integration, qdot limits) | Validated | frames, targets, world | main, plotting | `test_servo`: pure errors, DLS vs pinv, wrapper offsets, arm selection, `ClosedLoopConvergenceTest` | High | Touch only if needed |
 | `main.py` | Viewer loop, closed loop, arm selection CLI | Implemented | desired_pos, servo, world | user | Loop body shared with `ClosedLoopConvergenceTest` via `apply_ctrl` | Medium-High | Grows with base motion |
 | `plotting/live_plot.py` | Generic live plot | Implemented | matplotlib | position_error, fk_validation | None (visually exercised) | Medium | Do not touch |
-| `plotting/position_error.py` + `right/`,`left/` | Live closed-loop error plots | Implemented | servo, world, live_plot | user | Visual only | Medium | Touch only if needed |
-| `plotting/right/fk_validation.py` | Live direct-vs-FK comparison | Implemented | frames, world, live_plot | user | Visual only | Medium | Touch only if needed |
+| `plotting/position_error.py` | Live closed-loop error plots (side from CLI) | Implemented | servo, world, live_plot | user | Visual only | Medium | Touch only if needed |
+| `plotting/fk_validation.py` | Live direct-vs-FK comparison | Implemented | frames, world, live_plot | user | Visual only | Medium | Touch only if needed |
 | `README.md` | Setup + pipeline + layout docs | Current (refreshed 2026-07-07) | — | — | — | High | Keep in sync |
 | `tasks/todo.md` | Historical task log | Stale (history, not current state) | — | — | — | — | Do not touch (append-only) |
 | `docs/superpowers/` | FK design spec + plan (2026-07-06) | Done, matches code | — | — | — | High | Do not touch |
@@ -133,8 +133,8 @@ sim/assets/kinova_gen3/gen3.xml (vendored, position-servo actuators)
 │       ├── controller/desired_pos.py  (frames + transforms + targets)
 │       ├── controller/servo.py  (frames + targets; P law + DLS inside)
 │       │   ├── main.py  (viewer closed loop)
-│       │   └── plotting/position_error.py → right/, left/ entry points
-│       └── plotting/right/fk_validation.py (frames, no controller)
+│       │   └── plotting/position_error.py  (side from CLI arg)
+│       └── plotting/fk_validation.py (frames, no controller)
 │           └── plotting/live_plot.py  (matplotlib only, MuJoCo-free)
 └── tests/  (test_kinematics, test_pin_fk, test_reference, test_transforms, test_servo)
 ```

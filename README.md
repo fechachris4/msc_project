@@ -56,15 +56,15 @@ Live position-error plot, one arm, headless (plain `python` is fine —
 no MuJoCo viewer; close the plot window to stop and save the figure):
 
 ```bash
-python -m plotting.right.position_error
-python -m plotting.left.position_error
+python -m plotting.position_error right
+python -m plotting.position_error left
 ```
 
 FK validation — MuJoCo's directly measured right EE position vs. the
 independently composed FK (world → torso → Kinova base → EE):
 
 ```bash
-python -m plotting.right.fk_validation
+python -m plotting.fk_validation
 ```
 
 Tests:
@@ -92,8 +92,8 @@ controller/
                            plumbing (errors, setpoint integration, data.ctrl)
 plotting/
   live_plot.py             generic live time-series plot (no MuJoCo)
-  position_error.py        shared live position-error plot implementation
-  right/, left/            per-arm entry points (position_error, fk_validation)
+  position_error.py        live position-error plot (side from CLI arg)
+  fk_validation.py         live direct-vs-FK comparison (right arm)
 tests/                     unit + closed-loop tests (python -m unittest discover tests)
 ```
 

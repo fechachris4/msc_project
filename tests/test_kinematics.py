@@ -134,7 +134,7 @@ class AnalyticalFKTest(unittest.TestCase):
 
 
 class WorldFrameEETest(unittest.TestCase):
-    """frames.right/left_ee_pose must match MuJoCo's world EE pose while
+    """frames.ee_pose(side) must match MuJoCo's world EE pose while
     reading the EE pose only on the comparison side."""
 
     def _check(self, ee_pose, site_id_name):
@@ -211,25 +211,23 @@ class WorldFrameEETest(unittest.TestCase):
                 1e-9,
             )
 
-    def test_right_ee_pose_matches_mujoco(self):
+    def test_ee_pose_matches_mujoco(self):
         from controller import frames
-        self._check(frames.right_ee_pose, "right_pinch_site")
+        from sim import world
+        for side in world.SIDES:
+            self._check(lambda s=side: frames.ee_pose(s),
+                        f"{side}_pinch_site")
 
-    def test_left_ee_pose_matches_mujoco(self):
+    def test_ee_pose_matches_mujoco_under_moved_torso(self):
         from controller import frames
-        self._check(frames.left_ee_pose, "left_pinch_site")
-
-    def test_right_ee_pose_matches_mujoco_under_moved_torso(self):
-        from controller import frames
-        self._check_moved_torso(frames.right_ee_pose, "right_pinch_site")
-
-    def test_left_ee_pose_matches_mujoco_under_moved_torso(self):
-        from controller import frames
-        self._check_moved_torso(frames.left_ee_pose, "left_pinch_site")
+        from sim import world
+        for side in world.SIDES:
+            self._check_moved_torso(lambda s=side: frames.ee_pose(s),
+                                    f"{side}_pinch_site")
 
 
 class JacobianWorldTest(unittest.TestCase):
-    """frames.right/left_jacobian_world vs MuJoCo's mj_jacSite at random
+    """frames.jacobian_world(side) vs MuJoCo's mj_jacSite at random
     configurations AND random torso poses. The torso is mocap (no dofs),
     so the arm dof columns are the complete Jacobian."""
 
@@ -242,19 +240,19 @@ class JacobianWorldTest(unittest.TestCase):
         from sim import world
 
         arms = []
-        for prefix, jac in (("right_", frames.right_jacobian_world),
-                            ("left_", frames.left_jacobian_world)):
+        for side in world.SIDES:
             site_id = mujoco.mj_name2id(
-                world.model, mujoco.mjtObj.mjOBJ_SITE, prefix + "pinch_site"
+                world.model, mujoco.mjtObj.mjOBJ_SITE, f"{side}_pinch_site"
             )
             dof_adrs = [
                 int(world.model.jnt_dofadr[mujoco.mj_name2id(
                     world.model, mujoco.mjtObj.mjOBJ_JOINT,
-                    f"{prefix}joint_{i}"
+                    f"{side}_joint_{i}"
                 )])
                 for i in range(1, 8)
             ]
-            arms.append((jac, site_id, dof_adrs))
+            arms.append((lambda s=side: frames.jacobian_world(s),
+                         site_id, dof_adrs))
 
         mocap_idx = world.model.body_mocapid[world.torso_body_id]
         init_pos = world.data.mocap_pos[mocap_idx].copy()
