@@ -3,7 +3,7 @@ analytical FK (extract_chain/fk, computed from qpos and model constants only),
 plotted while the simulation runs (headless — no MuJoCo viewer, so plain
 python works):
 
-    python -m plotting.fk_validation
+    python -m plotting.right.fk_validation
 
 Close the plot window to stop; the figure is saved to plots/fk_validation.png.
 The two traces are computed independently — agreement here validates the
