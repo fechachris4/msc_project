@@ -72,10 +72,18 @@ def left_ctrl(dt):
                  world.left_ctrl_adrs, _LEFT_BOUNDS)
 
 
-def apply_ctrl(dt):
-    """Write both arms' updated servo setpoints into data.ctrl.
+_ARMS = {
+    "right": (right_ctrl, world.right_ctrl_adrs),
+    "left": (left_ctrl, world.left_ctrl_adrs),
+}
+
+
+def apply_ctrl(dt, arms=("right", "left")):
+    """Write the selected arms' updated servo setpoints into data.ctrl.
 
     The one loop-body block every front-end (viewer, plots, tests) must
-    share — call it once per step, before mj_step."""
-    world.data.ctrl[world.right_ctrl_adrs] = right_ctrl(dt)
-    world.data.ctrl[world.left_ctrl_adrs] = left_ctrl(dt)
+    share — call it once per step, before mj_step. An unselected arm
+    keeps its init_ctrl() setpoints and simply holds posture."""
+    for name in arms:
+        ctrl_fn, ctrl_adrs = _ARMS[name]
+        world.data.ctrl[ctrl_adrs] = ctrl_fn(dt)
