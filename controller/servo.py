@@ -53,20 +53,11 @@ def qdot_from_error(J, e_pos, e_rot, damping=DAMPING):
 # --- pose error from sim state (target mocap vs frames FK) ------------------
 
 
-def right_pose_error():
-    """(e_pos, e_rot) of the right arm: target mocap vs FK EE pose."""
-    ee_pos, ee_rot = frames.right_ee_pose()
-    ref_pos = targets.right_target_position()
-    ref_rot = rotation_from_quat(targets.right_target_quat())
-    return (position_error(ref_pos, ee_pos),
-            rotation_error(ref_rot, ee_rot))
-
-
-def left_pose_error():
-    """(e_pos, e_rot) of the left arm: target mocap vs FK EE pose."""
-    ee_pos, ee_rot = frames.left_ee_pose()
-    ref_pos = targets.left_target_position()
-    ref_rot = rotation_from_quat(targets.left_target_quat())
+def pose_error(side):
+    """(e_pos, e_rot) of one arm: target mocap vs FK EE pose."""
+    ee_pos, ee_rot = frames.ee_pose(side)
+    ref_pos = targets.target_position(side)
+    ref_rot = rotation_from_quat(targets.target_quat(side))
     return (position_error(ref_pos, ee_pos),
             rotation_error(ref_rot, ee_rot))
 
@@ -87,17 +78,17 @@ def _ctrl_bounds(ctrl_adrs):
     return low, high
 
 
-_RIGHT_BOUNDS = _ctrl_bounds(world.right_ctrl_adrs)
-_LEFT_BOUNDS = _ctrl_bounds(world.left_ctrl_adrs)
+_BOUNDS = {s: _ctrl_bounds(world.ctrl_adrs[s]) for s in world.SIDES}
 
 
 def init_ctrl():
     """Sync servo setpoints to the current joint angles (once, pre-loop)."""
-    world.data.ctrl[world.right_ctrl_adrs] = world.data.qpos[frames.right_qpos_adrs]
-    world.data.ctrl[world.left_ctrl_adrs] = world.data.qpos[frames.left_qpos_adrs]
+    for side in world.SIDES:
+        world.data.ctrl[world.ctrl_adrs[side]] = \
+            world.data.qpos[frames.qpos_adrs[side]]
 
 
-def apply_ctrl(dt, arms=("right", "left")):
+def apply_ctrl(dt, arms=world.SIDES):
     """Write the selected arms' updated servo setpoints into data.ctrl:
     pose error -> qdot -> clip to the joint speed limits ->
     integrate the setpoints by qdot*dt -> clip to the actuator ctrl range.
@@ -105,15 +96,9 @@ def apply_ctrl(dt, arms=("right", "left")):
     The one loop-body block every front-end (viewer, plots, tests) must
     share — call it once per step, before mj_step. An unselected arm
     keeps its init_ctrl() setpoints and simply holds posture."""
-    if "right" in arms:
-        e_pos, e_rot = right_pose_error()
-        qdot = qdot_from_error(frames.right_jacobian_world(), e_pos, e_rot)
+    for side in arms:
+        e_pos, e_rot = pose_error(side)
+        qdot = qdot_from_error(frames.jacobian_world(side), e_pos, e_rot)
         qdot = np.clip(qdot, -QDOT_LIMIT, QDOT_LIMIT)
-        ctrl = world.data.ctrl[world.right_ctrl_adrs] + qdot * dt
-        world.data.ctrl[world.right_ctrl_adrs] = np.clip(ctrl, *_RIGHT_BOUNDS)
-    if "left" in arms:
-        e_pos, e_rot = left_pose_error()
-        qdot = qdot_from_error(frames.left_jacobian_world(), e_pos, e_rot)
-        qdot = np.clip(qdot, -QDOT_LIMIT, QDOT_LIMIT)
-        ctrl = world.data.ctrl[world.left_ctrl_adrs] + qdot * dt
-        world.data.ctrl[world.left_ctrl_adrs] = np.clip(ctrl, *_LEFT_BOUNDS)
+        ctrl = world.data.ctrl[world.ctrl_adrs[side]] + qdot * dt
+        world.data.ctrl[world.ctrl_adrs[side]] = np.clip(ctrl, *_BOUNDS[side])

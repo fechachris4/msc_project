@@ -3,7 +3,7 @@ analytical FK (extract_chain/fk, computed from qpos and model constants only),
 plotted while the simulation runs (headless — no MuJoCo viewer, so plain
 python works):
 
-    python -m plotting.right.fk_validation
+    python -m plotting.fk_validation
 
 Close the plot window to stop; the figure is saved to plots/fk_validation.png.
 The two traces are computed independently — agreement here validates the
@@ -19,8 +19,8 @@ from sim import world
 
 def sample():
     """One comparison sample: (sim time, direct EE xyz, FK-composed EE xyz)."""
-    fk_pos, _ = frames.right_ee_pose()
-    direct_pos = world.data.site_xpos[world.right_ee_id].copy()
+    fk_pos, _ = frames.ee_pose("right")
+    direct_pos = world.data.site_xpos[world.ee_site_id["right"]].copy()
     return world.data.time, direct_pos, fk_pos
 
 

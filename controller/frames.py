@@ -36,11 +36,9 @@ def arm_qpos_adrs(model, prefix):
 pin_model, pin_data, ee_frame_id = build_pin_model(
     "sim/assets/kinova_gen3/gen3.xml", "base_link", "pinch_site"
 )
-right_qpos_adrs = arm_qpos_adrs(world.model, "right_")
-left_qpos_adrs = arm_qpos_adrs(world.model, "left_")
-
-T_T_KR = mount_transform(world.model, world.kinova_right_base_id)
-T_T_KL = mount_transform(world.model, world.kinova_left_base_id)
+qpos_adrs = {s: arm_qpos_adrs(world.model, f"{s}_") for s in world.SIDES}
+_T_T_K = {s: mount_transform(world.model, world.arm_base_id[s])
+          for s in world.SIDES}
 
 
 def torso_pose():
@@ -53,7 +51,7 @@ def torso_pose():
     return pos, rot
 
 
-def _ee_pose_world(T_T_K, qpos_adrs):
+def ee_pose(side):
     """T_W_E(q, t) = T_W_T(t) · T_T_K · T_K_E(q).
 
     T_W_T is the torso pose in the world frame, as MuJoCo measures it; T_T_K is
@@ -62,52 +60,30 @@ def _ee_pose_world(T_T_K, qpos_adrs):
     """
     T_W_T = transform_from_pose(*torso_pose())
     T_K_E = pin_T_K_E(pin_model, pin_data, ee_frame_id,
-                      world.data.qpos[qpos_adrs])
-    return pose_from_transform(T_W_T @ T_T_K @ T_K_E)
+                      world.data.qpos[qpos_adrs[side]])
+    return pose_from_transform(T_W_T @ _T_T_K[side] @ T_K_E)
 
 
-def right_ee_pose():
-    return _ee_pose_world(T_T_KR, right_qpos_adrs)
-
-
-def left_ee_pose():
-    return _ee_pose_world(T_T_KL, left_qpos_adrs)
-
-
-def _jacobian_world(T_T_K, qpos_adrs):
+def jacobian_world(side):
     """World-aligned EE frame Jacobian, 6x7: maps joint rates qdot (rad/s, 7)
     to the EE world twist, rows [vx vy vz (m/s); wx wy wz (rad/s)].
 
     Pinocchio computes it aligned with the arm base K; both blocks are
     rotated by R_W_K = R_W_T @ R_T_K. The base is kinematic (mocap), so
     the joint columns are the complete Jacobian."""
-    q = np.asarray(world.data.qpos[qpos_adrs], dtype=float)
+    q = np.asarray(world.data.qpos[qpos_adrs[side]], dtype=float)
     J_K = pin.computeFrameJacobian(pin_model, pin_data, q, ee_frame_id,
                                    pin.LOCAL_WORLD_ALIGNED)
     _, torso_rot = torso_pose()
-    R_W_K = torso_rot @ T_T_K[:3, :3]
+    R_W_K = torso_rot @ _T_T_K[side][:3, :3]
     J = np.empty_like(J_K)
     J[:3] = R_W_K @ J_K[:3]
     J[3:] = R_W_K @ J_K[3:]
     return J
 
 
-def right_jacobian_world():
-    return _jacobian_world(T_T_KR, right_qpos_adrs)
-
-
-def left_jacobian_world():
-    return _jacobian_world(T_T_KL, left_qpos_adrs)
-
-
-def measured_right_ee_pose():
-    """Right EE pose as MuJoCo measures it (the comparison side, not FK)."""
-    pos = world.data.site_xpos[world.right_ee_id].copy()
-    rot = world.data.site_xmat[world.right_ee_id].reshape(3, 3).copy()
-    return pos, rot
-
-
-def measured_left_ee_pose():
-    pos = world.data.site_xpos[world.left_ee_id].copy()
-    rot = world.data.site_xmat[world.left_ee_id].reshape(3, 3).copy()
+def measured_ee_pose(side):
+    """EE pose as MuJoCo measures it (the comparison side, not FK)."""
+    pos = world.data.site_xpos[world.ee_site_id[side]].copy()
+    rot = world.data.site_xmat[world.ee_site_id[side]].reshape(3, 3).copy()
     return pos, rot
