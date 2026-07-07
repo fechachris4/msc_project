@@ -49,9 +49,12 @@ repo root (model paths are CWD-relative).
 Closed-loop simulation with viewer (controlled arms selectable):
 
 ```bash
-mjpython main.py [right|left|both]        # default: both, static base
-mjpython main.py both move                # with scripted base sway
+mjpython main.py [right|left|both]        # default: both
 ```
+
+Base motion is configured by the levers at the top of `sim/motion.py`
+(amplitude/frequency); zero amplitude = static base, and the torso then
+stays hand-draggable in the viewer as an improvised perturbation.
 
 Live position-error plot, one arm, headless (plain `python` is fine —
 no MuJoCo viewer; close the plot window to stop and save the figure):
@@ -59,7 +62,6 @@ no MuJoCo viewer; close the plot window to stop and save the figure):
 ```bash
 python -m plotting.position_error right
 python -m plotting.position_error left
-python -m plotting.position_error right move   # with base motion
 ```
 
 FK validation — MuJoCo's directly measured right EE position vs. the
