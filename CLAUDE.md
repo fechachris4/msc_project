@@ -34,6 +34,13 @@ stability is lost.
 ## Success criteria for the current phase
 Reactive controller in MuJoCo that holds a world-frame end-effector pose under scripted base motion, with error plots (mean, RMSE, peak) that can go straight into the thesis.
 
+## Units
+
+All internal math, sim state, and control code are SI metres/radians.
+Millimetres appear only at human-facing boundaries (prints, plots, logged
+metrics) and future Vicon input (mm→m converted once at the interface).
+Never inside the math path.
+
 ## Verification requirements
 
 - Every computed quantity must be checkable against ground truth (e.g., FK position vs. MuJoCo direct reading). New modules need a comparison test before they're considered working.
