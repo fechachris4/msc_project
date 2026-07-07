@@ -101,7 +101,7 @@ class PoseErrorWrapperTest(unittest.TestCase):
         np.testing.assert_allclose(e_rot, axis * angle, atol=WRAP_TOL)
 
     def test_wrappers_recover_offsets(self):
-        from controller import frames, pd
+        from controller import frames, servo
         from sim import targets, world
 
         rng = np.random.default_rng(9)
@@ -112,11 +112,11 @@ class PoseErrorWrapperTest(unittest.TestCase):
 
             self._check_arm(
                 rng, frames.right_ee_pose, targets.set_right_target,
-                targets.set_right_target_quat, pd.right_pose_error,
+                targets.set_right_target_quat, servo.right_pose_error,
             )
             self._check_arm(
                 rng, frames.left_ee_pose, targets.set_left_target,
-                targets.set_left_target_quat, pd.left_pose_error,
+                targets.set_left_target_quat, servo.left_pose_error,
             )
 
 
@@ -171,7 +171,7 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
     ROT_TOL = 0.05   # rad
 
     def test_converges_static_base(self):
-        from controller import frames, pd
+        from controller import frames, servo
         from sim import targets, world
 
         def reset():
@@ -187,10 +187,10 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
         arms = (
             ("right", frames.right_qpos_adrs, frames.right_ee_pose,
              targets.set_right_target, targets.set_right_target_quat,
-             pd.right_pose_error),
+             servo.right_pose_error),
             ("left", frames.left_qpos_adrs, frames.left_ee_pose,
              targets.set_left_target, targets.set_left_target_quat,
-             pd.left_pose_error),
+             servo.left_pose_error),
         )
 
         for _, qpos_adrs, ee_pose, set_pos, set_quat, _err in arms:
@@ -205,15 +205,15 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
         for _, qpos_adrs, *_rest in arms:
             world.data.qpos[qpos_adrs] = home
         mujoco.mj_forward(world.model, world.data)
-        pd.init_ctrl()
+        servo.init_ctrl()
 
         e0 = {name: np.linalg.norm(err()[0])
               for name, *_, err in arms}
 
         dt = world.model.opt.timestep
         for _ in range(int(self.SIM_SECONDS / dt)):
-            world.data.ctrl[world.right_ctrl_adrs] = pd.right_ctrl(dt)
-            world.data.ctrl[world.left_ctrl_adrs] = pd.left_ctrl(dt)
+            world.data.ctrl[world.right_ctrl_adrs] = servo.right_ctrl(dt)
+            world.data.ctrl[world.left_ctrl_adrs] = servo.left_ctrl(dt)
             mujoco.mj_step(world.model, world.data)
 
         for name, *_, err in arms:
