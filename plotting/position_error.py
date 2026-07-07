@@ -8,7 +8,7 @@ Shared implementation; run via the per-arm entry points:
 
 Displayed as d = p_EE - p_target (world frame, mm): positive means the EE is
 on the +axis side of the target. The dashed zero line is the target. Note the
-sign is flipped from pd's control error (e = target - actual); the flip lives
+sign is flipped from servo's control error (e = target - actual); the flip lives
 here in the display layer only. Close the plot window to stop; the figure is
 saved to plots/<arm>_position_error.png.
 """

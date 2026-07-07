@@ -3,8 +3,8 @@
 Per-step data flow (all SI: meters, radians; mm only in the printout):
   target mocap pose (world) + joint angles qpos  [sim/targets, MuJoCo]
   -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  [controller/frames]
-  -> pose error e = ref - actual (world)           [controller/servo, pd]
-  -> commanded twist v = Kp*e -> qdot via DLS      [controller/pd]
+  -> pose error e = ref - actual (world)           [controller/servo]
+  -> commanded twist v = Kp*e -> qdot via DLS      [controller/servo]
   -> integrate position-servo setpoints data.ctrl (rad)  [controller/servo]
   -> mj_step
 """
