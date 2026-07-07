@@ -48,8 +48,8 @@ def torso_pose():
 
     Returns (pos (3,) meters, R 3x3) — the (pos, rot) pair convention
     used throughout."""
-    pos = world.data.xpos[world.torso_mocap_id].copy()
-    rot = world.data.xmat[world.torso_mocap_id].reshape(3, 3).copy()
+    pos = world.data.xpos[world.torso_body_id].copy()
+    rot = world.data.xmat[world.torso_body_id].reshape(3, 3).copy()
     return pos, rot
 
 

@@ -173,7 +173,7 @@ class WorldFrameEETest(unittest.TestCase):
         site_id = mujoco.mj_name2id(
             world.model, mujoco.mjtObj.mjOBJ_SITE, site_id_name
         )
-        mocap_idx = world.model.body_mocapid[world.torso_mocap_id]
+        mocap_idx = world.model.body_mocapid[world.torso_body_id]
         init_pos = world.data.mocap_pos[mocap_idx].copy()
         init_quat = world.data.mocap_quat[mocap_idx].copy()
 
@@ -256,7 +256,7 @@ class JacobianWorldTest(unittest.TestCase):
             ]
             arms.append((jac, site_id, dof_adrs))
 
-        mocap_idx = world.model.body_mocapid[world.torso_mocap_id]
+        mocap_idx = world.model.body_mocapid[world.torso_body_id]
         init_pos = world.data.mocap_pos[mocap_idx].copy()
         init_quat = world.data.mocap_quat[mocap_idx].copy()
 
