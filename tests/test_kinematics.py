@@ -151,6 +151,52 @@ class WorldFrameEETest(unittest.TestCase):
             rot, world.data.site_xmat[site_id].reshape(3, 3), atol=1e-9
         )
 
+    def _check_moved_torso(self, ee_pose, site_id_name):
+        """Same comparison, but with the torso mocap body at random poses.
+
+        The default torso rotation is identity, at which a transpose or
+        missing torso-rotation factor is invisible; this exercises it."""
+        import mujoco
+        from sim import world
+
+        site_id = mujoco.mj_name2id(
+            world.model, mujoco.mjtObj.mjOBJ_SITE, site_id_name
+        )
+        mocap_idx = world.model.body_mocapid[world.torso_mocap_id]
+        init_pos = world.data.mocap_pos[mocap_idx].copy()
+        init_quat = world.data.mocap_quat[mocap_idx].copy()
+
+        def restore():
+            world.data.mocap_pos[mocap_idx] = init_pos
+            world.data.mocap_quat[mocap_idx] = init_quat
+            mujoco.mj_kinematics(world.model, world.data)
+
+        self.addCleanup(restore)
+
+        rng = np.random.default_rng(11)
+        for _ in range(20):
+            world.data.mocap_pos[mocap_idx] = (
+                np.array([0.0, 0.0, 1.1]) + rng.uniform(-0.5, 0.5, 3)
+            )
+            quat = rng.standard_normal(4)
+            world.data.mocap_quat[mocap_idx] = quat / np.linalg.norm(quat)
+            for jnt_id in range(world.model.njnt):
+                adr = world.model.jnt_qposadr[jnt_id]
+                if world.model.jnt_limited[jnt_id]:
+                    low, high = world.model.jnt_range[jnt_id]
+                else:
+                    low, high = -np.pi, np.pi
+                world.data.qpos[adr] = rng.uniform(low, high)
+            mujoco.mj_kinematics(world.model, world.data)
+
+            pos, rot = ee_pose()
+            np.testing.assert_allclose(
+                pos, world.data.site_xpos[site_id], atol=1e-9
+            )
+            np.testing.assert_allclose(
+                rot, world.data.site_xmat[site_id].reshape(3, 3), atol=1e-9
+            )
+
     def test_right_ee_pose_matches_mujoco(self):
         from controller import frames
         self._check(frames.right_ee_pose, "right_pinch_site")
@@ -158,6 +204,14 @@ class WorldFrameEETest(unittest.TestCase):
     def test_left_ee_pose_matches_mujoco(self):
         from controller import frames
         self._check(frames.left_ee_pose, "left_pinch_site")
+
+    def test_right_ee_pose_matches_mujoco_under_moved_torso(self):
+        from controller import frames
+        self._check_moved_torso(frames.right_ee_pose, "right_pinch_site")
+
+    def test_left_ee_pose_matches_mujoco_under_moved_torso(self):
+        from controller import frames
+        self._check_moved_torso(frames.left_ee_pose, "left_pinch_site")
 
 
 if __name__ == "__main__":
