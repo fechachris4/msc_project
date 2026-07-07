@@ -28,6 +28,15 @@ def _restore_world():
 
 
 class TorsoPoseOracleTest(unittest.TestCase):
+    # Pinned scenario, independent of the motion module's research
+    # levers; rotation deliberately nonzero to exercise the rpy path.
+    SCENARIO = dict(
+        linear_amplitude=np.array([0.05, 0.02, 0.01]),
+        linear_frequency=0.5,
+        rotational_amplitude=np.radians([5.0, 3.0, 8.0]),
+        rotational_frequency=0.3,
+    )
+
     def test_set_torso_pose_matches_oracle(self):
         from controller import frames
         from sim import motion, world
@@ -35,15 +44,33 @@ class TorsoPoseOracleTest(unittest.TestCase):
         self.addCleanup(_restore_world)
 
         for t in (0.0, 0.31, 0.5, 1.0, 1.77, 4.2):
-            motion.set_torso_pose(t)
+            motion.set_torso_pose(t, **self.SCENARIO)
             mujoco.mj_kinematics(world.model, world.data)
 
             pos, rot = frames.torso_pose()
-            exp_pos, exp_rpy = motion.torso_pose_at(t)
+            exp_pos, exp_rpy = motion.torso_pose_at(t, **self.SCENARIO)
             np.testing.assert_allclose(pos, exp_pos, atol=1e-12)
             np.testing.assert_allclose(
                 rot, rotation_from_rpy(exp_rpy), atol=1e-9
             )
+
+    def test_zero_amplitude_writes_nothing(self):
+        from sim import motion, world
+
+        self.addCleanup(_restore_world)
+
+        # Park the torso off-home (as a viewer hand-drag would).
+        idx = motion._TORSO_MOCAP_IDX
+        parked_pos = motion.HOME_POS + np.array([0.03, -0.02, 0.05])
+        parked_quat = np.array([0.9689124, 0.247404, 0.0, 0.0])  # ~28 deg
+        world.data.mocap_pos[idx] = parked_pos
+        world.data.mocap_quat[idx] = parked_quat
+
+        motion.set_torso_pose(1.23, linear_amplitude=np.zeros(3),
+                              rotational_amplitude=np.zeros(3))
+
+        np.testing.assert_array_equal(world.data.mocap_pos[idx], parked_pos)
+        np.testing.assert_array_equal(world.data.mocap_quat[idx], parked_quat)
 
 
 class BaseMotionRejectionTest(unittest.TestCase):
@@ -94,7 +121,8 @@ class BaseMotionRejectionTest(unittest.TestCase):
         for _ in range(int(self.MOTION_SECONDS / dt)):
             motion.set_torso_pose(world.data.time - t_start,
                                   linear_amplitude=self.TEST_AMPLITUDE,
-                                  linear_frequency=self.TEST_FREQUENCY)
+                                  linear_frequency=self.TEST_FREQUENCY,
+                                  rotational_amplitude=np.zeros(3))
             servo.apply_ctrl(dt)
             mujoco.mj_step(world.model, world.data)
             for side in world.SIDES:

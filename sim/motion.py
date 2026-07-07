@@ -41,12 +41,18 @@ def torso_pose_at(t, linear_amplitude=LINEAR_AMPLITUDE,
     return pos, rpy
 
 
-def set_torso_pose(t, **scenario):
+def set_torso_pose(t, linear_amplitude=LINEAR_AMPLITUDE,
+                   linear_frequency=LINEAR_FREQUENCY,
+                   rotational_amplitude=ROTATIONAL_AMPLITUDE,
+                   rotational_frequency=ROTATIONAL_FREQUENCY):
     """Write the scripted torso pose into the mocap body.
 
-    scenario: amplitude/frequency overrides for torso_pose_at (research
-    levers above are the defaults)."""
-    pos, rpy = torso_pose_at(t, **scenario)
+    All-zero amplitudes: no write at all — the static condition, and the
+    torso stays free (hand-draggable in the viewer as a perturbation)."""
+    if not (np.any(linear_amplitude) or np.any(rotational_amplitude)):
+        return
+    pos, rpy = torso_pose_at(t, linear_amplitude, linear_frequency,
+                             rotational_amplitude, rotational_frequency)
     quat = np.zeros(4)
     mujoco.mju_mat2Quat(quat, rotation_from_rpy(rpy).flatten())
     world.data.mocap_pos[_TORSO_MOCAP_IDX] = pos
