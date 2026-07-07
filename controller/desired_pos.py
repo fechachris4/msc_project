@@ -28,6 +28,7 @@ def resolve_world(pos, rpy, torso_pose):
 
 
 def _quat_from_rotation(rot):
+    """Rotation matrix -> MuJoCo quaternion [w, x, y, z]."""
     quat = np.zeros(4)
     mujoco.mju_mat2Quat(quat, rot.flatten())
     return quat

@@ -3,9 +3,10 @@ call the pure math in pd, and produce position-servo setpoints.
 
 The reference is the world-frame target mocap pose (set once by
 desired_pos.apply()); the actual EE pose is frames FK — no EE pose is
-read from MuJoCo. The servo setpoint data.ctrl is the integrator state
-(ctrl += qdot*dt), so at the fixed point qdot = 0 => e -> 0, and the
-servos' gravity droop is compensated automatically. init_ctrl() must
+read from MuJoCo. The servo setpoint data.ctrl (joint angles, rad) is
+the integrator state (ctrl += qdot*dt), so at the fixed point qdot = 0
+=> e -> 0, and the servos' gravity droop is compensated automatically.
+init_ctrl() must
 sync the setpoints to the current joint angles once before the loop.
 """
 
@@ -53,29 +54,14 @@ def init_ctrl():
     world.data.ctrl[world.left_ctrl_adrs] = world.data.qpos[frames.left_qpos_adrs]
 
 
-def _ctrl(dt, pose_error, jacobian_world, ctrl_adrs, bounds):
-    e_pos, e_rot = pose_error()
-    qdot = pd.qdot_from_error(jacobian_world(), e_pos, e_rot)
+def _arm_ctrl(dt, e_pos, e_rot, J, ctrl_adrs, bounds):
+    """One arm's updated servo setpoints (joint angles, rad).
+
+    pose error -> commanded twist -> qdot (pd) -> integrate the current
+    setpoints by qdot*dt -> clip to the actuator ctrl range."""
+    qdot = pd.qdot_from_error(J, e_pos, e_rot)
     ctrl = world.data.ctrl[ctrl_adrs] + qdot * dt
     return np.clip(ctrl, bounds[0], bounds[1])
-
-
-def right_ctrl(dt):
-    """Updated right-arm servo targets (does not write data.ctrl)."""
-    return _ctrl(dt, right_pose_error, frames.right_jacobian_world,
-                 world.right_ctrl_adrs, _RIGHT_BOUNDS)
-
-
-def left_ctrl(dt):
-    """Updated left-arm servo targets (does not write data.ctrl)."""
-    return _ctrl(dt, left_pose_error, frames.left_jacobian_world,
-                 world.left_ctrl_adrs, _LEFT_BOUNDS)
-
-
-_ARMS = {
-    "right": (right_ctrl, world.right_ctrl_adrs),
-    "left": (left_ctrl, world.left_ctrl_adrs),
-}
 
 
 def apply_ctrl(dt, arms=("right", "left")):
@@ -84,6 +70,13 @@ def apply_ctrl(dt, arms=("right", "left")):
     The one loop-body block every front-end (viewer, plots, tests) must
     share — call it once per step, before mj_step. An unselected arm
     keeps its init_ctrl() setpoints and simply holds posture."""
-    for name in arms:
-        ctrl_fn, ctrl_adrs = _ARMS[name]
-        world.data.ctrl[ctrl_adrs] = ctrl_fn(dt)
+    if "right" in arms:
+        e_pos, e_rot = right_pose_error()
+        world.data.ctrl[world.right_ctrl_adrs] = _arm_ctrl(
+            dt, e_pos, e_rot, frames.right_jacobian_world(),
+            world.right_ctrl_adrs, _RIGHT_BOUNDS)
+    if "left" in arms:
+        e_pos, e_rot = left_pose_error()
+        world.data.ctrl[world.left_ctrl_adrs] = _arm_ctrl(
+            dt, e_pos, e_rot, frames.left_jacobian_world(),
+            world.left_ctrl_adrs, _LEFT_BOUNDS)

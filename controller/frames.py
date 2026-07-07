@@ -44,7 +44,10 @@ T_T_KL = mount_transform(world.model, world.kinova_left_base_id)
 
 
 def torso_pose():
-    """T_W_T: torso pose in the world frame, as MuJoCo measures it"""
+    """T_W_T: torso pose in the world frame, as MuJoCo measures it.
+
+    Returns (pos (3,) meters, R 3x3) — the (pos, rot) pair convention
+    used throughout."""
     pos = world.data.xpos[world.torso_mocap_id].copy()
     rot = world.data.xmat[world.torso_mocap_id].reshape(3, 3).copy()
     return pos, rot
@@ -72,7 +75,8 @@ def left_ee_pose():
 
 
 def _jacobian_world(T_T_K, qpos_adrs):
-    """World-aligned EE frame Jacobian, 6x7: linear rows then angular.
+    """World-aligned EE frame Jacobian, 6x7: maps joint rates qdot (rad/s, 7)
+    to the EE world twist, rows [vx vy vz (m/s); wx wy wz (rad/s)].
 
     Pinocchio computes it aligned with the arm base K; both blocks are
     rotated by R_W_K = R_W_T @ R_T_K. The base is kinematic (mocap), so
