@@ -23,13 +23,11 @@ from controller import frames
 from controller.transforms import rotation_from_quat
 from sim import targets, world
 
+# --- control math (pure: numpy + pinocchio, no MuJoCo) ---------------------
+
 KP_POS = 2.0    # 1/s task-space bandwidth
 KP_ROT = 2.0    # 1/s
 DAMPING = 0.05  # DLS lambda
-
-# Kinova Gen3 spec sheet: max joint speed, large actuators (1-4) then
-# small (5-7). The real arm saturates here, so the baseline must too.
-QDOT_LIMIT = np.radians([79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9])
 
 
 def position_error(ref_pos, ee_pos):
@@ -52,6 +50,9 @@ def qdot_from_error(J, e_pos, e_rot, damping=DAMPING):
     return J.T @ np.linalg.solve(J @ J.T + damping**2 * np.eye(6), v)
 
 
+# --- pose error from sim state (target mocap vs frames FK) ------------------
+
+
 def right_pose_error():
     """(e_pos, e_rot) of the right arm: target mocap vs FK EE pose."""
     ee_pos, ee_rot = frames.right_ee_pose()
@@ -68,6 +69,13 @@ def left_pose_error():
     ref_rot = rotation_from_quat(targets.left_target_quat())
     return (position_error(ref_pos, ee_pos),
             rotation_error(ref_rot, ee_rot))
+
+
+# --- servo actuation (qdot limits, setpoint integration, data.ctrl) ---------
+
+# Kinova Gen3 spec sheet: max joint speed, large actuators (1-4) then
+# small (5-7). The real arm saturates here, so the baseline must too.
+QDOT_LIMIT = np.radians([79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9])
 
 
 def _ctrl_bounds(ctrl_adrs):
