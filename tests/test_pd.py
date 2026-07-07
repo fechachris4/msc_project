@@ -156,6 +156,38 @@ HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
 
 
+class ArmSelectionTest(unittest.TestCase):
+    """apply_ctrl(arms=...) must update only the selected arm's setpoints."""
+
+    def test_unselected_arm_setpoints_untouched(self):
+        from controller import desired_pos, frames, servo
+        from sim import world
+
+        def reset():
+            mujoco.mj_resetData(world.model, world.data)
+            mujoco.mj_forward(world.model, world.data)
+
+        self.addCleanup(reset)
+
+        mujoco.mj_resetData(world.model, world.data)
+        world.data.qpos[frames.right_qpos_adrs] = HOME
+        world.data.qpos[frames.left_qpos_adrs] = HOME
+        mujoco.mj_forward(world.model, world.data)
+        desired_pos.apply()
+        servo.init_ctrl()
+
+        before_left = world.data.ctrl[world.left_ctrl_adrs].copy()
+        before_right = world.data.ctrl[world.right_ctrl_adrs].copy()
+        servo.apply_ctrl(world.model.opt.timestep, arms=("right",))
+
+        np.testing.assert_array_equal(
+            world.data.ctrl[world.left_ctrl_adrs], before_left
+        )
+        self.assertTrue(np.any(
+            world.data.ctrl[world.right_ctrl_adrs] != before_right
+        ))
+
+
 class ClosedLoopConvergenceTest(unittest.TestCase):
     """The real proof: under gravity, the P controller must drive both
     arms from home to a feasible world-frame target pose.
