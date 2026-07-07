@@ -56,7 +56,10 @@ def run(side, move_base=False):
 
 
 if __name__ == "__main__":
-    side = sys.argv[1] if len(sys.argv) > 1 else "right"
-    assert side in world.SIDES, \
+    # args in any order: side (default right) and the move flag
+    args = sys.argv[1:]
+    unknown = [a for a in args if a not in ("right", "left", "move")]
+    assert not unknown, \
         "usage: python -m plotting.position_error [right|left] [move]"
-    run(side, move_base="move" in sys.argv[2:])
+    side = next((a for a in args if a in world.SIDES), "right")
+    run(side, move_base="move" in args)
