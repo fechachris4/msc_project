@@ -21,11 +21,13 @@ from sim import motion, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
-choice = sys.argv[1] if len(sys.argv) > 1 else "both"
-assert choice in ("right", "left", "both"), \
-    "usage: python main.py [right|left|both] [move]"
-arms = ("right", "left") if choice == "both" else (choice,)
-move_base = "move" in sys.argv[2:]
+# args in any order: arm choice (default both) and the move flag
+args = sys.argv[1:]
+unknown = [a for a in args if a not in ("right", "left", "both", "move")]
+assert not unknown, "usage: mjpython main.py [right|left|both] [move]"
+choice = next((a for a in args if a in ("right", "left", "both")), "both")
+arms = world.SIDES if choice == "both" else (choice,)
+move_base = "move" in args
 
 desired_pos.apply()
 servo.init_ctrl()
