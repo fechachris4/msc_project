@@ -17,13 +17,15 @@ import mujoco.viewer
 import numpy as np
 
 from controller import desired_pos, servo
-from sim import world
+from sim import motion, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
 choice = sys.argv[1] if len(sys.argv) > 1 else "both"
-assert choice in ("right", "left", "both"), "usage: python main.py [right|left|both]"
+assert choice in ("right", "left", "both"), \
+    "usage: python main.py [right|left|both] [move]"
 arms = ("right", "left") if choice == "both" else (choice,)
+move_base = "move" in sys.argv[2:]
 
 desired_pos.apply()
 servo.init_ctrl()
@@ -32,6 +34,8 @@ step = 0
 with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
     while viewer.is_running():
         step_start = time.time()
+        if move_base:
+            motion.set_torso_pose(world.data.time)
         servo.apply_ctrl(world.model.opt.timestep, arms)
         mujoco.mj_step(world.model, world.data)
 

@@ -23,6 +23,7 @@ never read directly from MuJoCo — mirroring what will be available on hardware
 sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attached Gen3)
 └── sim/world.py            (MjModel/MjData singletons, checked id lookups)
     ├── sim/targets.py      (write/read target mocap poses, world frame)
+    ├── sim/motion.py       (scripted base motion: sinusoidal torso disturbance)
     ├── controller/frames.py
     │   ├── controller/pin_fk.py       (Pinocchio T_K_E(q) — CONTROL PATH)
     │   ├── controller/transforms.py   (pure SE(3) math)
@@ -37,7 +38,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
         ├── position_error.py          (shared live error plot, closed loop)
         └── fk_validation.py           (live direct-vs-FK comparison, right arm)
 
-MISSING LINKS in the pipeline:  scripted base motion → metrics (RMSE/peak) → thesis plots
+MISSING LINKS in the pipeline:  metrics (RMSE/peak) → thesis plots
 ```
 
 ## 3. Module Status Table
@@ -48,6 +49,7 @@ MISSING LINKS in the pipeline:  scripted base motion → metrics (RMSE/peak) →
 | `sim/assets/kinova_gen3/` | Vendored Gen3 MJCF (position-servo actuators) | Validated (kinematics + closed loop) | — | scene, `pin_fk.py` | Indirect via FK tests | High | Touch only if needed |
 | `sim/world.py` | Model/data load, checked id lookups | Implemented | scene.xml | everything | Indirect (all tests import it) | High | Do not touch |
 | `sim/targets.py` | Set/read target mocap poses | Implemented | `world.py` | desired_pos, servo | Indirect via `test_servo` wrapper tests | Medium-High | Touch only if needed |
+| `sim/motion.py` | Scripted sinusoidal base motion (research levers: amplitude/frequency) | Validated | world, transforms | main, plotting | `test_motion`: pose oracle + closed-loop rejection at 0.1 Hz | High | Levers change per experiment |
 | `controller/transforms.py` | Pure SE(3)/rotation math | Validated | numpy | kinematics, frames, desired_pos | `test_kinematics.RotationHelpersTest`, `test_transforms` (vs Pinocchio) | High | Do not touch |
 | `controller/kinematics.py` | Analytical FK from MjModel constants | Validated, **demoted to test reference** | transforms | `test_pin_fk.py` only | `AnalyticalFKTest` vs MuJoCo, 50 cfg/arm, 1e-9 | High | Do not touch |
 | `controller/pin_fk.py` | Pinocchio-backed `T_K_E(q)` — control path FK | Validated | pinocchio, `gen3.xml` | `frames.py` | `test_pin_fk` vs analytical FK, 1e-9 | High | Do not touch |
@@ -104,22 +106,18 @@ MISSING LINKS in the pipeline:  scripted base motion → metrics (RMSE/peak) →
 
 ## 5. Incomplete Components
 
-1. **Scripted base motion** — nothing moves the torso mocap body yet; without
-   it there is no disturbance and no experiment. Smallest next task:
-   `sim/base_motion.py` with a time-parameterized `set_torso_pose(t)` sinusoid,
-   hooked into `main.py`.
-
-2. **Metrics + thesis plots** — no error logging, no RMSE/mean/peak, no
+1. **Metrics + thesis plots** — no error logging, no RMSE/mean/peak, no
    publication figure path (`LivePlot` is live-monitoring only). Smallest next
    task: an experiment logger recording `(t, ref_pose, ee_pose)` arrays and a
    post-run summary.
 
-3. **Known residual at the left task point** — `desired_pos.LEFT` sits at
-   joint_6's ctrl limit; the clip leaves a ~6 mm steady-state residual there by
-   design, not a controller bug (see `ClosedLoopConvergenceTest` docstring).
-   Revisit the task point or mount if it matters for the thesis scenario.
+2. **Known residual at the left task point** — the left `desired_pos` pose
+   sits at joint_6's ctrl limit; the clip leaves a ~6 mm steady-state residual
+   there by design, not a controller bug (see `ClosedLoopConvergenceTest`
+   docstring). Revisit the task point or mount if it matters for the thesis
+   scenario.
 
-4. **Small hygiene** — `requirements.txt` lacks `matplotlib`.
+3. **Small hygiene** — `requirements.txt` lacks `matplotlib`.
 
 ## 6. Dependency Graph
 
@@ -152,27 +150,26 @@ in the Pinocchio path and must stay independent of it.
 | Arm FK (both impls) | ✅ | ✅ (1e-9, dual-implementation cross-check) | ✅ as methodology |
 | World-frame EE pose + Jacobian | ✅ | ✅ (incl. moved torso, vs mj_jacSite) | ✅ as methodology |
 | Reference/targets | ✅ | ✅ | ✅ |
-| Reactive controller | ✅ | ✅ (closed-loop convergence, static base) | ⚠️ needs base-motion results |
-| Base motion scripting | ✗ | ✗ | ✗ |
+| Reactive controller | ✅ | ✅ (closed-loop convergence + 0.1 Hz rejection) | ⚠️ needs metrics at experiment conditions |
+| Base motion scripting | ✅ | ✅ (`test_motion` oracle + rejection) | ✅ |
 | Error metrics + plots | ✗ | ✗ | ✗ |
 
-Blunt read: estimation/kinematics **and the static-base closed loop are done
-and validated**; the experiment itself (base motion + metrics) has not started.
+Blunt read: estimation/kinematics, the closed loop, and scripted base motion
+are done and validated; what remains for the thesis is metrics/logging at the
+experiment conditions. Measured: 50 mm sway at 0.1 Hz -> 15.5 mm peak EE error
+(first-order theory predicts 15 mm); at 0.5 Hz the sensitivity w/sqrt(w^2+Kp^2)
+is 0.84 — the reactive baseline barely rejects it, which is the thesis
+motivation for prediction.
 
 ## 8. Next Work Queue
 
-1. **Scripted base motion (`sim/base_motion.py`)** — `set_torso_pose(t)`
-   sinusoid on the torso mocap body; hook into `main.py`. Validation: FK and
-   direct traces stay coincident in `fk_validation` while both move; the
-   closed loop keeps tracking.
-2. **Closed loop under base motion** — the actual experiment: EE holds a world
-   pose while the torso oscillates. Validation: bounded error, visibly better
-   than uncontrolled arms.
-3. **Experiment logger + thesis metrics** — record `(t, ref, ee)` arrays;
+1. **Experiment logger + thesis metrics** — record `(t, ref, ee)` arrays;
    compute mean/RMSE/peak; save publication figures (offline path, not
    `LivePlot`). This is the phase's success criterion verbatim.
-4. **Parameter sweep hooks** — base-motion amplitude/frequency as experiment
-   parameters; same metrics pipeline over ≥ 2 conditions.
+2. **Parameter sweep hooks** — base-motion amplitude/frequency as experiment
+   parameters (already exposed as `sim/motion.py` levers and
+   `set_torso_pose(t, **scenario)` overrides); same metrics pipeline over
+   ≥ 2 conditions.
 
 Actuation decision (recorded): the reactive baseline commands **position-servo
 setpoints via resolved-rate differential IK** (ctrl += qdot·dt). Torque control

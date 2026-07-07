@@ -4,6 +4,7 @@ simulation runs (headless — no MuJoCo viewer, so plain python works):
 
     python -m plotting.position_error right
     python -m plotting.position_error left
+    python -m plotting.position_error right move   # with base motion
 
 Displayed as d = p_EE - p_target (world frame, mm): positive means the EE is
 on the +axis side of the target. The dashed zero line is the target. Note the
@@ -19,11 +20,11 @@ import numpy as np
 
 from controller import desired_pos, servo
 from plotting.live_plot import LivePlot
-from sim import world
+from sim import motion, world
 
 
-def run(side):
-    """side: "right" or "left".
+def run(side, move_base=False):
+    """side: "right" or "left"; move_base: scripted torso disturbance.
 
     Closed loop: the P controller runs every step, so the plot shows the
     controlled response (same loop body as main.py via servo.apply_ctrl)."""
@@ -36,6 +37,8 @@ def run(side):
         title=f"{side} EE displacement from target (world frame)",
     )
     while plot.is_open():
+        if move_base:
+            motion.set_torso_pose(world.data.time)
         servo.apply_ctrl(world.model.opt.timestep)
         mujoco.mj_step(world.model, world.data)
         # refresh poses: mj_step advances qpos after computing them
@@ -55,5 +58,5 @@ def run(side):
 if __name__ == "__main__":
     side = sys.argv[1] if len(sys.argv) > 1 else "right"
     assert side in world.SIDES, \
-        "usage: python -m plotting.position_error [right|left]"
-    run(side)
+        "usage: python -m plotting.position_error [right|left] [move]"
+    run(side, move_base="move" in sys.argv[2:])
