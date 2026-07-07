@@ -16,10 +16,10 @@ from controller.transforms import rotation_from_rpy
 from sim import world
 
 # research levers: base sway amplitude and frequency
-LINEAR_AMPLITUDE = np.array([0.2, 0.0, 0.0])     # m, world xyz
-ROTATIONAL_AMPLITUDE = np.array([0.0, 0.0, 0.0])  # rad, rpy
-LINEAR_FREQUENCY = 0.5      # Hz
-ROTATIONAL_FREQUENCY = 0.0  # Hz
+LINEAR_AMPLITUDE = np.array([0.1, 0.0, 0.0])     # m, world xyz
+ROTATIONAL_AMPLITUDE = np.array([0.4, 0.0, 0.0])  # rad, rpy
+LINEAR_FREQUENCY = 0.1      # Hz
+ROTATIONAL_FREQUENCY = 0.1  # Hz
 
 _TORSO_MOCAP_IDX = world.model.body_mocapid[world.torso_body_id]
 HOME_POS = world.data.mocap_pos[_TORSO_MOCAP_IDX].copy()
