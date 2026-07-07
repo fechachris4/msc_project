@@ -36,8 +36,10 @@ class PinFKTest(unittest.TestCase):
         chain = kinematics.extract_chain(
             world.model, "right_base_link", "right_pinch_site"
         )
-        arm = build_pin_model(ARM_MJCF, "base_link", "pinch_site")
-        self.assertEqual(arm.model.nq, len(chain.joint_ids))
+        pin_model, pin_data, frame_id = build_pin_model(
+            ARM_MJCF, "base_link", "pinch_site"
+        )
+        self.assertEqual(pin_model.nq, len(chain.joint_ids))
 
         rng = np.random.default_rng(123)
         qpos = np.zeros(world.model.nq)
@@ -55,7 +57,7 @@ class PinFKTest(unittest.TestCase):
                 qpos[adr] = q[i]
 
             T_analytical = kinematics.fk(chain, qpos)
-            T_pin = pin_T_K_E(arm.model, arm.data, arm.frame_id, q)
+            T_pin = pin_T_K_E(pin_model, pin_data, frame_id, q)
 
             pos_err = np.linalg.norm(T_pin[:3, 3] - T_analytical[:3, 3])
             rot_err = geodesic_angle(T_pin[:3, :3], T_analytical[:3, :3])
