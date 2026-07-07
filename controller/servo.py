@@ -16,6 +16,10 @@ from controller import frames, pd
 from controller.transforms import rotation_from_quat
 from sim import targets, world
 
+# Kinova Gen3 spec sheet: max joint speed, large actuators (1-4) then
+# small (5-7). The real arm saturates here, so the baseline must too.
+QDOT_LIMIT = np.radians([79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9])
+
 
 def right_pose_error():
     """(e_pos, e_rot) of the right arm: target mocap vs FK EE pose."""
@@ -56,8 +60,8 @@ def init_ctrl():
 
 def apply_ctrl(dt, arms=("right", "left")):
     """Write the selected arms' updated servo setpoints into data.ctrl:
-    pose error -> qdot (pd) -> integrate the setpoints by qdot*dt ->
-    clip to the actuator ctrl range.
+    pose error -> qdot (pd) -> clip to the joint speed limits ->
+    integrate the setpoints by qdot*dt -> clip to the actuator ctrl range.
 
     The one loop-body block every front-end (viewer, plots, tests) must
     share — call it once per step, before mj_step. An unselected arm
@@ -65,10 +69,12 @@ def apply_ctrl(dt, arms=("right", "left")):
     if "right" in arms:
         e_pos, e_rot = right_pose_error()
         qdot = pd.qdot_from_error(frames.right_jacobian_world(), e_pos, e_rot)
+        qdot = np.clip(qdot, -QDOT_LIMIT, QDOT_LIMIT)
         ctrl = world.data.ctrl[world.right_ctrl_adrs] + qdot * dt
         world.data.ctrl[world.right_ctrl_adrs] = np.clip(ctrl, *_RIGHT_BOUNDS)
     if "left" in arms:
         e_pos, e_rot = left_pose_error()
         qdot = pd.qdot_from_error(frames.left_jacobian_world(), e_pos, e_rot)
+        qdot = np.clip(qdot, -QDOT_LIMIT, QDOT_LIMIT)
         ctrl = world.data.ctrl[world.left_ctrl_adrs] + qdot * dt
         world.data.ctrl[world.left_ctrl_adrs] = np.clip(ctrl, *_LEFT_BOUNDS)
