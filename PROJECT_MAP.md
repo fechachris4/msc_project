@@ -220,3 +220,46 @@ tested), missing Jacobian (added + validated), empty controller (implemented +
 validated), `torso_mocap_id` naming hazard (renamed `torso_body_id`), stale
 README (refreshed), `reference.py` re-resolution hazard (targets are resolved
 once into world-frame mocap bodies; the controller never re-resolves).
+
+## 11. Extending the Sim
+
+Five contracts for the ways this codebase is likely to grow (two-year
+horizon, dozens of experiments).
+
+1. **New trajectory shape** (circle, figure-eight, square wave): implement
+   it as an `offset(t)`/`rate(t)` pair in `controller/transforms.py`,
+   analytic derivatives of each other (like `sine_offset`/`sine_rate`), then
+   swap the pair into `sim/target_motion.py`'s marked EXTENSION POINT —
+   `target_pose_at` and `target_twist_at` together. An offset/rate pair that
+   isn't an exact derivative breaks velocity validation silently; no test
+   fails at the pose level.
+
+2. **New disturbance** (chirp, step, recorded gait playback): a motion
+   module is the triple `pose_at(t)` / `twist_at(t)` / `set_pose(t)`, with
+   `twist_at` the analytic derivative of `pose_at`. `sim/motion.py` is the
+   template. The entry point must call `set_pose` and `twist_at` as a
+   matched pair, same scenario dict, same instant `t` — replacing only the
+   pose write leaves the controller's twist feedforward silently wrong
+   (main.py and plotting/position_error.py comment this at both call
+   sites; that's the rule to preserve).
+
+3. **New controller** (the predictive one, eventually): a controller
+   module is `init_ctrl()` + `apply_ctrl(dt, base_twist, arms)` +
+   `pose_error(side)`; experiments select it by module name at their entry
+   point. Keep the exact surface — a lesson already paid for. When
+   `apply_ctrl`'s signature grew a required `base_twist`,
+   `analysis/validate_velocity.py`'s two call sites were not updated and
+   broke with a live `TypeError`, uncaught until this pass because the
+   script has no test coverage. Before changing the surface, run
+   `grep -rn "servo.apply_ctrl"` and update every hit.
+
+4. **Another arm**: keyed by `world.SIDES` and the `f"{side}_..."` scene
+   naming convention. Two hardcoded assumptions to revisit first:
+   `controller/desired_pos.py`'s `POSES` dict hardcodes the side keys, and
+   `controller/frames.py` shares one `gen3.xml` Pinocchio model across all
+   sides — a different limb model per arm breaks that assumption.
+
+5. **Disabling features**: base motion off = zero amplitudes in the entry
+   point's scenario block (the default if omitted); target motion off =
+   don't call `target_motion.set_target_pose` (off by default, no module
+   levers); one arm only = the `main.py` CLI arg (`right`/`left`/`both`).
