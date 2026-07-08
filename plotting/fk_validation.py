@@ -1,7 +1,7 @@
-"""Live FK validation: compare MuJoCo's measured right EE position with the
-analytical FK (extract_chain/fk, computed from qpos and model constants only),
-plotted while the simulation runs (headless — no MuJoCo viewer, so plain
-python works):
+"""Live FK validation: compare MuJoCo's measured right EE position with
+frames.ee_pose (the Pinocchio-backed T_W_T · T_T_K · T_K_E composition the
+controller actually uses), plotted while the simulation runs (headless —
+no MuJoCo viewer, so plain python works):
 
     python -m plotting.fk_validation
 
@@ -20,7 +20,7 @@ from sim import world
 def sample():
     """One comparison sample: (sim time, direct EE xyz, FK-composed EE xyz)."""
     fk_pos, _ = frames.ee_pose("right")
-    direct_pos = world.data.site_xpos[world.ee_site_id["right"]].copy()
+    direct_pos, _ = frames.measured_ee_pose("right")
     return world.data.time, direct_pos, fk_pos
 
 

@@ -27,7 +27,7 @@ from sim import motion, world
 def run(side):
     """side: "right" or "left".
 
-    Closed loop: the P controller runs every step, so the plot shows the
+    Closed loop: the PD controller runs every step, so the plot shows the
     controlled response (same loop body as main.py via servo.apply_ctrl)."""
     desired_pos.apply()
     servo.init_ctrl()
