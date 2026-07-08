@@ -351,6 +351,52 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
             self.assertLess(np.linalg.norm(e_rot), self.ROT_TOL, side)
 
 
+class AntiWindupTest(unittest.TestCase):
+    """A physically blocked arm (qpos frozen, task error persisting)
+    must not wind the setpoint away from the joint state: |ctrl - qpos|
+    stays within CTRL_LEAD. Without the clamp the integrator runs to
+    the ctrl range on limited joints (the diagnosed q6 pinning) and
+    without bound on the continuous ones, then snaps on release."""
+
+    BLOCKED_SECONDS = 5.0
+
+    def test_ctrl_lead_bounded_while_blocked(self):
+        from controller import frames, servo
+        from sim import targets, world
+
+        def reset():
+            mujoco.mj_resetData(world.model, world.data)
+            mujoco.mj_forward(world.model, world.data)
+
+        self.addCleanup(reset)
+
+        mujoco.mj_resetData(world.model, world.data)
+        for side in world.SIDES:
+            world.data.qpos[frames.qpos_adrs[side]] = HOME
+        mujoco.mj_forward(world.model, world.data)
+        servo.init_ctrl()
+
+        # Unreachable-while-blocked target: 0.5 m above the current EE.
+        for side in world.SIDES:
+            pos, rot = frames.ee_pose(side)
+            quat = np.zeros(4)
+            mujoco.mju_mat2Quat(quat, rot.flatten())
+            targets.set_target(side, pos + np.array([0.0, 0.0, 0.5]))
+            targets.set_target_quat(side, quat)
+
+        # Blocked arm: apply_ctrl runs, the sim never steps, qpos and
+        # qvel stay frozen — persistent error, zero progress.
+        dt = world.model.opt.timestep
+        zero_twist = (np.zeros(3), np.zeros(3))
+        for _ in range(int(self.BLOCKED_SECONDS / dt)):
+            servo.apply_ctrl(dt, zero_twist)
+
+        for side in world.SIDES:
+            lead = np.abs(world.data.ctrl[world.ctrl_adrs[side]]
+                          - world.data.qpos[frames.qpos_adrs[side]])
+            self.assertLessEqual(lead.max(), servo.CTRL_LEAD + 1e-12, side)
+
+
 class GainInvariantsTest(unittest.TestCase):
     """Structural constraints on the gains, independent of their tuned
     values — the other closed-loop tests use the gains themselves as
