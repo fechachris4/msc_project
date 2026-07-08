@@ -1,26 +1,27 @@
-"""Base motion vs. end-effector error: the thesis success criterion made
-visible. Read-only, same pattern as analysis/diagnose.py and
-analysis/validate_velocity.py: the controller runs unmodified, every
-logged quantity comes from the public functions apply_ctrl itself calls
-(servo.pose_error), nothing re-derived.
+"""Base motion vs. end-effector error, live: the thesis success criterion
+made visible while the sim runs. Read-only, same pattern as
+analysis/diagnose.py and analysis/validate_velocity.py: the controller
+runs unmodified, every logged quantity comes from the public functions
+apply_ctrl itself calls (servo.pose_error), nothing re-derived.
 
     python -m analysis.base_vs_error
 
-Outputs: analysis/output/base_vs_error.png and a per-side RMS/peak/
-rejection-% table on stdout. Units are SI internally; mm on the figure
-and in the printed table.
+Plain python (no MuJoCo viewer, no mjpython). A live window opens with a
+~30 s rolling view of base displacement vs. per-axis EE error, world
+frame, error = ref - actual. The sim runs until the window is closed
+(or Ctrl-C); then a full-run RMS/peak/rejection-% table prints on stdout
+and the final window is snapshot to analysis/output/base_vs_error.png.
+Units are SI internally; mm on the figure and in the printed table.
 """
 
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 
 from controller import desired_pos, frames, servo
+from plotting.live_plot import LivePlot
 from sim import motion, world
 
 # Base-motion scenario for this run — same values main.py runs today.
@@ -30,7 +31,6 @@ SCENARIO = dict(
     rotational_amplitude=np.zeros(3),              # rad, rpy
     rotational_frequency=0.2,                      # Hz
 )
-T = 40.0  # sim seconds, 4 periods at 0.1 Hz (diagnose.py convention)
 # Static settle before the scenario starts (validate_velocity.py's
 # pattern): the arms boot from a default configuration far from
 # desired_pos.apply()'s targets, so the first ~1 s is a large one-off
@@ -38,18 +38,21 @@ T = 40.0  # sim seconds, 4 periods at 0.1 Hz (diagnose.py convention)
 # first, that transient — not the base sway — would set the peak error
 # and swamp the rejection-% this figure exists to show.
 SETTLE_SECONDS = 2.0
+WINDOW_S = 30.0  # rolling on-screen window: 3 periods at 0.1 Hz
 
 OUT = Path("analysis/output")
 
-# Okabe-Ito per axis
-C_XYZ = ("#D55E00", "#009E73", "#0072B2")
+# Side-by-color, dashboard.py convention (Okabe-Ito)
+C_RIGHT = "#D55E00"
+C_LEFT = "#0072B2"
 C_BASE = "0.6"
-AXES = ("x", "y", "z")
 
 
 def run():
-    """Closed-loop rollout under SCENARIO; return {t, base_disp, right_e,
-    left_e} arrays (base_disp and *_e in meters, world frame)."""
+    """Closed-loop rollout under SCENARIO with a live rolling plot; runs
+    until the window is closed (or Ctrl-C). Returns (log, plot) where
+    log = {t, base_disp, right_e, left_e} full-run arrays (base_disp and
+    *_e in meters, world frame)."""
     mujoco.mj_resetData(world.model, world.data)
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
@@ -61,38 +64,62 @@ def run():
         servo.apply_ctrl(dt, zero_twist)
         mujoco.mj_step(world.model, world.data)
 
-    n = int(T / dt)
     home_pos = motion.HOME_POS
     t_start = world.data.time  # phase 0 at motion start: no teleport
 
-    log = {
-        "t": np.empty(n),
-        "base_disp": np.empty((n, 3)),
-        "right_e": np.empty((n, 3)),
-        "left_e": np.empty((n, 3)),
-    }
+    amp_mm = SCENARIO["linear_amplitude"] * 1000.0
+    plot = LivePlot(
+        rows=["world x [mm]", "world y [mm]", "world z [mm]"],
+        signals={
+            "base disp": {"color": C_BASE},
+            "right EE error": {"color": C_RIGHT},
+            "left EE error": {"style": "--", "color": C_LEFT},
+        },
+        window=int(WINDOW_S / dt),
+        title=(f"Base motion vs. EE error, world frame "
+               f"(error = ref − actual)\n"
+               f"{SCENARIO['linear_frequency']:g} Hz, "
+               f"±[{amp_mm[0]:.0f}, {amp_mm[1]:.0f}, "
+               f"{amp_mm[2]:.0f}] mm"),
+    )
 
-    for k in range(n):
-        t = world.data.time - t_start
-        motion.set_torso_pose(t, **SCENARIO)
-        # refresh xpos/xmat so the logged state sees the torso pose at
-        # t, not the previous step's (main.py / diagnose.py pattern)
-        mujoco.mj_kinematics(world.model, world.data)
-        # set_torso_pose (mocap write) and torso_twist_at (feedforward)
-        # must stay a matched pair — same scenario, same instant t.
-        base_twist = motion.torso_twist_at(t, **SCENARIO)
+    # Full-run history for the stats table — the LivePlot ring buffers
+    # only keep the last WINDOW_S seconds.
+    log = {"t": [], "base_disp": [], "right_e": [], "left_e": []}
 
-        base_pos, _ = frames.torso_pose()
-        log["t"][k] = t
-        log["base_disp"][k] = base_pos - home_pos
-        for side, key in (("right", "right_e"), ("left", "left_e")):
-            e_pos, _ = servo.pose_error(side)
-            log[key][k] = e_pos
+    try:
+        while plot.is_open():
+            t = world.data.time - t_start
+            motion.set_torso_pose(t, **SCENARIO)
+            # refresh xpos/xmat so the logged state sees the torso pose
+            # at t, not the previous step's (main.py/diagnose.py pattern)
+            mujoco.mj_kinematics(world.model, world.data)
+            # set_torso_pose (mocap write) and torso_twist_at
+            # (feedforward) must stay a matched pair — same scenario,
+            # same instant t.
+            base_twist = motion.torso_twist_at(t, **SCENARIO)
 
-        servo.apply_ctrl(dt, base_twist)
-        mujoco.mj_step(world.model, world.data)
+            base_pos, _ = frames.torso_pose()
+            base_disp = base_pos - home_pos
+            right_e, _ = servo.pose_error("right")
+            left_e, _ = servo.pose_error("left")
 
-    return log
+            log["t"].append(t)
+            log["base_disp"].append(base_disp)
+            log["right_e"].append(right_e)
+            log["left_e"].append(left_e)
+            plot.add(t, {
+                "base disp": base_disp * 1000.0,
+                "right EE error": right_e * 1000.0,
+                "left EE error": left_e * 1000.0,
+            })
+
+            servo.apply_ctrl(dt, base_twist)
+            mujoco.mj_step(world.model, world.data)
+    except KeyboardInterrupt:
+        pass  # fall through to the stats table
+
+    return {k: np.asarray(v) for k, v in log.items()}, plot
 
 
 def stats(log):
@@ -127,43 +154,18 @@ def print_stats(st):
     print(f"peak |base disp| = {st['peak_base']:.2f} mm")
 
 
-def make_figures(log, st):
-    OUT.mkdir(parents=True, exist_ok=True)
-    t = log["t"]
-    base_mm = log["base_disp"] * 1000.0
-    right_mm = log["right_e"] * 1000.0
-    left_mm = log["left_e"] * 1000.0
-
-    fig, axes = plt.subplots(3, 1, sharex=True, figsize=(9, 8),
-                             layout="constrained")
-    for i, ax in enumerate(axes):
-        ax.plot(t, base_mm[:, i], color=C_BASE, linewidth=1.2,
-                label="base disp" if i == 0 else None)
-        ax.plot(t, right_mm[:, i], color=C_XYZ[i], linewidth=1.2,
-                label="right e_pos" if i == 0 else None)
-        ax.plot(t, left_mm[:, i], color=C_XYZ[i], linestyle="--",
-                linewidth=1.2, label="left e_pos" if i == 0 else None)
-        ax.axhline(0, color="0.85", linewidth=0.5, zorder=0)
-        ax.set_ylabel(f"{AXES[i]} [mm]")
-    axes[0].legend(loc="upper right", fontsize=8)
-    axes[-1].set_xlabel("time [s]")
-
-    fig.suptitle(
-        f"Base motion vs. EE error, world frame — rejection: "
-        f"right {st['right']['rejection']:.0f}%, "
-        f"left {st['left']['rejection']:.0f}% "
-        f"(peak base disp {st['peak_base']:.0f} mm)"
-    )
-    fig.savefig(OUT / "base_vs_error.png", dpi=200)
-    plt.close(fig)
-
-
 def main():
-    log = run()
+    log, plot = run()
+    if len(log["t"]) == 0:
+        print("Window closed before any samples were logged.")
+        return
     st = stats(log)
+    print(f"\nFull run: {log['t'][-1]:.1f} s "
+          f"({len(log['t'])} samples)")
     print_stats(st)
-    make_figures(log, st)
-    print(f"\nSaved {OUT}/base_vs_error.png")
+    OUT.mkdir(parents=True, exist_ok=True)
+    plot.save(OUT / "base_vs_error.png")
+    print(f"\nSaved {OUT}/base_vs_error.png (last {WINDOW_S:.0f} s window)")
 
 
 if __name__ == "__main__":
