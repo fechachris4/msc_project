@@ -39,7 +39,8 @@ def run(side):
     )
     while plot.is_open():
         motion.set_torso_pose(world.data.time)
-        servo.apply_ctrl(world.model.opt.timestep)
+        servo.apply_ctrl(world.model.opt.timestep,
+                         motion.torso_twist_at(world.data.time))
         mujoco.mj_step(world.model, world.data)
         # refresh poses: mj_step advances qpos after computing them
         mujoco.mj_kinematics(world.model, world.data)

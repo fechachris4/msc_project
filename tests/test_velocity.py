@@ -186,7 +186,7 @@ class ComposedVsMeasuredFDTest(unittest.TestCase):
 
         dt = world.model.opt.timestep
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt)
+            servo.apply_ctrl(dt, (np.zeros(3), np.zeros(3)))
             mujoco.mj_step(world.model, world.data)
 
         n = int(self.MOTION_SECONDS / dt)
@@ -204,7 +204,7 @@ class ComposedVsMeasuredFDTest(unittest.TestCase):
             for s in world.SIDES:
                 p[s][k], R[s][k] = frames.measured_ee_pose(s)
                 v[s][k], w[s][k] = frames.ee_velocity(s, base_twist)
-            servo.apply_ctrl(dt)
+            servo.apply_ctrl(dt, base_twist)
             mujoco.mj_step(world.model, world.data)
 
         for s in world.SIDES:

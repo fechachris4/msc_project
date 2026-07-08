@@ -36,7 +36,8 @@ with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
     while viewer.is_running():
         step_start = time.time()
         motion.set_torso_pose(world.data.time)
-        servo.apply_ctrl(world.model.opt.timestep, arms)
+        servo.apply_ctrl(world.model.opt.timestep,
+                         motion.torso_twist_at(world.data.time), arms)
         mujoco.mj_step(world.model, world.data)
 
         if step % PRINT_EVERY == 0:
