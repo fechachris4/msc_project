@@ -25,8 +25,8 @@ import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 
-from controller import desired_pos, frames, servo
-from sim import target_motion, world
+from controller import frames, servo
+from sim import target_motion, targets, world
 
 OUT = Path("analysis/output")
 
@@ -53,13 +53,24 @@ C_PRED = "#0072B2"
 
 def _reset_to_home():
     """Base static throughout (no sim.motion calls): arms to their home
-    joint config, desired_pos.apply() resolves the static targets,
-    target_motion.init_home() captures them as the sinusoid's anchor."""
+    joint config, targets anchored at each arm's own FK pose (feasible
+    by construction — the same pattern as the closed-loop tests),
+    target_motion.init_home() captures them as the sinusoid's anchor.
+
+    Not desired_pos.apply(): its display anchors are infeasible from
+    HOME with the orientation channel active (joint_2 pins at its ctrl
+    limit at the -x extreme of the sweep, ~110 mm peak error), so the
+    sweep would measure limit clipping, not loop bandwidth."""
     mujoco.mj_resetData(world.model, world.data)
     for side in world.SIDES:
         world.data.qpos[frames.qpos_adrs[side]] = HOME
     mujoco.mj_forward(world.model, world.data)
-    desired_pos.apply()
+    for side in world.SIDES:
+        pos, rot = frames.ee_pose(side)
+        quat = np.zeros(4)
+        mujoco.mju_mat2Quat(quat, rot.flatten())
+        targets.set_target(side, pos)
+        targets.set_target_quat(side, quat)
     target_motion.init_home()
     servo.init_ctrl()
 
