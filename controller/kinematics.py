@@ -1,8 +1,11 @@
 """Analytical forward kinematics for a hinge-joint chain in a MuJoCo model.
 
+Not in the control path: the live FK is Pinocchio-backed (controller/
+pin_fk.py, composed in controller/frames.py). This module survives as the
+independent oracle tests/test_pin_fk.py cross-checks that FK against.
+
 Generic over any model: the chain is named by an explicit base body and
-end-effector site. Scene-specific wiring (which arms exist, how they are
-mounted) lives in controller/frames.py.
+end-effector site.
 
 Usage:
     chain = extract_chain(model, "right_base_link", "right_pinch_site")

@@ -34,10 +34,13 @@ def target_quat(side):
 def target_velocity(side):
     """(v_des (3,) m/s, w_des (3,) rad/s): world-frame target twist.
 
-    The targets are resolved once by desired_pos.apply() and then never
-    move (world-frame pose hold), so the reference twist is exactly
-    zero — the derivative of the actual trajectory, not a placeholder.
-    A future moving-target generator must update this together with
-    set_target/set_target_quat, the way motion.torso_twist_at pairs
-    with motion.set_torso_pose."""
+    Pinned zero on purpose, even under sim/target_motion.py's scripted
+    target motion: the reactive baseline gets no reference-velocity
+    feedforward (phase scope), so the D-term damps against the EE's own
+    tracking velocity and the loop tracks with effective bandwidth
+    KP/(1+KD) — the modeling basis of analysis/bandwidth_sweep.py and
+    tests/test_target_motion.py's TargetTrackingBandwidthTest. For the
+    static world-frame pose hold this is also simply the true target
+    twist. If feedforward enters scope later, wire this to
+    target_motion.target_twist_at and recalibrate both."""
     return np.zeros(3), np.zeros(3)
