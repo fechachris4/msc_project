@@ -19,6 +19,9 @@ side is "right" or "left" (world.SIDES). t is seconds since THIS motion
 started — not necessarily world.data.time. The sine is zero at t=0, so
 starting the caller's clock at motion start guarantees the target
 begins exactly at home (no teleport when the motion switches on).
+
+Layout: research levers -> home anchors (sim read, once) -> trajectory
+(pure math) -> sim interaction (mocap write).
 """
 
 import mujoco
@@ -33,7 +36,20 @@ from controller.transforms import (
 )
 from sim import targets, world
 
-_ZERO3 = np.zeros(3)  # shared default, never mutated
+# --- research levers ---------------------------------------------------
+# Deliberately NO module-level lever constants (contrast sim/motion.py,
+# whose always-on base levers live at the top of the file): this motion
+# is off by default, and the levers ARE the per-call amplitude/frequency
+# kwargs on the three trajectory functions below. Each experiment owns
+# its lever values at its own call site (see analysis/bandwidth_sweep.py
+# for the pattern). To add a new lever: add a kwarg to target_pose_at,
+# target_twist_at, AND set_target_pose, and thread it through — no
+# module state.
+
+_ZERO3 = np.zeros(3)  # shared kwarg default, never mutated
+
+
+# --- home anchors (read from sim, once) ---------------------------------
 
 # Per-side world-frame anchor the sinusoid swings about. Populated by
 # init_home() — unlike motion.py's import-time HOME_POS, the EE-target's
@@ -50,6 +66,17 @@ def init_home():
     for side in world.SIDES:
         HOME_POS[side] = targets.target_position(side)
         HOME_ROT[side] = rotation_from_quat(targets.target_quat(side))
+
+
+# --- trajectory (pure math: pose and its analytic twist) ----------------
+# EXTENSION POINT — trajectory shape. To add a new shape (circle,
+# figure-eight, square wave): write its offset(t)/rate(t) pair in
+# controller/transforms.py as analytic derivatives of each other (like
+# sine_offset/sine_rate), then swap the pair into BOTH target_pose_at
+# and target_twist_at together. target_twist_at is the ground-truth
+# companion used for velocity validation — an offset/rate pair that is
+# not an exact derivative breaks it silently (no test fails at the
+# pose level).
 
 
 def target_pose_at(t, side, linear_amplitude=_ZERO3, linear_frequency=0.0,
@@ -80,6 +107,9 @@ def target_twist_at(t, side, linear_amplitude=_ZERO3, linear_frequency=0.0,
     # R(t) = R_home @ R_local(t), R_home constant => w = R_home @ w_local.
     w = HOME_ROT[side] @ angular_velocity_from_rpy_rates(rpy, rpy_dot)
     return v, w
+
+
+# --- sim interaction (mocap write) ---------------------------------------
 
 
 def set_target_pose(t, side, linear_amplitude=_ZERO3, linear_frequency=0.0,
