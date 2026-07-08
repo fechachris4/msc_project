@@ -45,3 +45,23 @@ def rotation_from_rpy(rpy):
     Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
     Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
     return Rz @ Ry @ Rx
+
+
+def angular_velocity_from_rpy_rates(rpy, rpy_dot):
+    """World-frame angular velocity (rad/s) of a frame following
+    rotation_from_rpy(rpy(t)) — the derivative counterpart of its
+    Rz @ Ry @ Rx composition.
+
+    Each rate spins about its own current axis, expressed in the world:
+    w = yaw_dot*ez + pitch_dot*(Rz ey) + roll_dot*(Rz Ry ex). The columns
+    of E are those three axes (roll does not appear: it rotates about the
+    already-transformed x axis)."""
+    _, pitch, yaw = rpy
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    E = np.array([
+        [cy * cp, -sy, 0.0],
+        [sy * cp,  cy, 0.0],
+        [-sp,     0.0, 1.0],
+    ])
+    return E @ np.asarray(rpy_dot, dtype=float)

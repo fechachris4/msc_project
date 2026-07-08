@@ -12,7 +12,10 @@ so the arms feel base motion as position steps. Accepted phase-1 gap.
 import mujoco
 import numpy as np
 
-from controller.transforms import rotation_from_rpy
+from controller.transforms import (
+    angular_velocity_from_rpy_rates,
+    rotation_from_rpy,
+)
 from sim import world
 
 # research levers: base sway amplitude and frequency
@@ -30,6 +33,12 @@ def sine_offset(t, amplitude, frequency):
     return amplitude * np.sin(2.0 * np.pi * frequency * t)
 
 
+def sine_rate(t, amplitude, frequency):
+    """d/dt of sine_offset."""
+    w = 2.0 * np.pi * frequency
+    return amplitude * w * np.cos(w * t)
+
+
 def torso_pose_at(t, linear_amplitude=LINEAR_AMPLITUDE,
                   linear_frequency=LINEAR_FREQUENCY,
                   rotational_amplitude=ROTATIONAL_AMPLITUDE,
@@ -39,6 +48,21 @@ def torso_pose_at(t, linear_amplitude=LINEAR_AMPLITUDE,
     rpy = HOME_RPY + sine_offset(t, rotational_amplitude,
                                  rotational_frequency)
     return pos, rpy
+
+
+def torso_twist_at(t, linear_amplitude=LINEAR_AMPLITUDE,
+                   linear_frequency=LINEAR_FREQUENCY,
+                   rotational_amplitude=ROTATIONAL_AMPLITUDE,
+                   rotational_frequency=ROTATIONAL_FREQUENCY):
+    """(v (3,) m/s, w (3,) rad/s) of the scripted torso at time t, world
+    frame — the analytic time derivative of torso_pose_at. This is the
+    base twist the mocap teleports never give the simulator; on hardware
+    the same quantity comes from Vicon."""
+    v = sine_rate(t, linear_amplitude, linear_frequency)
+    rpy = HOME_RPY + sine_offset(t, rotational_amplitude,
+                                 rotational_frequency)
+    rpy_dot = sine_rate(t, rotational_amplitude, rotational_frequency)
+    return v, angular_velocity_from_rpy_rates(rpy, rpy_dot)
 
 
 def set_torso_pose(t, linear_amplitude=LINEAR_AMPLITUDE,
