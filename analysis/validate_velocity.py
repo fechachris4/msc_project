@@ -65,8 +65,9 @@ def run():
     servo.init_ctrl()
 
     dt = world.model.opt.timestep
+    zero_twist = (np.zeros(3), np.zeros(3))
     for _ in range(int(SETTLE_SECONDS / dt)):
-        servo.apply_ctrl(dt)
+        servo.apply_ctrl(dt, zero_twist)
         mujoco.mj_step(world.model, world.data)
 
     n = int(MOTION_SECONDS / dt)
@@ -103,7 +104,7 @@ def run():
             L["w_direct"][k] = vel6[:3]
             L["v_direct"][k] = vel6[3:]
 
-        servo.apply_ctrl(dt)
+        servo.apply_ctrl(dt, base_twist)
         mujoco.mj_step(world.model, world.data)
 
     # Ground truth by central differences of the measured pose; trim the
