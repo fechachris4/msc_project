@@ -31,12 +31,25 @@ def arm_qpos_adrs(model, prefix):
     return adrs
 
 
+def arm_dof_adrs(model, prefix):
+    """Global qvel (dof) addresses of one arm's 7 joints, base to tip."""
+    adrs = []
+    for i in range(1, 8):
+        jnt_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}joint_{i}"
+        )
+        assert jnt_id >= 0, f"{prefix}joint_{i} not in model"
+        adrs.append(int(model.jnt_dofadr[jnt_id]))
+    return adrs
+
+
 # One arm model serves both arms: left/right are the same MJCF, and the
 # mount difference lives in T_T_K, not in T_K_E.
 pin_model, pin_data, ee_frame_id = build_pin_model(
     "sim/assets/kinova_gen3/gen3.xml", "base_link", "pinch_site"
 )
 qpos_adrs = {s: arm_qpos_adrs(world.model, f"{s}_") for s in world.SIDES}
+dof_adrs = {s: arm_dof_adrs(world.model, f"{s}_") for s in world.SIDES}
 _T_T_K = {s: mount_transform(world.model, world.arm_base_id[s])
           for s in world.SIDES}
 
@@ -80,6 +93,29 @@ def jacobian_world(side):
     J[:3] = R_W_K @ J_K[:3]
     J[3:] = R_W_K @ J_K[3:]
     return J
+
+
+def ee_velocity(side, base_twist):
+    """EE world twist: measured joint rates plus the given base twist.
+
+        v_E = v_T + w_T x (p_E - p_T) + (J_world(q) qdot)_lin
+        w_E = w_T + (J_world(q) qdot)_ang
+
+    — the time derivative of ee_pose's T_W_E = T_W_T · T_T_K · T_K_E(q),
+    with T_T_K constant. base_twist = (v_T (3,) m/s, w_T (3,) rad/s) is
+    the torso world twist, which MuJoCo cannot provide (the mocap torso
+    teleports, it never has velocity): scripted-motion derivative in sim
+    (motion.torso_twist_at), Vicon estimate on hardware, zeros for a
+    stationary base. Required on purpose — no default, so a forgotten
+    base twist fails loudly instead of returning a silently wrong zero.
+    Returns (v_E (3,) m/s, w_E (3,) rad/s), of the EE relative to the
+    world, expressed in the world frame."""
+    v_T, w_T = (np.asarray(x, dtype=float) for x in base_twist)
+    qdot = np.asarray(world.data.qvel[dof_adrs[side]], dtype=float)
+    arm = jacobian_world(side) @ qdot
+    p_E, _ = ee_pose(side)
+    p_T, _ = torso_pose()
+    return v_T + np.cross(w_T, p_E - p_T) + arm[:3], w_T + arm[3:]
 
 
 def measured_ee_pose(side):
