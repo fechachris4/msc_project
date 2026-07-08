@@ -28,6 +28,8 @@ from sim import targets, world
 
 KP_POS = 2.0    # 1/s task-space bandwidth
 KP_ROT = 2.0    # 1/s
+KD_POS = 0.3    # dimensionless: velocity error -> velocity command
+KD_ROT = 0.3    # dimensionless
 K_NULL = 1.0    # 1/s null-space joint-centering
 DAMPING = 0.05  # DLS lambda
 
@@ -48,10 +50,14 @@ def velocity_error(ref_vel, ee_vel):
     return ref_vel - ee_vel
 
 
-def qdot_from_error(J, e_pos, e_rot, q, q_mid, k_null, damping=DAMPING):
-    """World-frame pose error -> joint rates (rad/s), three equations:
+def qdot_from_error(J, e_pos, e_rot, e_v, e_w, q, q_mid, k_null,
+                    damping=DAMPING):
+    """World-frame pose + velocity errors -> joint rates (rad/s):
 
-    1. control law:   v = [KP_POS*e_pos; KP_ROT*e_rot]  (commanded twist)
+    1. PD law:        v = [KP_POS*e_pos + KD_POS*e_v;
+                           KP_ROT*e_rot + KD_ROT*e_w]  (commanded twist)
+       e_v/e_w are computed velocity errors (twist_error) — never a
+       numerical derivative of the position error.
     2. DLS inversion: qdot_task = J^T (J J^T + damping^2 I)^-1 v
        — bounded qdot through singularities at the cost of a small bias.
     3. null space:    qdot = qdot_task + (I - J+ J) (-k_null (q - q_mid))
@@ -60,7 +66,8 @@ def qdot_from_error(J, e_pos, e_rot, q, q_mid, k_null, damping=DAMPING):
        pseudoinverse J+, not the damped one: the damped projector leaks
        centering into the task and left a measured ~14 mm steady-state
        error at damping=0.05 (exact projector: 0.4 mm)."""
-    v = np.concatenate([KP_POS * e_pos, KP_ROT * e_rot])
+    v = np.concatenate([KP_POS * e_pos + KD_POS * e_v,
+                        KP_ROT * e_rot + KD_ROT * e_w])
     qdot_task = J.T @ np.linalg.solve(J @ J.T + damping**2 * np.eye(6), v)
     J_pinv = np.linalg.pinv(J)
     qdot_null = -k_null * (q - q_mid)
@@ -141,19 +148,25 @@ def init_ctrl():
             world.data.qpos[frames.qpos_adrs[side]]
 
 
-def apply_ctrl(dt, arms=world.SIDES):
+def apply_ctrl(dt, base_twist, arms=world.SIDES):
     """Write the selected arms' updated servo setpoints into data.ctrl:
-    pose error -> qdot -> clip to the joint speed limits ->
+    pose + twist errors -> qdot (PD) -> clip to the joint speed limits ->
     integrate the setpoints by qdot*dt -> clip to the actuator ctrl range.
+
+    base_twist = (v_T, w_T): the torso world twist, required with no
+    default (motion.torso_twist_at in sim, Vicon on hardware, zeros for
+    a genuinely stationary base) — same loud-failure convention as
+    frames.ee_velocity.
 
     The one loop-body block every front-end (viewer, plots, tests) must
     share — call it once per step, before mj_step. An unselected arm
     keeps its init_ctrl() setpoints and simply holds posture."""
     for side in arms:
         e_pos, e_rot = pose_error(side)
+        e_v, e_w = twist_error(side, base_twist)
         q = world.data.qpos[frames.qpos_adrs[side]]
         qdot = qdot_from_error(frames.jacobian_world(side), e_pos, e_rot,
-                               q, _Q_MID[side], _K_NULL_VEC[side])
+                               e_v, e_w, q, _Q_MID[side], _K_NULL_VEC[side])
         qdot = np.clip(qdot, -QDOT_LIMIT, QDOT_LIMIT)
         ctrl = world.data.ctrl[world.ctrl_adrs[side]] + qdot * dt
         world.data.ctrl[world.ctrl_adrs[side]] = np.clip(ctrl, *_BOUNDS[side])

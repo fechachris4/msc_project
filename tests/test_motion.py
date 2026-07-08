@@ -112,18 +112,24 @@ class BaseMotionRejectionTest(unittest.TestCase):
         servo.init_ctrl()
 
         dt = world.model.opt.timestep
+        zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt)
+            servo.apply_ctrl(dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
 
         t_start = world.data.time  # phase 0 at motion start: no teleport
         peak = {side: 0.0 for side in world.SIDES}
         for _ in range(int(self.MOTION_SECONDS / dt)):
-            motion.set_torso_pose(world.data.time - t_start,
+            t_rel = world.data.time - t_start
+            motion.set_torso_pose(t_rel,
                                   linear_amplitude=self.TEST_AMPLITUDE,
                                   linear_frequency=self.TEST_FREQUENCY,
                                   rotational_amplitude=np.zeros(3))
-            servo.apply_ctrl(dt)
+            base_twist = motion.torso_twist_at(
+                t_rel, linear_amplitude=self.TEST_AMPLITUDE,
+                linear_frequency=self.TEST_FREQUENCY,
+                rotational_amplitude=np.zeros(3))
+            servo.apply_ctrl(dt, base_twist)
             mujoco.mj_step(world.model, world.data)
             for side in world.SIDES:
                 e_pos, _ = servo.pose_error(side)
@@ -132,6 +138,82 @@ class BaseMotionRejectionTest(unittest.TestCase):
         for side in world.SIDES:
             self.assertLess(peak[side], self.PEAK_TOL, f"{side}: {peak}")
             self.assertGreater(peak[side], self.PEAK_FLOOR, f"{side}: {peak}")
+
+
+class PDvsPDisturbanceTest(unittest.TestCase):
+    """The D term's acceptance proof. At 0.5 Hz the P law transmits
+    0.84 of the base sway to the EE (measured); first-order theory for
+    Kd = 0.3 predicts ~0.69. Same pinned scenario run twice — real
+    gains vs KD monkeypatched to zero (the P-only law) — the PD peak
+    must be strictly lower, with margin for servo-lag effects."""
+
+    SETTLE_SECONDS = 2.0
+    AMPLITUDE = np.array([0.05, 0.0, 0.0])  # m
+    FREQUENCY = 0.5                          # Hz
+    MOTION_SECONDS = 4.0                     # two periods
+    PEAK_FLOOR = 0.005                       # m: disturbance engaged
+
+    def _run_peak(self):
+        from controller import frames, servo
+        from sim import motion, targets, world
+
+        mujoco.mj_resetData(world.model, world.data)
+        for side in world.SIDES:
+            world.data.qpos[frames.qpos_adrs[side]] = HOME
+        mujoco.mj_forward(world.model, world.data)
+        for side in world.SIDES:
+            pos, rot = frames.ee_pose(side)
+            quat = np.zeros(4)
+            mujoco.mju_mat2Quat(quat, rot.flatten())
+            targets.set_target(side, pos)
+            targets.set_target_quat(side, quat)
+        servo.init_ctrl()
+
+        dt = world.model.opt.timestep
+        zero_twist = (np.zeros(3), np.zeros(3))
+        for _ in range(int(self.SETTLE_SECONDS / dt)):
+            servo.apply_ctrl(dt, zero_twist)
+            mujoco.mj_step(world.model, world.data)
+
+        t_start = world.data.time
+        peak = {side: 0.0 for side in world.SIDES}
+        for _ in range(int(self.MOTION_SECONDS / dt)):
+            t_rel = world.data.time - t_start
+            motion.set_torso_pose(t_rel, linear_amplitude=self.AMPLITUDE,
+                                  linear_frequency=self.FREQUENCY,
+                                  rotational_amplitude=np.zeros(3))
+            base_twist = motion.torso_twist_at(
+                t_rel, linear_amplitude=self.AMPLITUDE,
+                linear_frequency=self.FREQUENCY,
+                rotational_amplitude=np.zeros(3))
+            servo.apply_ctrl(dt, base_twist)
+            mujoco.mj_step(world.model, world.data)
+            for side in world.SIDES:
+                e_pos, _ = servo.pose_error(side)
+                peak[side] = max(peak[side], np.linalg.norm(e_pos))
+        return peak
+
+    def test_pd_rejects_more_than_p(self):
+        from controller import servo
+        from sim import world
+
+        self.addCleanup(_restore_world)
+
+        peak_pd = self._run_peak()
+        kd_pos, kd_rot = servo.KD_POS, servo.KD_ROT
+        servo.KD_POS = servo.KD_ROT = 0.0
+        try:
+            peak_p = self._run_peak()
+        finally:
+            servo.KD_POS, servo.KD_ROT = kd_pos, kd_rot
+
+        for side in world.SIDES:
+            self.assertGreater(peak_pd[side], self.PEAK_FLOOR, side)
+            self.assertLess(
+                peak_pd[side], 0.9 * peak_p[side],
+                f"{side}: PD {peak_pd[side] * 1000:.1f} mm vs "
+                f"P {peak_p[side] * 1000:.1f} mm",
+            )
 
 
 if __name__ == "__main__":

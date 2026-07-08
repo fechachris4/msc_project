@@ -125,9 +125,11 @@ class QdotFromErrorTest(unittest.TestCase):
         e_rot = rng.uniform(-0.5, 0.5, 3)
         return J, e_pos, e_rot
 
-    # q = q_mid makes the null-space term exactly zero, so the DLS
-    # properties are tested on the task term alone.
+    # q = q_mid makes the null-space term exactly zero, and zero
+    # velocity errors make the D term exactly zero, so the DLS
+    # properties are tested on the P task term alone.
     _Q0 = np.zeros(7)
+    _V0 = np.zeros(3)
 
     def test_tracks_task_velocity_at_small_damping(self):
         from controller import servo
@@ -136,7 +138,8 @@ class QdotFromErrorTest(unittest.TestCase):
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
             v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
-            qdot = servo.qdot_from_error(J, e_pos, e_rot, self._Q0,
+            qdot = servo.qdot_from_error(J, e_pos, e_rot, self._V0,
+                                         self._V0, self._Q0,
                                          self._Q0, servo.K_NULL,
                                          damping=1e-6)
             np.testing.assert_allclose(J @ qdot, v, atol=1e-8)
@@ -148,7 +151,8 @@ class QdotFromErrorTest(unittest.TestCase):
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
             v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
-            qdot = servo.qdot_from_error(J, e_pos, e_rot, self._Q0,
+            qdot = servo.qdot_from_error(J, e_pos, e_rot, self._V0,
+                                         self._V0, self._Q0,
                                          self._Q0, servo.K_NULL,
                                          damping=1e-9)
             np.testing.assert_allclose(
@@ -167,10 +171,13 @@ class QdotFromErrorTest(unittest.TestCase):
             q = rng.uniform(-2.0, 2.0, 7)
             q_mid = rng.uniform(-1.0, 1.0, 7)
 
-            qdot_plain = servo.qdot_from_error(J, e_pos, e_rot, q_mid,
-                                               q_mid, k_vec, damping=1e-6)
-            qdot_cent = servo.qdot_from_error(J, e_pos, e_rot, q,
-                                              q_mid, k_vec, damping=1e-6)
+            zero_v = np.zeros(3)
+            qdot_plain = servo.qdot_from_error(J, e_pos, e_rot, zero_v,
+                                               zero_v, q_mid, q_mid,
+                                               k_vec, damping=1e-6)
+            qdot_cent = servo.qdot_from_error(J, e_pos, e_rot, zero_v,
+                                              zero_v, q, q_mid,
+                                              k_vec, damping=1e-6)
             null_part = qdot_cent - qdot_plain
 
             # (a) null motion produces no task velocity
@@ -273,7 +280,8 @@ class ArmSelectionTest(unittest.TestCase):
 
         before = {side: world.data.ctrl[world.ctrl_adrs[side]].copy()
                   for side in world.SIDES}
-        servo.apply_ctrl(world.model.opt.timestep, arms=("right",))
+        servo.apply_ctrl(world.model.opt.timestep,
+                         (np.zeros(3), np.zeros(3)), arms=("right",))
 
         np.testing.assert_array_equal(
             world.data.ctrl[world.ctrl_adrs["left"]], before["left"]
@@ -330,8 +338,9 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
               for side in world.SIDES}
 
         dt = world.model.opt.timestep
+        zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SIM_SECONDS / dt)):
-            servo.apply_ctrl(dt)
+            servo.apply_ctrl(dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
 
         for side in world.SIDES:
