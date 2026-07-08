@@ -4,12 +4,14 @@ from sim state with the same public functions apply_ctrl itself calls
 (servo.pose_error, frames.jacobian_world, servo.qdot_from_error), so the
 log shows exactly what the controller saw each cycle.
 
-    python -m analysis.diagnose
+    python -m analysis.diagnose [outdir]
 
-Outputs: analysis/output/diagnosis.npz, 8 figures (PNG), and an event
-table on stdout. No fixes, no controller changes — evidence only.
+Outputs: <outdir>/diagnosis.npz (default analysis/output), figures A–G,
+and an event table on stdout. No fixes, no controller changes —
+evidence only.
 """
 
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -410,6 +412,9 @@ def print_summary(log, ev):
 
 
 def main():
+    global OUT
+    if len(sys.argv) > 1:
+        OUT = Path(sys.argv[1])
     log = run()
     ev = sv_events(log)
     OUT.mkdir(parents=True, exist_ok=True)
