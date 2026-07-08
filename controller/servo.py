@@ -42,6 +42,12 @@ def rotation_error(ref_rot, ee_rot):
     return pin.log3(ref_rot @ ee_rot.T)
 
 
+def velocity_error(ref_vel, ee_vel):
+    """World-frame velocity error: reference - actual. Linear (m/s) and
+    angular (rad/s) alike — angular velocity lives in R^3, no log map."""
+    return ref_vel - ee_vel
+
+
 def qdot_from_error(J, e_pos, e_rot, q, q_mid, k_null, damping=DAMPING):
     """World-frame pose error -> joint rates (rad/s), three equations:
 
@@ -71,6 +77,19 @@ def pose_error(side):
     ref_rot = rotation_from_quat(targets.target_quat(side))
     return (position_error(ref_pos, ee_pos),
             rotation_error(ref_rot, ee_rot))
+
+
+def twist_error(side, base_twist):
+    """(e_v, e_w): desired minus actual EE world twist, world frame.
+
+    The desired twist comes from the target trajectory
+    (targets.target_velocity — exactly zero for the static world-frame
+    hold); the actual from frames.ee_velocity. base_twist is required
+    with no default, same loud-failure convention as ee_velocity."""
+    v_des, w_des = targets.target_velocity(side)
+    v_ee, w_ee = frames.ee_velocity(side, base_twist)
+    return (velocity_error(v_des, v_ee),
+            velocity_error(w_des, w_ee))
 
 
 # --- servo actuation (qdot limits, setpoint integration, data.ctrl) ---------
