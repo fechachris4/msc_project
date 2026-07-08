@@ -20,11 +20,14 @@ from controller.transforms import (
 )
 from sim import world
 
-# research levers: base sway amplitude and frequency
-LINEAR_AMPLITUDE = np.array([0.1, 0.3, 0.0])     # m, world xyz
-ROTATIONAL_AMPLITUDE = np.array([0.0, 0.0, 0.0])  # rad, rpy
-LINEAR_FREQUENCY = 0.1     # Hz
-ROTATIONAL_FREQUENCY = 0.2  # Hz
+# --- research levers ---------------------------------------------------
+# Deliberately NO module-level lever constants (mirrors
+# sim/target_motion.py): the levers ARE the per-call amplitude/frequency
+# kwargs on the three functions below, zero by default (static base).
+# Each experiment owns its lever values at its own call site (see
+# main.py's BASE_SCENARIO for the pattern).
+
+_ZERO3 = np.zeros(3)  # shared kwarg default, never mutated
 
 _TORSO_MOCAP_IDX = world.model.body_mocapid[world.torso_body_id]
 HOME_POS = world.data.mocap_pos[_TORSO_MOCAP_IDX].copy()
@@ -38,10 +41,8 @@ assert np.allclose(world.data.mocap_quat[_TORSO_MOCAP_IDX],
 HOME_RPY = np.zeros(3)
 
 
-def torso_pose_at(t, linear_amplitude=LINEAR_AMPLITUDE,
-                  linear_frequency=LINEAR_FREQUENCY,
-                  rotational_amplitude=ROTATIONAL_AMPLITUDE,
-                  rotational_frequency=ROTATIONAL_FREQUENCY):
+def torso_pose_at(t, linear_amplitude=_ZERO3, linear_frequency=0.0,
+                  rotational_amplitude=_ZERO3, rotational_frequency=0.0):
     """(pos, rpy) of the scripted torso at time t — pure math."""
     pos = HOME_POS + sine_offset(t, linear_amplitude, linear_frequency)
     rpy = HOME_RPY + sine_offset(t, rotational_amplitude,
@@ -49,10 +50,8 @@ def torso_pose_at(t, linear_amplitude=LINEAR_AMPLITUDE,
     return pos, rpy
 
 
-def torso_twist_at(t, linear_amplitude=LINEAR_AMPLITUDE,
-                   linear_frequency=LINEAR_FREQUENCY,
-                   rotational_amplitude=ROTATIONAL_AMPLITUDE,
-                   rotational_frequency=ROTATIONAL_FREQUENCY):
+def torso_twist_at(t, linear_amplitude=_ZERO3, linear_frequency=0.0,
+                   rotational_amplitude=_ZERO3, rotational_frequency=0.0):
     """(v (3,) m/s, w (3,) rad/s) of the scripted torso at time t, world
     frame — the analytic time derivative of torso_pose_at. This is the
     base twist the mocap teleports never give the simulator; on hardware
@@ -64,10 +63,8 @@ def torso_twist_at(t, linear_amplitude=LINEAR_AMPLITUDE,
     return v, angular_velocity_from_rpy_rates(rpy, rpy_dot)
 
 
-def set_torso_pose(t, linear_amplitude=LINEAR_AMPLITUDE,
-                   linear_frequency=LINEAR_FREQUENCY,
-                   rotational_amplitude=ROTATIONAL_AMPLITUDE,
-                   rotational_frequency=ROTATIONAL_FREQUENCY):
+def set_torso_pose(t, linear_amplitude=_ZERO3, linear_frequency=0.0,
+                   rotational_amplitude=_ZERO3, rotational_frequency=0.0):
     """Write the scripted torso pose into the mocap body.
 
     All-zero amplitudes: no write at all — the static condition, and the

@@ -5,7 +5,7 @@ simulation runs (headless — no MuJoCo viewer, so plain python works):
     python -m plotting.position_error right
     python -m plotting.position_error left
 
-Base motion follows the sim/motion.py levers (zero amplitude = static).
+Base motion follows this module's BASE_SCENARIO (zero amplitude = static).
 
 Displayed as d = p_EE - p_target (world frame, mm): positive means the EE is
 on the +axis side of the target. The dashed zero line is the target. Note the
@@ -23,6 +23,15 @@ from controller import desired_pos, servo
 from plotting.live_plot import LivePlot
 from sim import motion, world
 
+# Base-motion scenario for this run — same values main.py runs today.
+# Zero amplitudes = static base (hand-draggable torso).
+BASE_SCENARIO = dict(
+    linear_amplitude=np.array([0.1, 0.3, 0.0]),   # m, world xyz
+    linear_frequency=0.1,                          # Hz
+    rotational_amplitude=np.zeros(3),              # rad, rpy
+    rotational_frequency=0.2,                      # Hz
+)
+
 
 def run(side):
     """side: "right" or "left".
@@ -38,12 +47,15 @@ def run(side):
         title=f"{side} EE displacement from target (world frame)",
     )
     while plot.is_open():
-        motion.set_torso_pose(world.data.time)
+        motion.set_torso_pose(world.data.time, **BASE_SCENARIO)
         # refresh xpos/xmat so the controller sees the torso pose at t,
         # not the previous step's (same pattern as main.py)
         mujoco.mj_kinematics(world.model, world.data)
+        # set_torso_pose (mocap write) and torso_twist_at (feedforward)
+        # must stay a matched pair — same scenario, same instant t.
         servo.apply_ctrl(world.model.opt.timestep,
-                         motion.torso_twist_at(world.data.time))
+                         motion.torso_twist_at(world.data.time,
+                                               **BASE_SCENARIO))
         mujoco.mj_step(world.model, world.data)
         # refresh poses: mj_step advances qpos after computing them
         mujoco.mj_kinematics(world.model, world.data)
