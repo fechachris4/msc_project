@@ -2,22 +2,20 @@
 
 Scenario (pinned in `analysis/diagnose.py`): 0.1 m x-sway + 0.4 rad
 (23°) roll, both at 0.1 Hz, 40 s, real `desired_pos` task points.
-Data: `analysis/output/diagnosis.npz`; main figures A–D, appendix E–G
-(all cropped to t ≥ 3 s — the startup transient from the singular zero
-configuration is excluded). Controller untouched; every quantity
-recomputed with the controller's own functions each cycle.
+Data: `analysis/output/diagnosis.npz`, figures 01–08. Controller
+untouched; every quantity recomputed with the controller's own
+functions each cycle.
 
 ## 1. Observations (facts visible in the plots/data)
 
 1. Both arms start ~1.3 m from target in the model's default zero
    configuration, which is exactly singular (σ_min ≈ 4e-33, rank 3 at
-   t = 0). The σ_min threshold crossings reported at 0.0 s in the
-   stdout event table are this startup, not the failure. Both arms
-   converge by t ≈ 3 s, and all figures crop to t ≥ 3 s.
+   t = 0). The "σ_min < 0.05/0.01/0.001 @ 0.0 s" annotations are this
+   startup, not the failure. Both arms converge by t ≈ 3 s. (Figs 01, 02)
 2. From t = 3–10 s both arms track with |e_pos| ≲ 50 mm (right briefly
    ~115 mm near the first negative-roll extreme), oscillating at the
    roll frequency. At t = 10.0 s the right error is 19 mm — fully
-   recovered. (Fig A)
+   recovered. (Fig 01)
 3. At t = 11.19 s (roll +15.6°) the first contact appears:
    `right_half_arm_2_link` ↔ `torso`. After onset the right arm is in
    contact in 77% of steps; the left arm records zero contacts in the
@@ -25,24 +23,22 @@ recomputed with the controller's own functions each cycle.
 4. After 11.2 s the right error climbs to 200–320 mm on every
    positive-roll half-cycle and briefly recovers to ~20 mm near the
    roll zero crossings (t ≈ 20, 30 s). Post-settle (t > 5 s) mean:
-   right 177 mm, left 37 mm; final: 184 mm vs 36 mm. (Fig A)
+   right 177 mm, left 37 mm; final: 184 mm vs 36 mm. (Fig 01)
 5. Servo lag |ctrl − q| peaks at 2.67 rad on the right arm, starting
    ~1 s after contact onset; left stays ≤ 0.12 rad. A position servo
    2.7 rad from its setpoint is being physically prevented from
-   following it. (Fig A, third panel)
+   following it. (stdout)
 6. σ_min and cond(J) traces are statistically identical between arms
    (medians 0.014 vs 0.011; both dip to ~1e-4). The dips occur at
    NEGATIVE roll extremes (t ≈ 7.5, 17.5, 27.5, 37.5 s) on both arms;
    the right error peaks at POSITIVE roll extremes (t ≈ 13, 23, 33 s)
-   — opposite phase. Rank never drops below 6 after startup. In-contact
-   samples occupy the high-error band across the full σ_min range.
-   (Figs A, B)
-7. Right q6 is pinned at its lower limit for 93% of t > 3 s — starting
-   at t ≈ 6 s, BEFORE first contact; left q6 hovers just above its
-   limit. q2 rides at 93–100% of its range on both arms. (Figs C, E)
-8. Velocity saturation: some right-arm joint saturates in 5% of
-   post-settle cycles, entirely inside the contact windows; the left
-   arm never saturates post-settle. (Figs D, F)
+   — opposite phase. Rank never drops below 6 after startup. (Figs 02,
+   03, 07, 08)
+7. Joint 6 camps at its position/ctrl limit on both arms (distance ≈ 0,
+   with ~0.007 rad physical overshoot). (Fig 04)
+8. Velocity saturation: some joint saturates in 9.5% of right-arm
+   cycles vs 6.8% left, concentrated in the startup transient and the
+   contact windows. (Fig 05)
 
 ## 2. Evidence (for / against each candidate explanation)
 
@@ -125,49 +121,12 @@ ignore collisions. If confirmed, the eventual remedies to evaluate are
 task-point placement, mount geometry, or collision-aware redundancy
 resolution — out of scope here.
 
-## 5. Experiment outcome (2026-07-08): contact exclusion
-
-The recommended experiment was run: `right_half_arm_2_link ↔ torso`
-excluded in `sim/scene.xml` (marked DIAGNOSTIC, not a fix), identical
-pinned scenario, results in `analysis/output_nocontact/`.
-
-| t > 5 s            | baseline | excluded | left (ref) |
-|--------------------|----------|----------|------------|
-| right mean \|e\|   | 177 mm   | 98 mm    | 37 mm      |
-| right peak \|e\|   | 319 mm   | 252 mm   | 50 mm      |
-| right servo lag pk | 2.67 rad | 0.77 rad | 0.12 rad   |
-| right contact occ. | 77%      | 35%      | 0%         |
-
-Findings:
-1. **Collision confirmed as the dominant mechanism** — removing one
-   contact pair halves the mean error and cuts servo lag 3.5×.
-2. **The failure moved one link up the chain**: `right_half_arm_1_link`
-   now contacts the torso from t = 12.0 s (33% occupancy), with sharp
-   ~250 mm error spikes at contact release. The +roll posture demands
-   physically overlap the torso volume — this is not one incidental
-   pair; the right arm's task is geometrically infeasible at +roll
-   extremes without passing through the torso. Excluding pairs one by
-   one just peels the onion.
-3. **A contact-free asymmetric residual is exposed**: ~115–120 mm right
-   error humps at NEGATIVE roll extremes (t ≈ 7.5, 17.5 s in the
-   no-contact Fig A) with zero contact and near-zero servo lag — while
-   the left holds ≤ 50 mm. This promotes the q6-limit hypothesis: with
-   the wrist pinned, the right arm's 6-DOF pose task is infeasible and
-   the DLS trades the surplus into position error.
-
-Refined root cause: **the right task pose is geometrically marginal
-relative to the torso under ±23° roll** — colliding at +roll, wrist-
-limit-infeasible at −roll. Candidate remedies to evaluate (out of
-scope here): task-point placement, mount angle, orientation-vs-position
-task weighting, or collision/limit-aware redundancy resolution.
-
 ### Instrumentation caveats
 
 - Runs start from the model's default zero configuration (singular,
   1.3 m from target). Experiment metrics should either start from a
-  home keyframe or exclude t < 3 s (the figures already do); the σ_min
-  threshold crossings at 0.0 s in the stdout table are startup
-  artifacts.
+  home keyframe or exclude t < 3 s; the σ_min threshold annotations at
+  0.0 s are startup artifacts.
 - Logged quantities are recomputed pre-`apply_ctrl` from identical sim
   state (same functions the controller calls); `data.ctrl`-derived
   quantities are read post-`apply_ctrl`; contacts post-`mj_step`.
