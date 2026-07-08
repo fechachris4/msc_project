@@ -351,5 +351,31 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
             self.assertLess(np.linalg.norm(e_rot), self.ROT_TOL, side)
 
 
+class GainInvariantsTest(unittest.TestCase):
+    """Structural constraints on the gains, independent of their tuned
+    values — the other closed-loop tests use the gains themselves as
+    the oracle, so a zeroed channel passes them trivially (commit
+    a666077 zeroed KP_ROT for a diagnosis and it went unnoticed)."""
+
+    def test_pose_hold_needs_both_channels(self):
+        """The task is a world-frame POSE hold: both position and
+        rotation need position-level feedback."""
+        from controller import servo
+
+        self.assertGreater(servo.KP_POS, 0.0)
+        self.assertGreater(servo.KP_ROT, 0.0)
+
+    def test_kd_below_discrete_stability_boundary(self):
+        """e_v feeds back measured qdot one step delayed — a discrete
+        loop with gain ~KD that chatters at the step frequency as
+        KD -> 1 (measured qddot 7.3 rad/s^2 at KD_POS = 1.0 vs 2.3 at
+        0.3, and the composed-vs-FD velocity skew inflates ~8x)."""
+        from controller import servo
+
+        for kd in (servo.KD_POS, servo.KD_ROT):
+            self.assertGreaterEqual(kd, 0.0)
+            self.assertLess(kd, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

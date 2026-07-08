@@ -26,10 +26,22 @@ from sim import targets, world
 
 # --- control math (pure: numpy + pinocchio, no MuJoCo) ---------------------
 
+# Two structural constraints on these gains (tests/test_servo.py,
+# GainInvariantsTest):
+# - KP_ROT > 0: the task is a world-frame POSE hold. With KP_ROT = 0 the
+#   6-row DLS still drives the EE angular rate to ~0, but orientation
+#   error has no feedback and drifts uncorrected (measured ~0.5 deg vs
+#   0.02 deg controlled, 50 mm sway at 0.5 Hz).
+# - KD < 1: e_v feeds back measured qdot one step delayed — a discrete
+#   loop with gain ~KD that chatters at the step frequency as KD -> 1
+#   (qddot 7.3 rad/s^2 at KD_POS = 1.0 vs 2.3 at 0.3). The D-term also
+#   lowers the effective bandwidth to KP/(1+KD) while feeding forward
+#   the fraction KD/(1+KD) of the base velocity: larger KD trades
+#   settle speed for disturbance rejection.
 KP_POS = 2.0    # 1/s task-space bandwidth
-KP_ROT = 0.0    # 1/s
-KD_POS = 1.0    # dimensionless: velocity error -> velocity command
-KD_ROT = 0.0    # dimensionless
+KP_ROT = 2.0    # 1/s
+KD_POS = 0.3    # dimensionless: velocity error -> velocity command
+KD_ROT = 0.3    # dimensionless
 K_NULL = 1.0    # 1/s null-space joint-centering
 DAMPING = 0.05  # DLS lambda
 
