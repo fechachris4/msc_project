@@ -22,7 +22,8 @@ class LivePlot:
         """
         rows: y-axis label per subplot, top to bottom.
         signals: {name: options} — one line per signal per row.
-                 options: {"style": matplotlib format string} (optional).
+                 options: {"style": matplotlib format string} plus any
+                 Line2D kwargs, e.g. {"color": "#0072B2"} (all optional).
         window: samples kept on screen.
         redraw_every: add() calls per redraw.
         """
@@ -39,10 +40,13 @@ class LivePlot:
         for row, (ax, label) in enumerate(zip(self._axes, rows)):
             for name, options in signals.items():
                 style = options.get("style", "-")
-                self._lines[name, row] = ax.plot([], [], style, label=name)[0]
+                kwargs = {k: v for k, v in options.items() if k != "style"}
+                self._lines[name, row] = ax.plot([], [], style, label=name,
+                                                 **kwargs)[0]
                 self._buffers[name, row] = deque(maxlen=window)
             ax.set_ylabel(label)
-            ax.legend(loc="upper right")
+        # one legend on the top row — every row has the same signals
+        self._axes[0].legend(loc="upper right")
         self._axes[-1].set_xlabel(xlabel)
         if title:
             self._fig.suptitle(title)
