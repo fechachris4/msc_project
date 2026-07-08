@@ -98,15 +98,16 @@ def pose_error(side):
             rotation_error(ref_rot, ee_rot))
 
 
-def twist_error(side, base_twist):
+def twist_error(side, base_twist, J=None):
     """(e_v, e_w): desired minus actual EE world twist, world frame.
 
     The desired twist comes from the target trajectory
     (targets.target_velocity — exactly zero for the static world-frame
     hold); the actual from frames.ee_velocity. base_twist is required
-    with no default, same loud-failure convention as ee_velocity."""
+    with no default, same loud-failure convention as ee_velocity.
+    J, if given, is forwarded to ee_velocity (reuse, see there)."""
     v_des, w_des = targets.target_velocity(side)
-    v_ee, w_ee = frames.ee_velocity(side, base_twist)
+    v_ee, w_ee = frames.ee_velocity(side, base_twist, J)
     return (velocity_error(v_des, v_ee),
             velocity_error(w_des, w_ee))
 
@@ -185,10 +186,11 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES):
     share — call it once per step, before mj_step. An unselected arm
     keeps its init_ctrl() setpoints and simply holds posture."""
     for side in arms:
+        J = frames.jacobian_world(side)
         e_pos, e_rot = pose_error(side)
-        e_v, e_w = twist_error(side, base_twist)
+        e_v, e_w = twist_error(side, base_twist, J)
         q = world.data.qpos[frames.qpos_adrs[side]]
-        qdot = qdot_from_error(frames.jacobian_world(side), e_pos, e_rot,
+        qdot = qdot_from_error(J, e_pos, e_rot,
                                e_v, e_w, q, _Q_MID[side], _K_NULL_VEC[side])
         qdot = np.clip(qdot, -QDOT_LIMIT, QDOT_LIMIT)
         ctrl = world.data.ctrl[world.ctrl_adrs[side]] + qdot * dt
