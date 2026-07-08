@@ -27,9 +27,9 @@ from sim import targets, world
 # --- control math (pure: numpy + pinocchio, no MuJoCo) ---------------------
 
 KP_POS = 2.0    # 1/s task-space bandwidth
-KP_ROT = 2.0    # 1/s
-KD_POS = 0.3    # dimensionless: velocity error -> velocity command
-KD_ROT = 0.3    # dimensionless
+KP_ROT = 0.0    # 1/s
+KD_POS = 1.0    # dimensionless: velocity error -> velocity command
+KD_ROT = 0.0    # dimensionless
 K_NULL = 1.0    # 1/s null-space joint-centering
 DAMPING = 0.05  # DLS lambda
 

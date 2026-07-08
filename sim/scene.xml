@@ -41,11 +41,5 @@
          parent-child filtering at the arm mounts -->
     <exclude body1="right_base_link" body2="right_shoulder_link"/>
     <exclude body1="left_base_link" body2="left_shoulder_link"/>
-    <!-- DIAGNOSTIC intervention (2026-07-08), not a fix: isolates the
-         torso collision as the cause of the right-arm tracking failure
-         under +roll (see analysis/diagnosis_report.md). The real robot
-         cannot ignore this collision - remove before any hardware-
-         relevant conclusion. -->
-    <exclude body1="torso" body2="right_half_arm_2_link"/>
   </contact>
 </mujoco>
