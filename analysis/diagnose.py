@@ -128,6 +128,9 @@ def run():
                                            linear_frequency=FREQ,
                                            rotational_amplitude=ROT_A,
                                            rotational_frequency=FREQ)
+        # refresh xpos/xmat so the logged state and the controller see
+        # the torso pose at t, not the previous step's (as main.py)
+        mujoco.mj_kinematics(world.model, world.data)
 
         # Pre-control state: exactly what apply_ctrl is about to use.
         for s in world.SIDES:

@@ -28,7 +28,14 @@ ROTATIONAL_FREQUENCY = 0.2  # Hz
 
 _TORSO_MOCAP_IDX = world.model.body_mocapid[world.torso_body_id]
 HOME_POS = world.data.mocap_pos[_TORSO_MOCAP_IDX].copy()
-HOME_RPY = np.zeros(3)  # scene starts the torso at identity rotation
+# torso_pose_at's elementwise rpy sum is only exact because the home
+# rotation is identity (cf. target_motion.py's matrix composition); a
+# tilted torso home in scene.xml must fail here, not silently bend the
+# scripted motion.
+assert np.allclose(world.data.mocap_quat[_TORSO_MOCAP_IDX],
+                   [1.0, 0.0, 0.0, 0.0]), \
+    "torso home rotation is not identity; HOME_RPY = zeros is invalid"
+HOME_RPY = np.zeros(3)
 
 
 def torso_pose_at(t, linear_amplitude=LINEAR_AMPLITUDE,
