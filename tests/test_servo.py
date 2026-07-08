@@ -125,6 +125,10 @@ class QdotFromErrorTest(unittest.TestCase):
         e_rot = rng.uniform(-0.5, 0.5, 3)
         return J, e_pos, e_rot
 
+    # q = q_mid makes the null-space term exactly zero, so the DLS
+    # properties are tested on the task term alone.
+    _Q0 = np.zeros(7)
+
     def test_tracks_task_velocity_at_small_damping(self):
         from controller import servo
 
@@ -132,7 +136,9 @@ class QdotFromErrorTest(unittest.TestCase):
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
             v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
-            qdot = servo.qdot_from_error(J, e_pos, e_rot, damping=1e-6)
+            qdot = servo.qdot_from_error(J, e_pos, e_rot, self._Q0,
+                                         self._Q0, servo.K_NULL,
+                                         damping=1e-6)
             np.testing.assert_allclose(J @ qdot, v, atol=1e-8)
 
     def test_matches_pinv_as_damping_vanishes(self):
@@ -142,10 +148,37 @@ class QdotFromErrorTest(unittest.TestCase):
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
             v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
-            qdot = servo.qdot_from_error(J, e_pos, e_rot, damping=1e-9)
+            qdot = servo.qdot_from_error(J, e_pos, e_rot, self._Q0,
+                                         self._Q0, servo.K_NULL,
+                                         damping=1e-9)
             np.testing.assert_allclose(
                 qdot, np.linalg.pinv(J) @ v, atol=1e-6
             )
+
+    def test_null_space_centering(self):
+        """Centering must not disturb the task and must drive the
+        centered joints toward q_mid within the null space."""
+        from controller import servo
+
+        rng = np.random.default_rng(13)
+        k_vec = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0])
+        for _ in range(N_SAMPLES):
+            J, e_pos, e_rot = self._random_case(rng)
+            q = rng.uniform(-2.0, 2.0, 7)
+            q_mid = rng.uniform(-1.0, 1.0, 7)
+
+            qdot_plain = servo.qdot_from_error(J, e_pos, e_rot, q_mid,
+                                               q_mid, k_vec, damping=1e-6)
+            qdot_cent = servo.qdot_from_error(J, e_pos, e_rot, q,
+                                              q_mid, k_vec, damping=1e-6)
+            null_part = qdot_cent - qdot_plain
+
+            # (a) null motion produces no task velocity
+            np.testing.assert_allclose(J @ null_part, np.zeros(6),
+                                       atol=1e-8)
+            # (b) it points toward q_mid on the centered joints
+            drive = k_vec * (q - q_mid)
+            self.assertLess(float(drive @ null_part), 0.0)
 
 
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
