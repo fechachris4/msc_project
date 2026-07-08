@@ -181,6 +181,72 @@ class QdotFromErrorTest(unittest.TestCase):
             self.assertLess(float(drive @ null_part), 0.0)
 
 
+class VelocityErrorTest(unittest.TestCase):
+    def test_pure_convention(self):
+        """Zero at equality; injected offset recovered: e = ref - actual."""
+        from controller import servo
+
+        rng = np.random.default_rng(14)
+        for _ in range(N_SAMPLES):
+            vel = rng.uniform(-1.0, 1.0, 3)
+            np.testing.assert_array_equal(
+                servo.velocity_error(vel, vel), np.zeros(3)
+            )
+            delta = rng.uniform(-1.0, 1.0, 3)
+            np.testing.assert_allclose(
+                servo.velocity_error(vel + delta, vel), delta, atol=PURE_TOL
+            )
+
+    def test_twist_error_is_negated_ee_velocity(self):
+        """Static targets => v_des = w_des = 0, so twist_error must equal
+        the negated (already 3-leg-validated) frames.ee_velocity at any
+        joint state, joint velocity, and base twist."""
+        from controller import frames, servo
+        from sim import world
+
+        def reset():
+            mujoco.mj_resetData(world.model, world.data)
+            mujoco.mj_forward(world.model, world.data)
+
+        self.addCleanup(reset)
+
+        rng = np.random.default_rng(15)
+        for _ in range(5):
+            for side in world.SIDES:
+                world.data.qpos[frames.qpos_adrs[side]] = \
+                    rng.uniform(-1.0, 1.0, 7)
+                world.data.qvel[frames.dof_adrs[side]] = \
+                    rng.uniform(-1.0, 1.0, 7)
+            mujoco.mj_kinematics(world.model, world.data)
+            base_twist = (rng.uniform(-0.5, 0.5, 3),
+                          rng.uniform(-0.5, 0.5, 3))
+
+            for side in world.SIDES:
+                e_v, e_w = servo.twist_error(side, base_twist)
+                v_ee, w_ee = frames.ee_velocity(side, base_twist)
+                np.testing.assert_allclose(e_v, -v_ee, atol=1e-12)
+                np.testing.assert_allclose(e_w, -w_ee, atol=1e-12)
+
+    def test_zero_at_rest(self):
+        """Zero joint velocity + zero base twist -> both errors zero."""
+        from controller import servo
+        from sim import world
+
+        def reset():
+            mujoco.mj_resetData(world.model, world.data)
+            mujoco.mj_forward(world.model, world.data)
+
+        self.addCleanup(reset)
+
+        mujoco.mj_resetData(world.model, world.data)
+        mujoco.mj_forward(world.model, world.data)
+        zero_twist = (np.zeros(3), np.zeros(3))
+        for side in world.SIDES:
+            e_v, e_w = servo.twist_error(side, zero_twist)
+            np.testing.assert_array_equal(e_v, np.zeros(3))
+            np.testing.assert_array_equal(e_w, np.zeros(3))
+
+
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
 
