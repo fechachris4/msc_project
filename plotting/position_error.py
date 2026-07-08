@@ -39,6 +39,9 @@ def run(side):
     )
     while plot.is_open():
         motion.set_torso_pose(world.data.time)
+        # refresh xpos/xmat so the controller sees the torso pose at t,
+        # not the previous step's (same pattern as main.py)
+        mujoco.mj_kinematics(world.model, world.data)
         servo.apply_ctrl(world.model.opt.timestep,
                          motion.torso_twist_at(world.data.time))
         mujoco.mj_step(world.model, world.data)

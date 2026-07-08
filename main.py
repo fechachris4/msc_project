@@ -36,6 +36,10 @@ with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
     while viewer.is_running():
         step_start = time.time()
         motion.set_torso_pose(world.data.time)
+        # Refresh xpos/xmat from the mocap write: without this the
+        # controller sees the torso pose of the previous step (t - dt)
+        # paired with the base twist at t.
+        mujoco.mj_kinematics(world.model, world.data)
         servo.apply_ctrl(world.model.opt.timestep,
                          motion.torso_twist_at(world.data.time), arms)
         mujoco.mj_step(world.model, world.data)
