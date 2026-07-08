@@ -117,6 +117,16 @@ def twist_error(side, base_twist):
 # small (5-7). The real arm saturates here, so the baseline must too.
 QDOT_LIMIT = np.radians([79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9])
 
+# Anti-windup: max setpoint lead |ctrl - qpos| per joint (rad). While a
+# joint is physically blocked (e.g. the diagnosed torso collision) the
+# integrator otherwise winds away from qpos — without bound on the
+# continuous joints, which have no ctrlrange — and the kp=2000 servo
+# snaps violently on release. The margin must exceed the lead of normal
+# operation, (kv*qdot_max + tau_gravity)/kp ~ 0.09 rad (large
+# actuators) / 0.14 rad (small); 0.2 rad clears both without throttling
+# legitimate tracking.
+CTRL_LEAD = 0.2
+
 
 def _ctrl_bounds(ctrl_adrs):
     low = np.full(len(ctrl_adrs), -np.inf)
@@ -163,7 +173,8 @@ def init_ctrl():
 def apply_ctrl(dt, base_twist, arms=world.SIDES):
     """Write the selected arms' updated servo setpoints into data.ctrl:
     pose + twist errors -> qdot (PD) -> clip to the joint speed limits ->
-    integrate the setpoints by qdot*dt -> clip to the actuator ctrl range.
+    integrate the setpoints by qdot*dt -> clamp the lead over qpos to
+    CTRL_LEAD (anti-windup) -> clip to the actuator ctrl range.
 
     base_twist = (v_T, w_T): the torso world twist, required with no
     default (motion.torso_twist_at in sim, Vicon on hardware, zeros for
@@ -181,4 +192,5 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES):
                                e_v, e_w, q, _Q_MID[side], _K_NULL_VEC[side])
         qdot = np.clip(qdot, -QDOT_LIMIT, QDOT_LIMIT)
         ctrl = world.data.ctrl[world.ctrl_adrs[side]] + qdot * dt
+        ctrl = np.clip(ctrl, q - CTRL_LEAD, q + CTRL_LEAD)
         world.data.ctrl[world.ctrl_adrs[side]] = np.clip(ctrl, *_BOUNDS[side])
