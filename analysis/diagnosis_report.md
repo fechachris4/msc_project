@@ -125,6 +125,42 @@ ignore collisions. If confirmed, the eventual remedies to evaluate are
 task-point placement, mount geometry, or collision-aware redundancy
 resolution — out of scope here.
 
+## 5. Experiment outcome (2026-07-08): contact exclusion
+
+The recommended experiment was run: `right_half_arm_2_link ↔ torso`
+excluded in `sim/scene.xml` (marked DIAGNOSTIC, not a fix), identical
+pinned scenario, results in `analysis/output_nocontact/`.
+
+| t > 5 s            | baseline | excluded | left (ref) |
+|--------------------|----------|----------|------------|
+| right mean \|e\|   | 177 mm   | 98 mm    | 37 mm      |
+| right peak \|e\|   | 319 mm   | 252 mm   | 50 mm      |
+| right servo lag pk | 2.67 rad | 0.77 rad | 0.12 rad   |
+| right contact occ. | 77%      | 35%      | 0%         |
+
+Findings:
+1. **Collision confirmed as the dominant mechanism** — removing one
+   contact pair halves the mean error and cuts servo lag 3.5×.
+2. **The failure moved one link up the chain**: `right_half_arm_1_link`
+   now contacts the torso from t = 12.0 s (33% occupancy), with sharp
+   ~250 mm error spikes at contact release. The +roll posture demands
+   physically overlap the torso volume — this is not one incidental
+   pair; the right arm's task is geometrically infeasible at +roll
+   extremes without passing through the torso. Excluding pairs one by
+   one just peels the onion.
+3. **A contact-free asymmetric residual is exposed**: ~115–120 mm right
+   error humps at NEGATIVE roll extremes (t ≈ 7.5, 17.5 s in the
+   no-contact Fig A) with zero contact and near-zero servo lag — while
+   the left holds ≤ 50 mm. This promotes the q6-limit hypothesis: with
+   the wrist pinned, the right arm's 6-DOF pose task is infeasible and
+   the DLS trades the surplus into position error.
+
+Refined root cause: **the right task pose is geometrically marginal
+relative to the torso under ±23° roll** — colliding at +roll, wrist-
+limit-infeasible at −roll. Candidate remedies to evaluate (out of
+scope here): task-point placement, mount angle, orientation-vs-position
+task weighting, or collision/limit-aware redundancy resolution.
+
 ### Instrumentation caveats
 
 - Runs start from the model's default zero configuration (singular,
