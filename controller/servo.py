@@ -74,26 +74,6 @@ def qdot_from_error(J, e_pos, e_rot, e_v, e_w, q, q_mid, k_null,
     return qdot_task + (np.eye(J.shape[1]) - J_pinv @ J) @ qdot_null
 
 
-def scale_to_limits(qdot, qdot_limit):
-    """Uniformly scale qdot so no joint exceeds its speed limit (rad/s).
-
-    If any joint overruns, the whole vector is scaled down by the worst
-    ratio — per-joint clipping would change the ratios between joint
-    rates and so bend the EE motion direction; uniform scaling keeps
-    the commanded direction, just slower. No-op when within limits.
-
-    Deliberately NOT used by apply_ctrl: settled-regime A/B under the
-    scripted base roll measured clipping at ~2x better tracking (10.5 vs
-    25.4 mm mean — scaling throttles every joint to the worst joint's
-    pace), while scaling only paid off in gross transients (clip blew up
-    to 1.4 m peak from a 47 mm start; scaling stayed stable). Kept with
-    tests as the direction-preserving alternative."""
-    overrun = np.max(np.abs(qdot) / qdot_limit)
-    if overrun > 1.0:
-        return qdot / overrun
-    return qdot
-
-
 # --- pose error from sim state (target mocap vs frames FK) ------------------
 
 
@@ -170,9 +150,8 @@ def init_ctrl():
 
 def apply_ctrl(dt, base_twist, arms=world.SIDES):
     """Write the selected arms' updated servo setpoints into data.ctrl:
-    pose + twist errors -> qdot (PD) -> per-joint clip to the joint speed
-    limits (chosen over scale_to_limits — see its docstring) -> integrate
-    the setpoints by qdot*dt -> clip to the actuator ctrl range.
+    pose + twist errors -> qdot (PD) -> clip to the joint speed limits ->
+    integrate the setpoints by qdot*dt -> clip to the actuator ctrl range.
 
     base_twist = (v_T, w_T): the torso world twist, required with no
     default (motion.torso_twist_at in sim, Vicon on hardware, zeros for

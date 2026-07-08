@@ -65,3 +65,13 @@ def angular_velocity_from_rpy_rates(rpy, rpy_dot):
         [-sp,     0.0, 1.0],
     ])
     return E @ np.asarray(rpy_dot, dtype=float)
+
+
+def sine_offset(t, amplitude, frequency):
+    return amplitude * np.sin(2.0 * np.pi * frequency * t)
+
+
+def sine_rate(t, amplitude, frequency):
+    """d/dt of sine_offset."""
+    w = 2.0 * np.pi * frequency
+    return amplitude * w * np.cos(w * t)
