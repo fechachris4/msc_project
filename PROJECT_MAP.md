@@ -49,7 +49,7 @@ MISSING LINKS in the pipeline:  metrics (RMSE/peak) → thesis plots
 | `sim/assets/kinova_gen3/` | Vendored Gen3 MJCF (position-servo actuators) | Validated (kinematics + closed loop) | — | scene, `pin_fk.py` | Indirect via FK tests | High | Touch only if needed |
 | `sim/world.py` | Model/data load, checked id lookups | Implemented | scene.xml | everything | Indirect (all tests import it) | High | Do not touch |
 | `sim/targets.py` | Set/read target mocap poses | Implemented | `world.py` | desired_pos, servo | Indirect via `test_servo` wrapper tests | Medium-High | Touch only if needed |
-| `sim/motion.py` | Scripted sinusoidal base motion; always-on in main/plotting, levers are the switch (zero amplitude = static, no mocap write) | Validated | world, transforms | main, plotting | `test_motion`: pose oracle, zero-guard, closed-loop rejection at 0.1 Hz | High | Levers change per experiment |
+| `sim/motion.py` | Scripted sinusoidal base motion; pure mechanism, off by default — each entry point passes its own scenario kwargs (zero amplitude = static, no mocap write) | Validated | world, transforms | main, plotting | `test_motion`: pose oracle, zero-guard, closed-loop rejection at 0.1 Hz | High | Scenario lives at the entry point (`BASE_SCENARIO` in main.py) |
 | `controller/transforms.py` | Pure SE(3)/rotation math | Validated | numpy | kinematics, frames, desired_pos | `test_kinematics.RotationHelpersTest`, `test_transforms` (vs Pinocchio) | High | Do not touch |
 | `controller/kinematics.py` | Analytical FK from MjModel constants | Validated, **demoted to test reference** | transforms | `test_pin_fk.py` only | `AnalyticalFKTest` vs MuJoCo, 50 cfg/arm, 1e-9 | High | Do not touch |
 | `controller/pin_fk.py` | Pinocchio-backed `T_K_E(q)` — control path FK | Validated | pinocchio, `gen3.xml` | `frames.py` | `test_pin_fk` vs analytical FK, 1e-9 | High | Do not touch |
@@ -167,9 +167,9 @@ motivation for prediction.
    compute mean/RMSE/peak; save publication figures (offline path, not
    `LivePlot`). This is the phase's success criterion verbatim.
 2. **Parameter sweep hooks** — base-motion amplitude/frequency as experiment
-   parameters (already exposed as `sim/motion.py` levers and
-   `set_torso_pose(t, **scenario)` overrides); same metrics pipeline over
-   ≥ 2 conditions.
+   parameters (already exposed as `set_torso_pose(t, **scenario)` kwargs;
+   each entry point owns its scenario block, see §11); same metrics
+   pipeline over ≥ 2 conditions.
 
 Actuation decision (recorded): the reactive baseline commands **position-servo
 setpoints via resolved-rate differential IK** (ctrl += qdot·dt). Torque control
