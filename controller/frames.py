@@ -95,7 +95,7 @@ def jacobian_world(side):
     return J
 
 
-def ee_velocity(side, base_twist):
+def ee_velocity(side, base_twist, J=None):
     """EE world twist: measured joint rates plus the given base twist.
 
         v_E = v_T + w_T x (p_E - p_T) + (J_world(q) qdot)_lin
@@ -109,10 +109,14 @@ def ee_velocity(side, base_twist):
     stationary base. Required on purpose — no default, so a forgotten
     base twist fails loudly instead of returning a silently wrong zero.
     Returns (v_E (3,) m/s, w_E (3,) rad/s), of the EE relative to the
-    world, expressed in the world frame."""
+    world, expressed in the world frame. J, if given, must be
+    jacobian_world(side) at the current state — lets the control loop
+    reuse the one it already computed."""
     v_T, w_T = (np.asarray(x, dtype=float) for x in base_twist)
     qdot = np.asarray(world.data.qvel[dof_adrs[side]], dtype=float)
-    arm = jacobian_world(side) @ qdot
+    if J is None:
+        J = jacobian_world(side)
+    arm = J @ qdot
     p_E, _ = ee_pose(side)
     p_T, _ = torso_pose()
     return v_T + np.cross(w_T, p_E - p_T) + arm[:3], w_T + arm[3:]
