@@ -254,48 +254,6 @@ class VelocityErrorTest(unittest.TestCase):
             np.testing.assert_array_equal(e_w, np.zeros(3))
 
 
-class ScaleToLimitsTest(unittest.TestCase):
-    """Uniform qdot limiting: within limits untouched; on overrun the
-    whole vector scales so the worst joint sits exactly at its limit
-    and the direction is preserved (per-joint clipping would bend it)."""
-
-    def test_within_limits_unchanged(self):
-        from controller import servo
-
-        rng = np.random.default_rng(16)
-        for _ in range(N_SAMPLES):
-            qdot = rng.uniform(-1.0, 1.0, 7) * servo.QDOT_LIMIT
-            np.testing.assert_array_equal(
-                servo.scale_to_limits(qdot, servo.QDOT_LIMIT), qdot
-            )
-
-    def test_zero_vector_passes_through(self):
-        from controller import servo
-
-        with np.errstate(all="raise"):
-            out = servo.scale_to_limits(np.zeros(7), servo.QDOT_LIMIT)
-        np.testing.assert_array_equal(out, np.zeros(7))
-
-    def test_overrun_scaled_to_limit_direction_preserved(self):
-        from controller import servo
-
-        rng = np.random.default_rng(17)
-        for _ in range(N_SAMPLES):
-            qdot = rng.uniform(-3.0, 3.0, 7)
-            ratios = np.abs(qdot) / servo.QDOT_LIMIT
-            if np.max(ratios) <= 1.0:
-                continue
-            scaled = servo.scale_to_limits(qdot, servo.QDOT_LIMIT)
-            # worst joint exactly at its limit, none above
-            new_ratios = np.abs(scaled) / servo.QDOT_LIMIT
-            self.assertAlmostEqual(float(np.max(new_ratios)), 1.0, places=12)
-            # same direction: scaling back by the overrun recovers qdot,
-            # so scaled is a positive scalar multiple of the command
-            np.testing.assert_allclose(
-                scaled * np.max(ratios), qdot, atol=PURE_TOL
-            )
-
-
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
 

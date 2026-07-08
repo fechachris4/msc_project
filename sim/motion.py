@@ -15,28 +15,20 @@ import numpy as np
 from controller.transforms import (
     angular_velocity_from_rpy_rates,
     rotation_from_rpy,
+    sine_offset,
+    sine_rate,
 )
 from sim import world
 
 # research levers: base sway amplitude and frequency
-LINEAR_AMPLITUDE = np.array([0.1, 0.0, 0.0])     # m, world xyz
-ROTATIONAL_AMPLITUDE = np.array([0.4, 0.0, 0.0])  # rad, rpy
-LINEAR_FREQUENCY = 0.1      # Hz
-ROTATIONAL_FREQUENCY = 0.1  # Hz
+LINEAR_AMPLITUDE = np.array([0.1, 0.3, 0.0])     # m, world xyz
+ROTATIONAL_AMPLITUDE = np.array([0.0, 0.0, 0.0])  # rad, rpy
+LINEAR_FREQUENCY = 0.1     # Hz
+ROTATIONAL_FREQUENCY = 0.2  # Hz
 
 _TORSO_MOCAP_IDX = world.model.body_mocapid[world.torso_body_id]
 HOME_POS = world.data.mocap_pos[_TORSO_MOCAP_IDX].copy()
 HOME_RPY = np.zeros(3)  # scene starts the torso at identity rotation
-
-
-def sine_offset(t, amplitude, frequency):
-    return amplitude * np.sin(2.0 * np.pi * frequency * t)
-
-
-def sine_rate(t, amplitude, frequency):
-    """d/dt of sine_offset."""
-    w = 2.0 * np.pi * frequency
-    return amplitude * w * np.cos(w * t)
 
 
 def torso_pose_at(t, linear_amplitude=LINEAR_AMPLITUDE,
