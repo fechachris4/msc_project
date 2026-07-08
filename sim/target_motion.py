@@ -3,10 +3,22 @@ world frame — for characterizing the reactive loop's own tracking
 bandwidth (base held static), the companion lever to sim/motion.py's
 base disturbance.
 
-Off by default (zero amplitudes = no write). Call init_home() once after
-desired_pos.apply(): the sinusoid is added on top of that captured
-world-frame pose and never re-resolved through the (possibly moving)
-torso — keeping this signal independent of base motion.
+Off by default (zero amplitudes = no write). Usage (full example:
+analysis/bandwidth_sweep.py):
+
+    desired_pos.apply()        # resolve static anchors to world, once
+    target_motion.init_home()  # capture them as the sinusoid anchors
+    # then, once per sim step for each side being driven:
+    target_motion.set_target_pose(t, side, linear_amplitude=..., ...)
+
+The sinusoid is added on top of the home pose captured by init_home()
+and never re-resolved through the (possibly moving) torso — keeping
+this signal independent of base motion.
+
+side is "right" or "left" (world.SIDES). t is seconds since THIS motion
+started — not necessarily world.data.time. The sine is zero at t=0, so
+starting the caller's clock at motion start guarantees the target
+begins exactly at home (no teleport when the motion switches on).
 """
 
 import mujoco
@@ -23,8 +35,11 @@ from sim import targets, world
 
 _ZERO3 = np.zeros(3)  # shared default, never mutated
 
-# Populated by init_home() — unlike motion.py's import-time HOME_POS, the
-# EE-target's world-frame home only exists after desired_pos.apply().
+# Per-side world-frame anchor the sinusoid swings about. Populated by
+# init_home() — unlike motion.py's import-time HOME_POS, the EE-target's
+# world-frame home only exists after desired_pos.apply(). A
+# KeyError("right"/"left") from these dicts means init_home() was never
+# called.
 HOME_POS = {}
 HOME_ROT = {}
 
@@ -39,12 +54,15 @@ def init_home():
 
 def target_pose_at(t, side, linear_amplitude=_ZERO3, linear_frequency=0.0,
                    rotational_amplitude=_ZERO3, rotational_frequency=0.0):
-    """(pos, rot) of the scripted EE target at time t — pure math."""
+    """(pos (3,) m, rot 3x3) of the scripted EE target at time t, world
+    frame — pure math, no sim reads or writes."""
     # World frame directly on top of the captured home — never routed
     # through the live torso pose (that would leak base motion in).
     pos = HOME_POS[side] + sine_offset(t, linear_amplitude, linear_frequency)
-    # Matrix composition, not motion.py's rpy-sum shortcut: that is only
-    # exact for an identity home rotation, which this home need not be.
+    # The rotation swings by a sinusoidal rpy perturbation about the home
+    # orientation. Matrix composition, not motion.py's rpy-sum shortcut:
+    # that is only exact for an identity home rotation (Euler angles do
+    # not add on top of a nonzero home), which this home need not be.
     rot = HOME_ROT[side] @ rotation_from_rpy(
         sine_offset(t, rotational_amplitude, rotational_frequency))
     return pos, rot
@@ -66,7 +84,10 @@ def target_twist_at(t, side, linear_amplitude=_ZERO3, linear_frequency=0.0,
 
 def set_target_pose(t, side, linear_amplitude=_ZERO3, linear_frequency=0.0,
                     rotational_amplitude=_ZERO3, rotational_frequency=0.0):
-    """Write the scripted EE-target pose into the target mocap body.
+    """Write the scripted EE-target pose into the target mocap body —
+    the apply-to-sim step. The arm then follows because the closed loop
+    (servo.apply_ctrl) chases the target every step; there is no
+    separate "move the arm" command in this codebase.
 
     All-zero amplitudes (the default): no write at all — the target stays
     hand-draggable in the viewer, and default behavior is the static hold."""
@@ -74,7 +95,7 @@ def set_target_pose(t, side, linear_amplitude=_ZERO3, linear_frequency=0.0,
         return
     pos, rot = target_pose_at(t, side, linear_amplitude, linear_frequency,
                               rotational_amplitude, rotational_frequency)
-    quat = np.zeros(4)
+    quat = np.zeros(4)  # out-parameter: MuJoCo quaternion [w, x, y, z]
     mujoco.mju_mat2Quat(quat, rot.flatten())
     targets.set_target(side, pos)
     targets.set_target_quat(side, quat)
