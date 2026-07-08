@@ -191,7 +191,8 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES):
         e_v, e_w = twist_error(side, base_twist, J)
         q = world.data.qpos[frames.qpos_adrs[side]]
         qdot = qdot_from_error(J, e_pos, e_rot,
-                               e_v, e_w, q, _Q_MID[side], _K_NULL_VEC[side])
+                               e_v, e_w, q, _Q_MID[side], _K_NULL_VEC[side],
+                               damping=DAMPING)
         qdot = np.clip(qdot, -QDOT_LIMIT, QDOT_LIMIT)
         ctrl = world.data.ctrl[world.ctrl_adrs[side]] + qdot * dt
         ctrl = np.clip(ctrl, q - CTRL_LEAD, q + CTRL_LEAD)
