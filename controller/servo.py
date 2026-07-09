@@ -163,6 +163,23 @@ _K_NULL_VEC = {}
 for _s in world.SIDES:
     _Q_MID[_s], _K_NULL_VEC[_s] = _centering(_s)
 
+# Fixed at import time from the original _centering() result: which
+# entries are the limited joints (nonzero gain) vs. the continuous ones
+# (always 0). set_k_null must consult this, not _K_NULL_VEC's *current*
+# nonzero pattern -- rescaling to 0 would otherwise erase the mask and
+# strand every later nonzero value at 0 too.
+_K_NULL_MASK = {s: _K_NULL_VEC[s] != 0.0 for s in world.SIDES}
+
+
+def set_k_null(value):
+    """Update K_NULL and rescale the nonzero (limited-joint) entries of
+    _K_NULL_VEC to match; continuous joints stay at 0. The gain panel
+    calls this instead of touching _K_NULL_VEC directly."""
+    global K_NULL
+    K_NULL = value
+    for side in world.SIDES:
+        _K_NULL_VEC[side][_K_NULL_MASK[side]] = value
+
 
 def init_ctrl():
     """Sync servo setpoints to the current joint angles (once, pre-loop)."""

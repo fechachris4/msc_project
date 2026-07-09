@@ -423,5 +423,67 @@ class GainInvariantsTest(unittest.TestCase):
             self.assertLess(kd, 1.0)
 
 
+class LiveGainsTest(unittest.TestCase):
+    """The gain panel writes into servo's module globals with no
+    restart -- prove the next control step actually reads the current
+    value, not a def-time snapshot (DAMPING) or a stale array (K_NULL,
+    via set_k_null)."""
+
+    def test_damping_change_moves_qdot(self):
+        """Same qdot_from_error call apply_ctrl makes, damping=DAMPING
+        passed explicitly so it's read at call time, not baked into a
+        default at def time."""
+        from controller import servo
+
+        rng = np.random.default_rng(20)
+        J = rng.normal(size=(6, 7))
+        e_pos = rng.uniform(-0.2, 0.2, 3)
+        e_rot = rng.uniform(-0.5, 0.5, 3)
+        zero_v = np.zeros(3)
+        q = rng.uniform(-1.0, 1.0, 7)
+        q_mid = np.zeros(7)
+
+        original = servo.DAMPING
+        self.addCleanup(setattr, servo, "DAMPING", original)
+
+        servo.DAMPING = 0.05
+        qdot_a = servo.qdot_from_error(J, e_pos, e_rot, zero_v, zero_v,
+                                       q, q_mid, servo.K_NULL,
+                                       damping=servo.DAMPING)
+        servo.DAMPING = 0.2
+        qdot_b = servo.qdot_from_error(J, e_pos, e_rot, zero_v, zero_v,
+                                       q, q_mid, servo.K_NULL,
+                                       damping=servo.DAMPING)
+        self.assertFalse(np.allclose(qdot_a, qdot_b))
+
+    def test_set_k_null_rescales_and_preserves_zero_pattern(self):
+        from controller import servo
+        from sim import world
+
+        original_vec = {side: servo._K_NULL_VEC[side].copy()
+                        for side in world.SIDES}
+        original_k_null = servo.K_NULL
+        self.addCleanup(servo.set_k_null, original_k_null)
+
+        zero_mask = {side: (original_vec[side] == 0.0)
+                     for side in world.SIDES}
+
+        servo.set_k_null(3.0)
+        self.assertEqual(servo.K_NULL, 3.0)
+        for side in world.SIDES:
+            vec = servo._K_NULL_VEC[side]
+            np.testing.assert_array_equal(vec == 0.0, zero_mask[side])
+            np.testing.assert_allclose(vec[~zero_mask[side]], 3.0)
+
+        # Round-trip through 0 (the slider's minimum): the limited-joint
+        # pattern must survive, not collapse to all-zero permanently.
+        servo.set_k_null(0.0)
+        servo.set_k_null(1.5)
+        for side in world.SIDES:
+            vec = servo._K_NULL_VEC[side]
+            np.testing.assert_array_equal(vec == 0.0, zero_mask[side])
+            np.testing.assert_allclose(vec[~zero_mask[side]], 1.5)
+
+
 if __name__ == "__main__":
     unittest.main()
