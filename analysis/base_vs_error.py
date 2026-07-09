@@ -22,6 +22,7 @@ import numpy as np
 
 from controller import desired_pos, frames, servo
 from plotting.live_plot import LivePlot
+from plotting.style import C_BASE, C_RIGHT, C_LEFT
 from sim import motion, world
 
 # Base-motion scenario for this run — same values main.py runs today.
@@ -41,11 +42,6 @@ SETTLE_SECONDS = 2.0
 WINDOW_S = 30.0  # rolling on-screen window: 3 periods at 0.1 Hz
 
 OUT = Path("analysis/output")
-
-# Side-by-color, dashboard.py convention (Okabe-Ito)
-C_RIGHT = "#D55E00"
-C_LEFT = "#0072B2"
-C_BASE = "0.6"
 
 
 def run():

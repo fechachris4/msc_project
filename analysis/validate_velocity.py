@@ -26,6 +26,7 @@ import numpy as np
 import pinocchio as pin
 
 from controller import frames, servo
+from plotting.style import C_XYZ
 from sim import motion, targets, world
 
 # Pinned scenario (independent of the motion module's research levers):
@@ -44,9 +45,6 @@ SETTLE_SECONDS = 2.0
 MOTION_SECONDS = 5.0
 
 OUT = Path("analysis/output")
-
-# Okabe-Ito per axis; black = ground-truth reference
-C_XYZ = ("#D55E00", "#009E73", "#0072B2")
 
 
 def run():
