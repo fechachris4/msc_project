@@ -7,6 +7,10 @@ Per-step data flow (all SI: meters, radians; mm only in the printout):
   -> commanded twist v = Kp*e + Kd*e_v -> qdot via DLS  [controller/servo]
   -> integrate position-servo setpoints data.ctrl (rad)  [controller/servo]
   -> mj_step
+
+usage: mjpython main.py [right|left|both] [tune]
+  tune: opt in to the live gain panel (plotting.gain_panel) alongside
+  the MuJoCo viewer.
 """
 
 import sys
@@ -33,11 +37,17 @@ BASE_SCENARIO = dict(
 
 choice = sys.argv[1] if len(sys.argv) > 1 else "both"
 assert choice in ("right", "left", "both"), \
-    "usage: mjpython main.py [right|left|both]"
+    "usage: mjpython main.py [right|left|both] [tune]"
 arms = world.SIDES if choice == "both" else (choice,)
+tune = "tune" in sys.argv[2:]
 
 desired_pos.apply()
 servo.init_ctrl()
+
+panel = None
+if tune:
+    from plotting.gain_panel import GainPanel
+    panel = GainPanel()
 
 step = 0
 with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
@@ -54,6 +64,9 @@ with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
                          motion.torso_twist_at(world.data.time,
                                                **BASE_SCENARIO), arms)
         mujoco.mj_step(world.model, world.data)
+
+        if panel is not None:
+            panel.pump()
 
         if step % PRINT_EVERY == 0:
             for side in world.SIDES:
