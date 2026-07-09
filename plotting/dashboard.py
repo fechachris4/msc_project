@@ -86,7 +86,7 @@ def headroom_frac(qdot_raw):
 def limit_margin_deg(q, q_low, q_high, limited):
     """Degrees from q to the nearer bound, minimized over the limited
     joints only (continuous joints have no range to be near — same
-    convention as servo._centering / analysis.diagnose._jnt_range)."""
+    convention as servo._centering / world.jnt_range)."""
     margin = np.minimum(q - q_low, q_high - q)
     return float(np.degrees(np.min(margin[limited])))
 
@@ -101,26 +101,6 @@ def sigma_min(J):
     """Smallest singular value of the Jacobian — DLS is materially active
     once this falls near DAMPING (servo.qdot_from_error's lambda)."""
     return float(np.linalg.svd(J, compute_uv=False).min())
-
-
-# --- joint-limit bookkeeping (mirrors analysis/diagnose.py's _jnt_range) ---
-
-
-def _jnt_range(side):
-    """(low, high, limited): per-joint bounds (rad) and a boolean mask of
-    which of the 7 joints are jnt_limited — continuous joints get ±inf
-    and False, same convention as servo._centering."""
-    low = np.full(7, -np.inf)
-    high = np.full(7, np.inf)
-    limited = np.zeros(7, dtype=bool)
-    for i in range(1, 8):
-        jnt_id = mujoco.mj_name2id(
-            world.model, mujoco.mjtObj.mjOBJ_JOINT, f"{side}_joint_{i}"
-        )
-        if world.model.jnt_limited[jnt_id]:
-            low[i - 1], high[i - 1] = world.model.jnt_range[jnt_id]
-            limited[i - 1] = True
-    return low, high, limited
 
 
 # --- gain sliders (ported from HumanSL_scratch/analysis/live.py:35-92) ------
@@ -199,7 +179,7 @@ def run(arms, save_seconds=None):
     maxlen = max(1, int(WINDOW_S / dt))
     n_steps = int(save_seconds / dt) if save_seconds is not None else None
 
-    jlim = {s: _jnt_range(s) for s in arms}
+    jlim = {s: world.jnt_range(s) for s in arms}
 
     t_buf = deque(maxlen=maxlen)
     base_disp_buf = deque(maxlen=maxlen)

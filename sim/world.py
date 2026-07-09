@@ -6,6 +6,7 @@ side ("right" | "left") — SIDES is the canonical tuple.
 """
 
 import mujoco
+import numpy as np
 
 model = mujoco.MjModel.from_xml_path("sim/scene.xml")
 data = mujoco.MjData(model)
@@ -36,3 +37,19 @@ target_body_id = {s: _named_id(mujoco.mjtObj.mjOBJ_BODY, f"{s}_target")
 ctrl_adrs = {s: [_named_id(mujoco.mjtObj.mjOBJ_ACTUATOR, f"{s}_joint_{i}")
                  for i in range(1, 8)]
              for s in SIDES}
+
+
+def jnt_range(side):
+    """(low, high, limited): per-joint bounds (rad) and a boolean mask of
+    which of the 7 joints are jnt_limited — continuous joints get ±inf
+    and False, same convention as servo._centering."""
+    low = np.full(7, -np.inf)
+    high = np.full(7, np.inf)
+    limited = np.zeros(7, dtype=bool)
+    for i in range(1, 8):
+        jnt_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT,
+                                   f"{side}_joint_{i}")
+        if model.jnt_limited[jnt_id]:
+            low[i - 1], high[i - 1] = model.jnt_range[jnt_id]
+            limited[i - 1] = True
+    return low, high, limited

@@ -44,19 +44,6 @@ def _dof_adrs(side):
     return adrs
 
 
-def _jnt_range(side):
-    """(low, high) per joint; unlimited (continuous) joints get ±inf."""
-    low = np.full(7, -np.inf)
-    high = np.full(7, np.inf)
-    for i in range(1, 8):
-        jnt_id = mujoco.mj_name2id(
-            world.model, mujoco.mjtObj.mjOBJ_JOINT, f"{side}_joint_{i}"
-        )
-        if world.model.jnt_limited[jnt_id]:
-            low[i - 1], high[i - 1] = world.model.jnt_range[jnt_id]
-    return low, high
-
-
 def _arm_body_ids(side):
     ids = set()
     for body_id in range(world.model.nbody):
@@ -87,7 +74,7 @@ def run():
     dt = world.model.opt.timestep
     n_steps = int(SIM_SECONDS / dt)
     dofs = {s: _dof_adrs(s) for s in world.SIDES}
-    jlims = {s: _jnt_range(s) for s in world.SIDES}
+    jlims = {s: world.jnt_range(s)[:2] for s in world.SIDES}
     bodies = {s: _arm_body_ids(s) for s in world.SIDES}
 
     log = {s: {
@@ -258,7 +245,7 @@ def make_figures(log, ev):
     # 4 — does any joint reach or camp on a limit?
     for s, cs in (("right", C_RIGHT), ("left", C_LEFT)):
         L = log[s]
-        low, high = _jnt_range(s)
+        low, high, _ = world.jnt_range(s)
         lo_c, hi_c = servo._BOUNDS[s]
         fig, axes = plt.subplots(7, 1, sharex=True, figsize=(9, 12),
                                  layout="constrained")
