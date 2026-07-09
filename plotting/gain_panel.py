@@ -46,7 +46,13 @@ class GainPanel:
     _K_NULL_VEC rescales with it -- the panel never touches servo
     privates itself)."""
 
-    def __init__(self):
+    def __init__(self, on_change=None):
+        """on_change, if given, is called after every slider write (after
+        the value lands on servo) and after Reset restores the initial
+        values -- Reset's set_val calls already re-trigger each slider's
+        own on_changed callback, so this is wired once, in
+        _make_callback, and covers both paths."""
+        self._on_change = on_change
         self._initial = {name: getattr(servo, name) for name in _ORDER}
 
         self._fig, axes = plt.subplots(len(_ORDER) + 1, 1, figsize=(5, 6))
@@ -72,6 +78,8 @@ class GainPanel:
             else:
                 setattr(servo, name, value)
             print(f"{name} = {_fmt(value)}")
+            if self._on_change:
+                self._on_change()
         return callback
 
     def _on_reset(self, event):
