@@ -26,6 +26,12 @@ class LivePlot:
                  Line2D kwargs, e.g. {"color": "#0072B2"} (all optional).
         window: samples kept on screen.
         redraw_every: add() calls per redraw.
+
+        Y-axis autoscale is expand-only: per-row min/max only ever grow,
+        never shrink, even as old samples age out of the ring buffer.
+        Trade-off: a one-off boot transient keeps the row's scale small
+        for the rest of the run, at the benefit of a legend/axis that
+        never jumps around while you're watching it live.
         """
         plt.ion()
         self._fig, axes = plt.subplots(len(rows), 1, sharex=True,
@@ -36,6 +42,8 @@ class LivePlot:
         self._lines = {}  # (signal, row) -> Line2D
         self._redraw_every = redraw_every
         self._count = 0
+        self._ymin = [None] * len(rows)  # expand-only autoscale, per row
+        self._ymax = [None] * len(rows)
 
         for row, (ax, label) in enumerate(zip(self._axes, rows)):
             for name, options in signals.items():
@@ -68,9 +76,16 @@ class LivePlot:
     def _redraw(self):
         for key, line in self._lines.items():
             line.set_data(self._time, self._buffers[key])
-        for ax in self._axes:
+        for row, ax in enumerate(self._axes):
             ax.relim()
-            ax.autoscale_view()
+            ax.autoscale_view(scaley=False)  # x only; y is expand-only below
+
+            data_lo, data_hi = ax.dataLim.y0, ax.dataLim.y1
+            lo = data_lo if self._ymin[row] is None else min(self._ymin[row], data_lo)
+            hi = data_hi if self._ymax[row] is None else max(self._ymax[row], data_hi)
+            if lo < hi:
+                self._ymin[row], self._ymax[row] = lo, hi
+                ax.set_ylim(lo, hi)
         plt.pause(0.001)  # redraw and let the GUI breathe
 
     def save(self, path):
