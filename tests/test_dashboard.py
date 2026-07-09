@@ -1,10 +1,10 @@
-"""Pure per-tick helpers in plotting.dashboard, and a guard on the
-servo.py DAMPING fix the dashboard's slider depends on.
+"""Pure per-tick helpers in analysis.dashboard, and a guard on the
+servo.py DAMPING fix the dashboard's gain panel depends on.
 
 Hand-computation checks (per project rule: every computed quantity
 checkable against ground truth) for headroom_frac, limit_margin_deg,
 ctrl_lead_deg, sigma_min; matplotlib.use("Agg") before importing
-plotting.dashboard so the module never needs a display.
+analysis.dashboard so the module never needs a display.
 """
 
 import unittest
@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import mujoco
 import numpy as np
 
-from plotting import dashboard
+from analysis import dashboard
 
 
 class HeadroomFracTest(unittest.TestCase):

@@ -1,43 +1,55 @@
-"""Live 5-panel control-loop dashboard: tracking, orientation, saturation
-headroom, Jacobian conditioning, and joint/servo margins, for one or both
-arms, with gain sliders for live tuning.
+"""Live 7-panel control-loop dashboard: per-axis tracking, orientation,
+saturation headroom, Jacobian conditioning, and joint/servo margins, for
+one or both arms, with the shared live gain panel for tuning.
 
-    python -m plotting.dashboard right
-    python -m plotting.dashboard left
-    python -m plotting.dashboard              # both arms, live (default)
-    python -m plotting.dashboard both --save 10   # headless, 10 sim-seconds
+    python -m analysis.dashboard right
+    python -m analysis.dashboard left
+    python -m analysis.dashboard              # both arms, live (default)
+    python -m analysis.dashboard both --save 10   # headless, 10 sim-seconds
 
-Base motion follows this module's BASE_SCENARIO (main.py's values). Every
-per-tick quantity is recomputed from the same public functions apply_ctrl
-itself calls (servo.pose_error, servo.twist_error, servo.qdot_from_error,
+Base motion follows this module's BASE_SCENARIO (main.py's values) — the
+canonical copy other scripts import. Every per-tick quantity is
+recomputed from the same public functions apply_ctrl itself calls
+(servo.pose_error, servo.twist_error, servo.qdot_from_error,
 frames.jacobian_world) — the analysis/diagnose.py convention: the
 dashboard shows exactly what the controller saw, nothing re-derived.
 
 Panels (top to bottom), sharing the time axis:
-  1. |e_pos| per side (mm) + |base displacement from home| (mm, grey) —
-     the thesis success criterion. Monospace readout: RMS / peak /
-     rejection % per side over the current window (rejection =
-     1 - peak|e|/peak|base disp|).
-  2. |e_rot| per side (deg) — orientation error, plotted nowhere else in
+  1-3. world x, y, z: signed per-axis error (mm, e = ref - actual) —
+     grey |base displacement| component + right + left EE error
+     components, the same per-axis view as analysis/base_vs_error.py.
+     Monospace readout on panel 1: RMS / peak / rejection % per side
+     over the current window (rejection = 1 - peak|e|/peak|base disp|,
+     both norm-based — analysis/metrics.py's windowed_stats).
+  4. |e_rot| per side (deg) — orientation error, plotted nowhere else in
      this repo (only printed in diagnose.py's summary).
-  3. Saturation headroom: 100 * max_i|qdot_raw_i|/QDOT_LIMIT_i per side,
+  5. Saturation headroom: 100 * max_i|qdot_raw_i|/QDOT_LIMIT_i per side,
      pre-clip, red 100% line (the one physical-limit line on this figure).
-  4. sigma_min(J) per side, semilogy, grey lines at DAMPING=0.05 ("DLS
+  6. sigma_min(J) per side, semilogy, grey lines at DAMPING=0.05 ("DLS
      active"), 0.01, 0.001 (diagnose.py's SV_THRESHOLDS).
-  5. Margins (deg): min distance to jnt_range over the limited joints
+  7. Margins (deg): min distance to jnt_range over the limited joints
      (solid) + max|ctrl-q| setpoint lead (dashed), per side; grey line at
      degrees(CTRL_LEAD) (a soft anti-windup bound, not hardware).
 
-Right arm: solid, #D55E00. Left arm: dashed, #0072B2 (Okabe-Ito, the
-diagnose.py convention) — except panel 5, where solid/dashed instead
-distinguishes margin from lead (colour still carries which side).
+Right arm: solid, #D55E00. Left arm: dashed, #0072B2 (Okabe-Ito) — except
+panel 7, where solid/dashed instead distinguishes margin from lead
+(colour still carries which side).
 
-Sliders (live mode only): KP_POS, KP_ROT, KD_POS, KD_ROT, DAMPING (log
-scale). Each writes straight onto controller.servo's module globals — a
-runtime-only mutation; committed gains are untouched. Moving any slider
-flushes the ring buffers so stale pre-change data doesn't linger in the
-window. K_NULL is excluded: it is baked into servo._K_NULL_VEC at import
-time, so a runtime change would not reach the null-space term anyway.
+The figure title and legend are static (no-jump rule): the suptitle
+never rewrites itself mid-run, and y-axes only ever expand, never
+shrink, so the picture doesn't visually jump while you watch it live.
+
+Gain panel (live mode only): the shared plotting.gain_panel.GainPanel
+(KP_POS, KP_ROT, KD_POS, KD_ROT, K_NULL, DAMPING) opens alongside the
+dashboard. Every change flushes the ring buffers so a gain step doesn't
+leave stale pre-change data in the rolling window.
+
+A full-run log (every step, not just the rolling window) is kept
+alongside the ring buffers; on exit (window closed) or after --save
+completes, the analysis/metrics.py full-run RMS/peak/rejection table
+prints on stdout, for both sides — pose_error is a pure readout, so it's
+computed for both arms every step regardless of which are selected via
+the CLI; only the selected arms are drawn on the live panels.
 """
 
 import sys
@@ -52,11 +64,11 @@ if "--save" in sys.argv:
 import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
-from matplotlib.widgets import Slider
 
+from analysis import metrics
 from controller import desired_pos, frames, servo
-from plotting.style import C_BASE, C_RIGHT, C_LEFT, SIDE_COLOR as _SIDE_COLOR, \
-    SIDE_STYLE as _SIDE_STYLE
+from plotting.gain_panel import GainPanel
+from plotting.style import C_BASE, SIDE_COLOR, SIDE_STYLE
 from sim import motion, world
 
 # Base-motion scenario for this run — same values main.py runs today.
@@ -71,6 +83,9 @@ WINDOW_S = 15.0        # rolling window kept on screen, seconds
 REDRAW_EVERY = 25      # sim steps between redraws (LivePlot's convention)
 SV_THRESHOLDS = (0.05, 0.01, 0.001)  # diagnose.py's DLS-activity markers
 SETTLE_SECONDS = 2.0   # --save only; base_vs_error.py's SETTLE pattern
+AXIS_LABELS = ("x", "y", "z")
+
+OUT = Path("analysis/output")
 
 
 # --- pure per-tick helpers: importable and testable without a display ------
@@ -103,62 +118,19 @@ def sigma_min(J):
     return float(np.linalg.svd(J, compute_uv=False).min())
 
 
-# --- gain sliders (ported from HumanSL_scratch/analysis/live.py:35-92) ------
-
-SLIDER_SPECS = (
-    ("KP_POS", "KP_pos", 0.0, 10.0, "linear"),
-    ("KP_ROT", "KP_rot", 0.0, 10.0, "linear"),
-    ("KD_POS", "KD_pos", 0.0, 1.0, "linear"),
-    ("KD_ROT", "KD_rot", 0.0, 1.0, "linear"),
-    ("DAMPING", "lambda", 1e-3, 1.0, "log"),
-)
-
-
-def add_gain_sliders(fig, on_change=None):
-    """One slider per SLIDER_SPECS entry, writing straight onto
-    controller.servo's module globals. Reserves the bottom margin itself
-    (fig.subplots_adjust), so the caller doesn't need to. on_change, if
-    given, runs after every mutation (used here to flush the ring
-    buffers so a gain step doesn't leave stale data in the window).
-    Returns {key: Slider} — keep the reference alive, or the GC drops
-    the callbacks."""
-    n = len(SLIDER_SPECS)
-    fig.subplots_adjust(bottom=0.03 + n * 0.025 + 0.05)
-
-    sliders = {}
-    for i, (key, label, vmin, vmax, scale) in enumerate(SLIDER_SPECS):
-        ax = fig.add_axes((0.18, 0.03 + i * 0.025, 0.55, 0.02))
-        value = getattr(servo, key)
-        if scale == "log":
-            slider = Slider(ax, label, np.log10(vmin), np.log10(vmax),
-                            valinit=np.log10(value))
-            slider.valtext.set_text(f"{value:.3g}")
-        else:
-            slider = Slider(ax, label, vmin, vmax, valinit=value)
-
-        def _on_changed(val, key=key, scale=scale, slider=slider):
-            value = 10.0 ** val if scale == "log" else val
-            setattr(servo, key, value)
-            if scale == "log":
-                slider.valtext.set_text(f"{value:.3g}")
-            if on_change:
-                on_change()
-
-        slider.on_changed(_on_changed)
-        sliders[key] = slider
-    return sliders
-
-
 # --- the dashboard loop ------------------------------------------------
 
 
 def run(arms, save_seconds=None):
     """Run the dashboard. arms: subset of world.SIDES to drive (via
     servo.apply_ctrl) and plot — an unselected arm holds posture and is
-    not shown, same selection semantics as main.py. save_seconds: if
-    given, run headless for that many sim-seconds and save
-    plots/dashboard.png; otherwise run live with gain sliders until the
-    figure window is closed."""
+    not shown on the live panels (same selection semantics as main.py),
+    though its pose_error is still logged for the final table. Both
+    sides are always driven+plotted+logged when arms == world.SIDES
+    (the default, "both"). save_seconds: if given, run headless for
+    that many sim-seconds and save analysis/output/dashboard.png;
+    otherwise run live with the gain panel until the figure window is
+    closed."""
     desired_pos.apply()
     servo.init_ctrl()
 
@@ -181,50 +153,60 @@ def run(arms, save_seconds=None):
 
     jlim = {s: world.jnt_range(s) for s in arms}
 
+    # --- ring buffers (rolling window, live panels) -----------------------
     t_buf = deque(maxlen=maxlen)
-    base_disp_buf = deque(maxlen=maxlen)
-    e_pos_buf = {s: deque(maxlen=maxlen) for s in arms}
+    base_disp_buf = deque(maxlen=maxlen)      # (3,) mm, signed, per step
+    e_pos_buf = {s: deque(maxlen=maxlen) for s in arms}  # (3,) mm, signed
     e_rot_buf = {s: deque(maxlen=maxlen) for s in arms}
     headroom_buf = {s: deque(maxlen=maxlen) for s in arms}
     sigma_buf = {s: deque(maxlen=maxlen) for s in arms}
     margin_buf = {s: deque(maxlen=maxlen) for s in arms}
     lead_buf = {s: deque(maxlen=maxlen) for s in arms}
 
-    # --- figure ----------------------------------------------------------
+    # --- full-run log (every step; analysis/metrics.py's shape) -----------
+    full_log = {"t": [], "base_disp": [], "right_e": [], "left_e": []}
+
+    # --- figure: 7 panels sharing the time axis ---------------------------
     if save_seconds is None:
         plt.ion()
     fig, axes = plt.subplots(
-        5, 1, sharex=True, figsize=(9, 12),
-        gridspec_kw={"height_ratios": [3, 2, 2, 2, 1]},
+        7, 1, sharex=True, figsize=(9, 14),
+        gridspec_kw={"height_ratios": [2, 2, 2, 2, 2, 2, 1]},
     )
-    ax_e, ax_rot, ax_head, ax_sv, ax_marg = axes
+    ax_x, ax_y, ax_z, ax_rot, ax_head, ax_sv, ax_marg = axes
+    ax_axis = (ax_x, ax_y, ax_z)
 
     lines = {}
-    lines["base"] = ax_e.plot([], [], color=C_BASE, linewidth=1.0,
-                              label="|base disp|")[0]
+    for i, (ax, label) in enumerate(zip(ax_axis, AXIS_LABELS)):
+        lines["base", i] = ax.plot([], [], color=C_BASE, linewidth=1.0,
+                                   label="|base disp|" if i == 0 else None)[0]
+        for s in arms:
+            c, ls = SIDE_COLOR[s], SIDE_STYLE[s]
+            lines["e", s, i] = ax.plot(
+                [], [], color=c, linestyle=ls,
+                label=f"{s} e_{label}" if i == 0 else None)[0]
+        ax.axhline(0, color="0.85", linewidth=0.5, zorder=0)
+        ax.set_ylabel(f"world {label} [mm]")
+
+    readout = ax_x.text(0.99, 0.97, "", transform=ax_x.transAxes,
+                        family="monospace", fontsize=8, va="top", ha="right")
+    ax_x.legend(loc="upper left", fontsize=8)
+
     for s in arms:
-        c, ls = _SIDE_COLOR[s], _SIDE_STYLE[s]
-        lines["e", s] = ax_e.plot([], [], color=c, linestyle=ls,
-                                  label=f"{s} |e_pos|")[0]
+        c, ls = SIDE_COLOR[s], SIDE_STYLE[s]
         lines["rot", s] = ax_rot.plot([], [], color=c, linestyle=ls,
                                       label=s)[0]
         lines["head", s] = ax_head.plot([], [], color=c, linestyle=ls,
                                         label=s)[0]
         lines["sv", s] = ax_sv.plot([], [], color=c, linestyle=ls,
                                     label=s)[0]
-        # Panel 5 overrides the side->linestyle convention: solid/dashed
+        # Panel 7 overrides the side->linestyle convention: solid/dashed
         # here distinguishes margin from lead, not side (colour still
         # does that) — see module docstring.
         lines["marg", s] = ax_marg.plot([], [], color=c, linestyle="-",
                                         label=f"{s} margin")[0]
         lines["lead", s] = ax_marg.plot([], [], color=c, linestyle="--",
                                         label=f"{s} lead")[0]
-
-    ax_e.axhline(0, color="0.85", linewidth=0.5, zorder=0)
-    ax_e.set_ylabel("|e_pos|, |base disp| [mm]")
-    readout = ax_e.text(0.99, 0.97, "", transform=ax_e.transAxes,
-                        family="monospace", fontsize=8, va="top", ha="right")
-    ax_e.legend(loc="upper left", fontsize=8)
 
     ax_rot.axhline(0, color="0.85", linewidth=0.5, zorder=0)
     ax_rot.set_ylabel("|e_rot| [deg]")
@@ -244,8 +226,10 @@ def run(arms, save_seconds=None):
     ax_marg.set_ylabel("margin [deg]")
     ax_marg.set_xlabel("sim time (s)")
 
-    title = fig.suptitle("world-frame pose hold under base sway")
+    # Static suptitle (no-jump rule) — never rewritten mid-run.
+    fig.suptitle("World-frame pose hold under base sway")
 
+    panel = None  # keep the GainPanel reference alive for the run's duration
     if save_seconds is None:
         def _flush():
             t_buf.clear()
@@ -257,50 +241,63 @@ def run(arms, save_seconds=None):
                 sigma_buf[s].clear()
                 margin_buf[s].clear()
                 lead_buf[s].clear()
-        add_gain_sliders(fig, on_change=_flush)
+        panel = GainPanel(on_change=_flush)
+        fig.tight_layout()
     else:
         fig.tight_layout()
 
+    # Expand-only y-autoscale (no-jump rule): per-axes min/max only ever
+    # grow. Same trade-off as plotting.live_plot.LivePlot: a boot
+    # transient keeps a panel's scale enlarged for the rest of the run.
+    ylim = {ax: [None, None] for ax in axes}
+
+    def _apply_expand_only_ylim(ax):
+        ax.relim()
+        ax.autoscale_view(scaley=False)
+        lo, hi = ax.dataLim.y0, ax.dataLim.y1
+        cur_lo, cur_hi = ylim[ax]
+        lo = lo if cur_lo is None else min(cur_lo, lo)
+        hi = hi if cur_hi is None else max(cur_hi, hi)
+        if lo < hi:
+            ylim[ax] = [lo, hi]
+            ax.set_ylim(lo, hi)
+
     def _redraw():
         t_arr = np.array(t_buf)
-        base_arr = np.array(base_disp_buf)
-        lines["base"].set_data(t_arr, base_arr)
+        base_arr = np.array(base_disp_buf) if base_disp_buf else \
+            np.empty((0, 3))
+        for i, ax in enumerate(ax_axis):
+            lines["base", i].set_data(t_arr, base_arr[:, i]
+                                      if base_arr.size else [])
 
         stats_lines = []
-        worst = None
         for s in arms:
-            e_arr = np.array(e_pos_buf[s])
-            lines["e", s].set_data(t_arr, e_arr)
+            e_arr = np.array(e_pos_buf[s]) if e_pos_buf[s] else \
+                np.empty((0, 3))
+            for i, ax in enumerate(ax_axis):
+                lines["e", s, i].set_data(
+                    t_arr, e_arr[:, i] if e_arr.size else [])
             lines["rot", s].set_data(t_arr, e_rot_buf[s])
             lines["head", s].set_data(t_arr, headroom_buf[s])
             lines["sv", s].set_data(t_arr, sigma_buf[s])
             lines["marg", s].set_data(t_arr, margin_buf[s])
             lines["lead", s].set_data(t_arr, lead_buf[s])
 
-            rms = float(np.sqrt(np.mean(e_arr**2))) if e_arr.size else 0.0
-            peak = float(e_arr.max()) if e_arr.size else 0.0
-            peak_base = float(base_arr.max()) if base_arr.size else 0.0
-            rejection = (1.0 - peak / peak_base) * 100.0 \
-                if peak_base > 0 else float("nan")
+            e_norm = np.linalg.norm(e_arr, axis=1) if e_arr.size \
+                else np.empty(0)
+            base_norm = np.linalg.norm(base_arr, axis=1) if base_arr.size \
+                else np.empty(0)
+            rms, peak, rejection = metrics.windowed_stats(e_norm, base_norm)
             stats_lines.append(
                 f"{s:>5s}  rms{rms:6.1f}  pk{peak:6.1f}  "
                 f"rej{rejection:5.0f}%  [mm]"
             )
-            if worst is None or rejection < worst[1]:
-                worst = (s, rejection, peak)
         readout.set_text("\n".join(stats_lines))
-        if worst is not None:
-            title.set_text(
-                f"World-frame pose hold under base sway — {worst[0]} arm "
-                f"rejects {worst[1]:.0f}% of base motion "
-                f"(peak |e_pos| {worst[2]:.0f} mm)"
-            )
 
         for ax in axes:
-            ax.relim()
-            ax.autoscale_view()
+            _apply_expand_only_ylim(ax)
         if save_seconds is None:
-            plt.pause(0.001)
+            plt.pause(0.001)  # also pumps the GainPanel's event loop
 
     # --- main loop (mirrors analysis/diagnose.py's ordering) -------------
     step = 0
@@ -321,7 +318,7 @@ def run(arms, save_seconds=None):
         base_twist = motion.torso_twist_at(t, **BASE_SCENARIO)
 
         base_pos, _ = frames.torso_pose()
-        base_disp_mm = np.linalg.norm(base_pos - motion.HOME_POS) * 1000.0
+        base_disp = base_pos - motion.HOME_POS  # (3,) m, signed
 
         # Pre-control state: exactly what apply_ctrl is about to use.
         # damping=servo.DAMPING is passed explicitly (unlike diagnose.py,
@@ -350,11 +347,24 @@ def run(arms, save_seconds=None):
 
         mujoco.mj_step(world.model, world.data)
 
+        # Full-run log: both sides always, for the final metrics table
+        # (analysis.metrics expects both "right_e"/"left_e" — pose_error
+        # is a pure readout, cheap to compute even for an arm that isn't
+        # driven/shown this run).
+        full_log["t"].append(t)
+        full_log["base_disp"].append(base_disp.copy())
+        for side in world.SIDES:
+            if side in tick:
+                e_pos_full = tick[side]["e_pos"]
+            else:
+                e_pos_full, _ = servo.pose_error(side)
+            full_log[f"{side}_e"].append(e_pos_full.copy())
+
         t_buf.append(t)
-        base_disp_buf.append(base_disp_mm)
+        base_disp_buf.append(base_disp * 1000.0)
         for s in arms:
             low, high, limited = jlim[s]
-            e_pos_buf[s].append(np.linalg.norm(tick[s]["e_pos"]) * 1000.0)
+            e_pos_buf[s].append(tick[s]["e_pos"] * 1000.0)
             e_rot_buf[s].append(np.degrees(np.linalg.norm(tick[s]["e_rot"])))
             headroom_buf[s].append(100.0 * headroom_frac(tick[s]["qdot_raw"]))
             sigma_buf[s].append(sigma_min(tick[s]["J"]))
@@ -367,9 +377,17 @@ def run(arms, save_seconds=None):
             _redraw()
 
     _redraw()
+
+    if len(full_log["t"]) > 0:
+        full_log = {k: np.asarray(v) for k, v in full_log.items()}
+        st = metrics.stats(full_log)
+        print(f"\nFull run: {full_log['t'][-1]:.1f} s "
+              f"({len(full_log['t'])} samples)")
+        metrics.print_stats(st)
+
     if n_steps is not None:
-        Path("plots").mkdir(parents=True, exist_ok=True)
-        path = "plots/dashboard.png"
+        OUT.mkdir(parents=True, exist_ok=True)
+        path = OUT / "dashboard.png"
         fig.savefig(path, dpi=200)
         print(f"Saved {path}")
     return fig
@@ -384,7 +402,7 @@ if __name__ == "__main__":
         del _args[_i:_i + 2]
     _side_arg = _args[0] if _args else "both"
     assert _side_arg in ("right", "left", "both"), \
-        "usage: python -m plotting.dashboard [right|left|both] [--save T]"
+        "usage: python -m analysis.dashboard [right|left|both] [--save T]"
     _arms = world.SIDES if _side_arg == "both" else (_side_arg,)
 
     run(_arms, save_seconds=_save_seconds)
