@@ -16,7 +16,7 @@ dashboard shows exactly what the controller saw, nothing re-derived.
 
 Panels (top to bottom), sharing the time axis:
   1-3. world x, y, z: signed per-axis error (mm, e = ref - actual) —
-     grey |base displacement| component + right + left EE error
+     grey signed base-displacement component + right + left EE error
      components, the same per-axis view as analysis/base_vs_error.py.
      Monospace readout on panel 1: RMS / peak / rejection % per side
      over the current window (rejection = 1 - peak|e|/peak|base disp|,
@@ -179,7 +179,7 @@ def run(arms, save_seconds=None):
     lines = {}
     for i, (ax, label) in enumerate(zip(ax_axis, AXIS_LABELS)):
         lines["base", i] = ax.plot([], [], color=C_BASE, linewidth=1.0,
-                                   label="|base disp|" if i == 0 else None)[0]
+                                   label="base disp" if i == 0 else None)[0]
         for s in arms:
             c, ls = SIDE_COLOR[s], SIDE_STYLE[s]
             lines["e", s, i] = ax.plot(
@@ -227,7 +227,7 @@ def run(arms, save_seconds=None):
     ax_marg.set_xlabel("sim time (s)")
 
     # Static suptitle (no-jump rule) — never rewritten mid-run.
-    fig.suptitle("World-frame pose hold under base sway")
+    fig.suptitle("World-frame pose hold under base sway (e = ref − actual)")
 
     panel = None  # keep the GainPanel reference alive for the run's duration
     if save_seconds is None:
