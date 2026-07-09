@@ -20,6 +20,7 @@ import mujoco
 import numpy as np
 
 from controller import desired_pos, frames, servo
+from plotting.style import C_RIGHT, C_LEFT, C_XYZ
 from sim import motion, targets, world
 
 # Pinned failure scenario (the levers observed to break the right arm);
@@ -31,11 +32,6 @@ SIM_SECONDS = 40.0                  # 4 periods
 
 SV_THRESHOLDS = (0.05, 0.01, 0.001)
 OUT = Path("analysis/output")
-
-# Okabe-Ito
-C_RIGHT = "#D55E00"
-C_LEFT = "#0072B2"
-C_XYZ = ("#D55E00", "#009E73", "#0072B2")
 
 
 def _dof_adrs(side):

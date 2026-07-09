@@ -55,6 +55,8 @@ import numpy as np
 from matplotlib.widgets import Slider
 
 from controller import desired_pos, frames, servo
+from plotting.style import C_BASE, C_RIGHT, C_LEFT, SIDE_COLOR as _SIDE_COLOR, \
+    SIDE_STYLE as _SIDE_STYLE
 from sim import motion, world
 
 # Base-motion scenario for this run — same values main.py runs today.
@@ -69,13 +71,6 @@ WINDOW_S = 15.0        # rolling window kept on screen, seconds
 REDRAW_EVERY = 25      # sim steps between redraws (LivePlot's convention)
 SV_THRESHOLDS = (0.05, 0.01, 0.001)  # diagnose.py's DLS-activity markers
 SETTLE_SECONDS = 2.0   # --save only; base_vs_error.py's SETTLE pattern
-
-# Okabe-Ito
-C_RIGHT = "#D55E00"
-C_LEFT = "#0072B2"
-C_BASE = "0.6"
-_SIDE_COLOR = {"right": C_RIGHT, "left": C_LEFT}
-_SIDE_STYLE = {"right": "-", "left": "--"}
 
 
 # --- pure per-tick helpers: importable and testable without a display ------

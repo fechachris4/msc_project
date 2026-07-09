@@ -26,6 +26,7 @@ import mujoco
 import numpy as np
 
 from controller import frames, servo
+from plotting.style import C_LEFT as C_PRED, C_RIGHT as C_MEAS
 from sim import target_motion, targets, world
 
 OUT = Path("analysis/output")
@@ -46,9 +47,6 @@ N_FIT_PERIODS = 2.0         # steady-state periods used for the sine fit
 
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
-
-C_MEAS = "#D55E00"
-C_PRED = "#0072B2"
 
 
 def _reset_to_home():
