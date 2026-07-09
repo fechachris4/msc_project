@@ -10,8 +10,10 @@ Base motion follows this module's BASE_SCENARIO (zero amplitude = static).
 Displayed as d = p_EE - p_target (world frame, mm): positive means the EE is
 on the +axis side of the target. The dashed zero line is the target. Note the
 sign is flipped from servo's control error (e = target - actual); the flip lives
-here in the display layer only. Close the plot window to stop; the figure is
-saved to plots/<side>_position_error.png.
+here in the display layer only. A live gain panel (plotting.gain_panel) opens
+alongside the displacement plot -- drag a slider, watch the response change.
+Close the displacement plot window to stop; the figure is saved to
+plots/<side>_position_error.png.
 """
 
 import sys
@@ -20,6 +22,7 @@ import mujoco
 import numpy as np
 
 from controller import desired_pos, servo
+from plotting.gain_panel import GainPanel
 from plotting.live_plot import LivePlot
 from sim import motion, world
 
@@ -41,6 +44,7 @@ def run(side):
     desired_pos.apply()
     servo.init_ctrl()
 
+    panel = GainPanel()
     plot = LivePlot(
         rows=["d_x (mm)", "d_y (mm)", "d_z (mm)", "|d| (mm)"],
         signals={"EE - target": {}, "target": {"style": "--"}},
