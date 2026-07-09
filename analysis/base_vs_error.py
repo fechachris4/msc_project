@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 
+from analysis import metrics
 from controller import desired_pos, frames, servo
 from plotting.live_plot import LivePlot
 from plotting.style import C_BASE, C_RIGHT, C_LEFT
@@ -118,47 +119,15 @@ def run():
     return {k: np.asarray(v) for k, v in log.items()}, plot
 
 
-def stats(log):
-    """{side: {rms (3,) mm, peak (3,) mm, peak_norm mm, rejection %}} plus
-    "peak_base" (mm, norm) — rejection = 1 - peak|e|/peak|base disp|,
-    the norm-based thesis success metric."""
-    base_mm = log["base_disp"] * 1000.0
-    peak_base = float(np.linalg.norm(base_mm, axis=1).max())
-
-    out = {"peak_base": peak_base}
-    for side, key in (("right", "right_e"), ("left", "left_e")):
-        e_mm = log[key] * 1000.0
-        e_norm = np.linalg.norm(e_mm, axis=1)
-        rms = np.sqrt(np.mean(e_mm**2, axis=0))
-        peak = np.max(np.abs(e_mm), axis=0)
-        peak_norm = float(e_norm.max())
-        rejection = (1.0 - peak_norm / peak_base) * 100.0
-        out[side] = dict(rms=rms, peak=peak, peak_norm=peak_norm,
-                         rejection=rejection)
-    return out
-
-
-def print_stats(st):
-    print(f"{'':8s}{'RMS x':>10s}{'y':>10s}{'z':>10s}"
-          f"{'peak x':>10s}{'y':>10s}{'z':>10s}"
-          f"{'|e| peak':>12s}{'rejection':>12s}")
-    for side in world.SIDES:
-        d = st[side]
-        cells = "".join(f"{v:10.2f}" for v in (*d["rms"], *d["peak"]))
-        print(f"{side:8s}{cells}{d['peak_norm']:12.2f}"
-              f"{d['rejection']:11.1f}%  [mm]")
-    print(f"peak |base disp| = {st['peak_base']:.2f} mm")
-
-
 def main():
     log, plot = run()
     if len(log["t"]) == 0:
         print("Window closed before any samples were logged.")
         return
-    st = stats(log)
+    st = metrics.stats(log)
     print(f"\nFull run: {log['t'][-1]:.1f} s "
           f"({len(log['t'])} samples)")
-    print_stats(st)
+    metrics.print_stats(st)
     OUT.mkdir(parents=True, exist_ok=True)
     plot.save(OUT / "base_vs_error.png")
     print(f"\nSaved {OUT}/base_vs_error.png (last {WINDOW_S:.0f} s window)")
