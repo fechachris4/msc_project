@@ -1,5 +1,4 @@
 __pycache__/
 *.pyc
-plots/*.png
 .venv/
 .claude/

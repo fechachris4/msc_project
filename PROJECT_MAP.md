@@ -33,12 +33,18 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
     ├── controller/desired_pos.py      (desired EE poses → world targets, once)
     ├── controller/servo.py            (controller: e → v = Kp*e → qdot via DLS → apply_ctrl)
     ├── main.py                        (viewer loop: closed loop via servo.apply_ctrl)
-    └── plotting/
-        ├── live_plot.py               (generic live time-series plot)
-        ├── position_error.py          (shared live error plot, closed loop)
+    ├── plotting/                      (reusable instruments only)
+    │   ├── live_plot.py               (generic live time-series plot, expand-only autoscale)
+    │   ├── gain_panel.py              (the one live gain-tuning panel, GainPanel)
+    │   └── style.py                   (shared Okabe-Ito colors + side conventions)
+    └── analysis/                      (every experiment script; figures → analysis/output/)
+        ├── metrics.py                 (one metric definition: stats/print_stats/windowed_stats)
+        ├── dashboard.py               (live 7-panel control-loop dashboard, both arms)
+        ├── base_vs_error.py           (thesis success-criterion figure: base disp vs EE error)
+        ├── diagnose.py                (pinned-scenario failure diagnosis, 01-08 figures)
+        ├── bandwidth_sweep.py         (reactive-loop tracking bandwidth vs frequency)
+        ├── validate_velocity.py       (ee_velocity vs finite-difference ground truth)
         └── fk_validation.py           (live direct-vs-FK comparison, right arm)
-
-MISSING LINKS in the pipeline:  metrics (RMSE/peak) → thesis plots
 ```
 
 ## 3. Module Status Table
@@ -57,9 +63,13 @@ MISSING LINKS in the pipeline:  metrics (RMSE/peak) → thesis plots
 | `controller/desired_pos.py` | Desired EE poses, resolved to world once | Implemented; `resolve_world` validated | frames, transforms, targets | `main.py`, plotting | `test_reference` (pure math) | Medium-High | Touch only if needed |
 | `controller/servo.py` | The controller: P law + DLS (pure math) + MuJoCo plumbing (errors, setpoint integration, qdot limits) | Validated | frames, targets, world | main, plotting | `test_servo`: pure errors, DLS vs pinv, wrapper offsets, arm selection, `ClosedLoopConvergenceTest` | High | Touch only if needed |
 | `main.py` | Viewer loop, closed loop, arm selection CLI | Implemented | desired_pos, servo, world | user | Loop body shared with `ClosedLoopConvergenceTest` via `apply_ctrl` | Medium-High | Grows with base motion |
-| `plotting/live_plot.py` | Generic live plot | Implemented | matplotlib | position_error, fk_validation | None (visually exercised) | Medium | Do not touch |
-| `plotting/position_error.py` | Live closed-loop error plots (side from CLI) | Implemented | servo, world, live_plot | user | Visual only | Medium | Touch only if needed |
-| `plotting/fk_validation.py` | Live direct-vs-FK comparison | Implemented | frames, world, live_plot | user | Visual only | Medium | Touch only if needed |
+| `plotting/live_plot.py` | Generic live plot, expand-only y-autoscale | Implemented | matplotlib | base_vs_error, fk_validation | None (visually exercised) | Medium | Do not touch |
+| `plotting/gain_panel.py` | The one live gain-tuning panel (`GainPanel`, `on_change` hook) | Implemented | servo, matplotlib.widgets | main (tune), dashboard, base_vs_error | None (visually exercised) | Medium | Touch only if needed |
+| `plotting/style.py` | Shared Okabe-Ito colors + side→color/linestyle maps | Implemented | — | dashboard, base_vs_error, diagnose, validate_velocity, bandwidth_sweep | None (constants only) | High | Touch only if needed |
+| `analysis/metrics.py` | One metric definition: `stats`/`print_stats` (full-run) + `windowed_stats` | Implemented | numpy, world | base_vs_error, dashboard | Hand-verified: windowed_stats matches stats() on identical data | High | Touch only if needed |
+| `analysis/dashboard.py` | Live 7-panel control-loop dashboard (per-axis error, e_rot, headroom, σ_min, margins) | Implemented | frames, servo, gain_panel, metrics | user | `test_dashboard.py`: pure per-tick helpers + DAMPING runtime guard | Medium-High | Touch only if needed |
+| `analysis/base_vs_error.py` | Thesis success-criterion figure: base displacement vs. per-axis EE error | Implemented | frames, servo, live_plot, gain_panel, metrics | user | Visual + printed table only | Medium-High | Touch only if needed |
+| `analysis/fk_validation.py` | Live direct-vs-FK comparison | Implemented | frames, world, live_plot | user | Visual only | Medium | Touch only if needed |
 | `README.md` | Setup + pipeline + layout docs | Current (refreshed 2026-07-07) | — | — | — | High | Keep in sync |
 | `tasks/todo.md` | Historical task log | Stale (history, not current state) | — | — | — | — | Do not touch (append-only) |
 | `docs/superpowers/` | FK design spec + plan (2026-07-06) | Done, matches code | — | — | — | High | Do not touch |
@@ -130,11 +140,12 @@ sim/assets/kinova_gen3/gen3.xml (vendored, position-servo actuators)
 │       ├── controller/kinematics.py  (transforms; TEST REFERENCE ONLY)
 │       ├── controller/desired_pos.py  (frames + transforms + targets)
 │       ├── controller/servo.py  (frames + targets; P law + DLS inside)
-│       │   ├── main.py  (viewer closed loop)
-│       │   └── plotting/position_error.py  (side from CLI arg)
-│       └── plotting/fk_validation.py (frames, no controller)
+│       │   ├── main.py  (viewer closed loop, optional plotting/gain_panel.py)
+│       │   ├── analysis/dashboard.py  (side from CLI arg; gain_panel + metrics)
+│       │   └── analysis/base_vs_error.py  (both arms; gain_panel + metrics + live_plot)
+│       └── analysis/fk_validation.py (frames, no controller)
 │           └── plotting/live_plot.py  (matplotlib only, MuJoCo-free)
-└── tests/  (test_kinematics, test_pin_fk, test_reference, test_transforms, test_servo)
+└── tests/  (test_kinematics, test_pin_fk, test_reference, test_transforms, test_servo, test_dashboard)
 ```
 
 Note the deliberate redundancy: `kinematics.py` (analytical) and `pin_fk.py`
@@ -240,8 +251,8 @@ horizon, dozens of experiments).
    template. The entry point must call `set_pose` and `twist_at` as a
    matched pair, same scenario dict, same instant `t` — replacing only the
    pose write leaves the controller's twist feedforward silently wrong
-   (main.py and plotting/position_error.py comment this at both call
-   sites; that's the rule to preserve).
+   (main.py, analysis/dashboard.py, and analysis/base_vs_error.py all
+   comment this at each call site; that's the rule to preserve).
 
 3. **New controller** (the predictive one, eventually): a controller
    module is `init_ctrl()` + `apply_ctrl(dt, base_twist, arms)` +

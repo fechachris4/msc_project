@@ -56,19 +56,29 @@ Base motion is configured by the levers at the top of `sim/motion.py`
 (amplitude/frequency); zero amplitude = static base, and the torso then
 stays hand-draggable in the viewer as an improvised perturbation.
 
-Live position-error plot, one arm, headless (plain `python` is fine —
-no MuJoCo viewer; close the plot window to stop and save the figure):
+Base motion vs. EE error, both arms, headless (plain `python` is fine —
+no MuJoCo viewer; live mode opens a rolling plot + live gain panel and
+runs until the window is closed; `--save T` runs headlessly for `T`
+sim-seconds instead):
 
 ```bash
-python -m plotting.position_error right
-python -m plotting.position_error left
+python -m analysis.base_vs_error
+python -m analysis.base_vs_error --save 30
+```
+
+Live 7-panel control-loop dashboard, one or both arms (same `--save T`
+convention):
+
+```bash
+python -m analysis.dashboard right
+python -m analysis.dashboard both --save 10
 ```
 
 FK validation — MuJoCo's directly measured right EE position vs. the
 independently composed FK (world → torso → Kinova base → EE):
 
 ```bash
-python -m plotting.fk_validation
+python -m analysis.fk_validation
 ```
 
 Tests:
@@ -95,9 +105,17 @@ controller/
   desired_pos.py           desired EE poses; resolved to world targets once
   servo.py                 the controller: P law + DLS (pure math) and the MuJoCo
                            plumbing (errors, setpoint integration, data.ctrl)
-plotting/
-  live_plot.py             generic live time-series plot (no MuJoCo)
-  position_error.py        live position-error plot (side from CLI arg)
+plotting/                 reusable instruments only (no MuJoCo except via callers)
+  live_plot.py             generic live time-series plot, expand-only autoscale
+  gain_panel.py            the one live gain-tuning panel (GainPanel)
+  style.py                 shared Okabe-Ito colors + side conventions
+analysis/                  every experiment script; figures -> analysis/output/
+  metrics.py               one metric definition: stats/print_stats/windowed_stats
+  dashboard.py             live 7-panel control-loop dashboard, one or both arms
+  base_vs_error.py         thesis success-criterion figure: base disp vs EE error
+  diagnose.py              pinned-scenario failure diagnosis
+  bandwidth_sweep.py       reactive-loop tracking bandwidth vs frequency
+  validate_velocity.py     ee_velocity vs finite-difference ground truth
   fk_validation.py         live direct-vs-FK comparison (right arm)
 tests/                     unit + closed-loop tests (python -m unittest discover tests)
 ```
