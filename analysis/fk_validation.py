@@ -3,11 +3,12 @@ frames.ee_pose (the Pinocchio-backed T_W_T · T_T_K · T_K_E composition the
 controller actually uses), plotted while the simulation runs (headless —
 no MuJoCo viewer, so plain python works):
 
-    python -m plotting.fk_validation
+    python -m analysis.fk_validation
 
-Close the plot window to stop; the figure is saved to plots/fk_validation.png.
-The two traces are computed independently — agreement here validates the
-analytical forward kinematics, not just frame algebra.
+Close the plot window to stop; the figure is saved to
+analysis/output/fk_validation.png. The two traces are computed
+independently — agreement here validates the analytical forward
+kinematics, not just frame algebra.
 """
 
 import mujoco
@@ -38,8 +39,8 @@ def main():
         plot.add(t, {"direct (MuJoCo)": direct_pos * 1000.0,
                      "FK": fk_pos * 1000.0})
 
-    plot.save("plots/fk_validation.png")
-    print("Saved plots/fk_validation.png")
+    plot.save("analysis/output/fk_validation.png")
+    print("Saved analysis/output/fk_validation.png")
 
 
 if __name__ == "__main__":

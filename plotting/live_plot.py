@@ -8,7 +8,7 @@ ring buffers, redraw throttling, and figure lifecycle:
                     signals={"direct": {}, "fk": {"style": "--"}})
     while plot.is_open():
         plot.add(t, {"direct": (x, y, z), "fk": (x, y, z)})
-    plot.save("plots/something.png")
+    plot.save("analysis/output/something.png")
 """
 
 from collections import deque
