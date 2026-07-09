@@ -52,3 +52,33 @@ Verification:
 - Red check: `conda run -n base python -m unittest tests.test_kinematics` failed on the original `SyntaxError` at the unfinished `T_K_E` line.
 - Unit check: `conda run -n base python -m unittest tests.test_kinematics` passed.
 - MuJoCo check: after `mj_forward`, composed and direct right EE poses matched with `pos_max_abs = 0.0` and `rot_max_abs = 1.1102230246251565e-16`.
+
+## Codebase Review Plan (2026-07-10)
+
+- [x] Establish repository state and identify the last known-good verification path.
+- [x] Map runtime entry points, controller flow, simulation inputs, analysis outputs, and tests.
+- [x] Audit controller correctness, especially world-frame references, transforms, Jacobians, units, saturation, and joint limits.
+- [x] Audit simulation/motion behavior, configuration portability, and failure handling.
+- [x] Audit metrics, plots, and tests for reproducibility and thesis-ready evidence.
+- [x] Run the available verification commands and distinguish confirmed failures from review risks.
+- [x] Prioritize actionable improvements by severity and effort, with exact file and line references.
+
+## Codebase Review
+
+The world-frame transform/FK/Jacobian core is strong and independently validated. The main improvements are at the experiment boundary:
+
+1. Validate `desired_pos` and the production base-motion scenario together. The current 10 s production rollout peaks at 252.5 mm (right) and 198.9 mm (left), with arm contacts in about 41% of steps, while the rejection test uses smaller, FK-generated feasible targets.
+2. Replace fixed 2 s settling with an error-threshold-plus-dwell criterion. At 2 s the static errors remain 149.4/212.9 mm and 39.7/42.9 deg; at 10 s they are 1.2/1.6 mm.
+3. Complete and test the thesis metric contract: mean, RMSE, and peak; define norm versus per-axis metrics; handle a static base without division by zero.
+4. Persist raw logs, metrics, gains, scenario, timestep, evaluation window, dependency versions, and git revision beside each figure.
+5. Fix test isolation: full discovery passes 49 tests, but `python -m unittest tests.test_velocity -v` fails all 3 tests because `sim.motion` is imported after a test has rotated the torso.
+6. Clamp position-servo setpoints to the intersection of joint and actuator ranges; the actuator ranges currently permit about 0.0096 rad beyond limited-joint bounds.
+7. Resolve MJCF paths from module locations instead of the process CWD; importing `sim.world` outside the repository root currently fails.
+8. Refresh stale methodology/status documents and dependencies (`matplotlib` is absent from `requirements.txt`; README/velocity report still describe a P-only or unused-velocity path).
+
+Verification evidence:
+- `.venv/bin/python -m unittest discover tests`: 49 tests, OK.
+- `.venv/bin/python -m unittest tests.test_velocity -v`: 3 tests, 3 failures (import-order dependence reproduced).
+- Production scenario, after a genuine 10 s static settle: 252.5/198.9 mm peak error, 20.2%/37.1% rejection, 41.5%/40.9% contact-step occupancy (right/left).
+- `analysis.metrics.stats` with a zero base displacement: `ZeroDivisionError` reproduced.
+- Importing `sim.world` from `/private/tmp` with the repository on `sys.path`: scene path load failure reproduced.
