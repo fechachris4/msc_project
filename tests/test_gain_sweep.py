@@ -2,11 +2,12 @@
 is analysis.live's job, already covered by tests/test_live.py). Covers
 grid construction, disqualification, winner selection (incl. the tie
 chain and the all-disqualified raise), headroom vs.
-analysis.dashboard.headroom_frac, and sweep_state.json round-trip /
-fingerprint refusal.
+analysis.dashboard.headroom_frac, non-finite headroom sanitization, and
+sweep_state.json round-trip / fingerprint refusal.
 """
 
 import argparse
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -212,6 +213,62 @@ class HeadroomTest(unittest.TestCase):
         series = gain_sweep._headroom_series(qdot)
         expected = [dashboard.headroom_frac(row) for row in qdot]
         np.testing.assert_allclose(series, expected)
+
+
+class NonFiniteHeadroomTest(unittest.TestCase):
+    """An unstable gain corner can produce non-finite qdot_raw; np.mean/
+    np.percentile then yield NaN, which write_state_atomic's
+    json.dumps(..., allow_nan=False) would crash on -- and since the
+    episode is disqualified anyway (live.py already flags a non-finite
+    log invalid), the crash would just repeat on every resume. Row
+    construction must sanitize to None instead (metrics.py's
+    _finite_float convention)."""
+
+    def test_nan_qdot_raw_yields_none_headroom_and_json_safe_row(self):
+        from analysis.live import ExperimentConfig, ExperimentLog
+
+        config = ExperimentConfig(
+            arms=("right",), linear_amplitude=np.zeros(3),
+            linear_frequency=0.0, rotational_amplitude=np.zeros(3),
+            rotational_frequency=0.0, evaluation_seconds=0.01)
+        n = 2
+        arm_data = {
+            "right": {
+                "e_pos": np.zeros((n, 3)),
+                "e_rot": np.zeros((n, 3)),
+                "speed_saturated": np.zeros((n, 7), dtype=bool),
+                "joint_margin": np.full((n, 7), np.inf),
+                # step 0: a diverging corner (all-NaN qdot_raw); step 1: normal
+                "qdot_raw": np.vstack([np.full(7, np.nan), np.full(7, 0.1)]),
+            },
+        }
+        log = ExperimentLog(
+            arms=("right",),
+            config=config,
+            sim_time=np.arange(n, dtype=float),
+            contact_time=np.arange(n, dtype=float),
+            eval_time=np.arange(n, dtype=float),
+            phase=np.asarray(["evaluation"] * n, dtype="U10"),
+            gain_segment=np.zeros(n, dtype=int),
+            base_displacement=np.zeros((n, 3)),
+            base_linear_velocity=np.zeros((n, 3)),
+            base_angular_velocity=np.zeros((n, 3)),
+            arm_data=arm_data,
+            contact_count=np.zeros(n, dtype=int),
+            torso_contact={"right": np.zeros(n, dtype=bool)},
+            contact_pairs=tuple(() for _ in range(n)),
+            gain_snapshots=({"KP_POS": 2.0},),
+            settled=True,
+            settle_duration=0.0,
+            valid=True,
+            warning_reasons=(),
+        )
+
+        row = gain_sweep._episode_row(log, dict(gain_sweep.BASELINE_GAINS))
+
+        self.assertIsNone(row["headroom_mean_frac"])
+        self.assertIsNone(row["headroom_p95_frac"])
+        json.dumps(row, allow_nan=False)  # must not raise
 
 
 class StateRoundTripTest(unittest.TestCase):
