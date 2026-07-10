@@ -37,6 +37,34 @@ class TorsoPoseOracleTest(unittest.TestCase):
         rotational_frequency=0.3,
     )
 
+    def test_public_levers_drive_default_pose_and_twist(self):
+        from sim import motion
+
+        np.testing.assert_array_equal(
+            motion.LINEAR_AMPLITUDE, np.array([0.1, 0.3, 0.0])
+        )
+        np.testing.assert_array_equal(
+            motion.ROTATIONAL_AMPLITUDE, np.array([0.0, 0.0, 0.0])
+        )
+        self.assertEqual(motion.LINEAR_FREQUENCY, 0.1)
+        self.assertEqual(motion.ROTATIONAL_FREQUENCY, 0.2)
+
+        scenario = dict(
+            linear_amplitude=motion.LINEAR_AMPLITUDE,
+            linear_frequency=motion.LINEAR_FREQUENCY,
+            rotational_amplitude=motion.ROTATIONAL_AMPLITUDE,
+            rotational_frequency=motion.ROTATIONAL_FREQUENCY,
+        )
+        t = 1.23
+        for actual, expected in zip(
+            motion.torso_pose_at(t), motion.torso_pose_at(t, **scenario)
+        ):
+            np.testing.assert_allclose(actual, expected)
+        for actual, expected in zip(
+            motion.torso_twist_at(t), motion.torso_twist_at(t, **scenario)
+        ):
+            np.testing.assert_allclose(actual, expected)
+
     def test_set_torso_pose_matches_oracle(self):
         from controller import frames
         from sim import motion, world

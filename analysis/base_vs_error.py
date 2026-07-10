@@ -32,7 +32,6 @@ import mujoco
 import numpy as np
 
 from analysis import metrics
-from analysis.dashboard import BASE_SCENARIO
 from controller import desired_pos, frames, servo
 from plotting.gain_panel import GainPanel
 from plotting.live_plot import LivePlot
@@ -52,7 +51,7 @@ OUT = Path("analysis/output")
 
 
 def run(save_seconds=None):
-    """Closed-loop rollout under BASE_SCENARIO with a live rolling plot.
+    """Closed-loop rollout under sim.motion defaults with a live rolling plot.
     save_seconds: if given, run headless for that many sim-seconds (no
     window, no gain panel); otherwise run live (with the shared gain
     panel) until the window is closed (or Ctrl-C). Returns (log, plot)
@@ -73,7 +72,7 @@ def run(save_seconds=None):
     t_start = world.data.time  # phase 0 at motion start: no teleport
     n_steps = int(save_seconds / dt) if save_seconds is not None else None
 
-    amp_mm = BASE_SCENARIO["linear_amplitude"] * 1000.0
+    amp_mm = motion.LINEAR_AMPLITUDE * 1000.0
     plot = LivePlot(
         rows=["world x [mm]", "world y [mm]", "world z [mm]"],
         signals={
@@ -84,7 +83,7 @@ def run(save_seconds=None):
         window=int(WINDOW_S / dt),
         title=(f"Base motion vs. EE error, world frame "
                f"(error = ref − actual)\n"
-               f"{BASE_SCENARIO['linear_frequency']:g} Hz, "
+               f"{motion.LINEAR_FREQUENCY:g} Hz, "
                f"±[{amp_mm[0]:.0f}, {amp_mm[1]:.0f}, "
                f"{amp_mm[2]:.0f}] mm"),
     )
@@ -108,14 +107,14 @@ def run(save_seconds=None):
                 break
 
             t = world.data.time - t_start
-            motion.set_torso_pose(t, **BASE_SCENARIO)
+            motion.set_torso_pose(t)
             # refresh xpos/xmat so the logged state sees the torso pose
             # at t, not the previous step's (main.py/diagnose.py pattern)
             mujoco.mj_kinematics(world.model, world.data)
             # set_torso_pose (mocap write) and torso_twist_at
             # (feedforward) must stay a matched pair — same scenario,
             # same instant t.
-            base_twist = motion.torso_twist_at(t, **BASE_SCENARIO)
+            base_twist = motion.torso_twist_at(t)
 
             base_pos, _ = frames.torso_pose()
             base_disp = base_pos - home_pos

@@ -97,3 +97,29 @@ Verification evidence:
 ## Telemetry-Backed Diagnostic Plotting Review
 
 Pending implementation and verification.
+
+## Central Base-Motion Lever Restoration (2026-07-10)
+
+- [x] Add a failing regression test for the four public motion levers and no-argument trajectory behavior.
+- [x] Restore the motion levers and use them as the default pose/twist/write inputs.
+- [x] Remove duplicate general-purpose base scenarios from the main viewer and shared analysis views.
+- [x] Preserve explicit scenarios in regression tests and dedicated diagnostic/validation runs.
+- [x] Run focused tests, compilation checks, duplicate-scenario search, and the full test suite.
+- [x] Review and commit only the intended restoration files.
+
+## Central Base-Motion Lever Restoration Review
+
+Restored `sim/motion.py` as the single source of truth for the default
+linear/rotational amplitudes and frequencies. The main viewer, dashboard, and
+base-vs-error view now use no-argument motion calls; the base-vs-error title
+reads the public motion values directly. Explicit keyword scenarios and the
+zero-amplitude no-write path remain covered by the existing focused tests.
+
+Verification evidence:
+- RED: `.venv/bin/python -m unittest tests.test_motion.TorsoPoseOracleTest.test_public_levers_drive_default_pose_and_twist -v` failed with `AttributeError: module 'sim.motion' has no attribute 'LINEAR_AMPLITUDE'`.
+- GREEN: the same focused regression command passed (`Ran 1 test`, `OK`).
+- `.venv/bin/python -m unittest tests.test_motion tests.test_velocity -v`: 8 tests passed.
+- `.venv/bin/python -m py_compile sim/motion.py main.py analysis/dashboard.py analysis/base_vs_error.py tests/test_motion.py`: passed.
+- `rg -n "BASE_SCENARIO\\s*=" --glob '*.py' .`: no matches.
+- `.venv/bin/python -m unittest discover tests`: 75 tests passed.
+- Scope review preserved the pre-existing modified `analysis/output/base_vs_error.png` and untracked `AGENTS.md`; neither is staged.

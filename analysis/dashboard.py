@@ -7,8 +7,8 @@ one or both arms, with the shared live gain panel for tuning.
     python -m analysis.dashboard              # both arms, live (default)
     python -m analysis.dashboard both --save 10   # headless, 10 sim-seconds
 
-Base motion follows this module's BASE_SCENARIO (main.py's values) — the
-canonical copy other scripts import. Every per-tick quantity is
+Base motion follows the public research levers in sim.motion. Every
+per-tick quantity is
 recomputed from the same public functions apply_ctrl itself calls
 (servo.pose_error, servo.twist_error, servo.qdot_from_error,
 frames.jacobian_world) — the analysis/diagnose.py convention: the
@@ -70,14 +70,6 @@ from controller import desired_pos, frames, servo
 from plotting.gain_panel import GainPanel
 from plotting.style import C_BASE, SIDE_COLOR, SIDE_STYLE
 from sim import motion, world
-
-# Base-motion scenario for this run — same values main.py runs today.
-BASE_SCENARIO = dict(
-    linear_amplitude=np.array([0.1, 0.3, 0.0]),   # m, world xyz
-    linear_frequency=0.1,                          # Hz
-    rotational_amplitude=np.zeros(3),              # rad, rpy
-    rotational_frequency=0.2,                      # Hz
-)
 
 WINDOW_S = 15.0        # rolling window kept on screen, seconds
 REDRAW_EVERY = 25      # sim steps between redraws (LivePlot's convention)
@@ -309,13 +301,13 @@ def run(arms, save_seconds=None):
             break
 
         t = world.data.time - t_start
-        motion.set_torso_pose(t, **BASE_SCENARIO)
+        motion.set_torso_pose(t)
         # refresh xpos/xmat so every quantity below sees the torso pose
         # at t, not the previous step's (main.py / diagnose.py pattern)
         mujoco.mj_kinematics(world.model, world.data)
         # set_torso_pose (mocap write) and torso_twist_at (feedforward)
         # must stay a matched pair — same scenario, same instant t.
-        base_twist = motion.torso_twist_at(t, **BASE_SCENARIO)
+        base_twist = motion.torso_twist_at(t)
 
         base_pos, _ = frames.torso_pose()
         base_disp = base_pos - motion.HOME_POS  # (3,) m, signed
