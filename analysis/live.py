@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import csv
 import hashlib
 import importlib.metadata
 import json
@@ -12,6 +13,7 @@ from typing import NamedTuple
 import mujoco
 import numpy as np
 
+from analysis import metrics
 from controller import desired_pos, frames, servo
 from sim import motion, world
 
@@ -448,6 +450,8 @@ def save_run(log, config, output_root):
     )
     if not _configs_equal(log.config, normalized_config):
         raise ValueError("config does not match the configuration used for log")
+    run_metrics = metrics.experiment_metrics(log)
+    flat_metrics = metrics.flatten_metrics(run_metrics)
     revision = _git_revision()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     run_dir = output_root / f"{stamp}-{revision[:7]}"
@@ -472,6 +476,12 @@ def save_run(log, config, output_root):
     np.savez_compressed(run_dir / "run.npz", **arrays)
     (run_dir / "metadata.json").write_text(
         json.dumps(_metadata(log, revision), indent=2) + "\n")
+    (run_dir / "metrics.json").write_text(
+        json.dumps(run_metrics, indent=2, allow_nan=False) + "\n")
+    with (run_dir / "metrics.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=flat_metrics)
+        writer.writeheader()
+        writer.writerow(flat_metrics)
     return run_dir
 
 

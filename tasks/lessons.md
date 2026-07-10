@@ -17,3 +17,6 @@
 
 - Pattern: A delegated implementation crossed its file scope and ran an entry point that overwrote a tracked artifact.
   Rule: Give implementation agents an explicit file allowlist, snapshot Git status before delegation, and interrupt immediately on any out-of-scope mutation; never run artifact-writing entry points during a source-only checkpoint.
+
+- Pattern: A regression test pinned exact numeric values for intentionally editable research levers, so a legitimate scenario edit broke verification.
+  Rule: Tests for intentionally editable research levers must validate contract and current-value wiring, not pin user-tunable numeric settings.

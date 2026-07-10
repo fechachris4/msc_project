@@ -40,14 +40,25 @@ class TorsoPoseOracleTest(unittest.TestCase):
     def test_public_levers_drive_default_pose_and_twist(self):
         from sim import motion
 
-        np.testing.assert_array_equal(
-            motion.LINEAR_AMPLITUDE, np.array([0.1, 0.3, 0.0])
+        lever_names = (
+            "LINEAR_AMPLITUDE",
+            "LINEAR_FREQUENCY",
+            "ROTATIONAL_AMPLITUDE",
+            "ROTATIONAL_FREQUENCY",
         )
-        np.testing.assert_array_equal(
-            motion.ROTATIONAL_AMPLITUDE, np.array([0.0, 0.0, 0.0])
-        )
-        self.assertEqual(motion.LINEAR_FREQUENCY, 0.1)
-        self.assertEqual(motion.ROTATIONAL_FREQUENCY, 0.2)
+        for name in lever_names:
+            self.assertTrue(hasattr(motion, name), name)
+
+        for amplitude in (
+            motion.LINEAR_AMPLITUDE, motion.ROTATIONAL_AMPLITUDE
+        ):
+            self.assertEqual(np.asarray(amplitude).shape, (3,))
+            self.assertTrue(np.all(np.isfinite(amplitude)))
+        for frequency in (
+            motion.LINEAR_FREQUENCY, motion.ROTATIONAL_FREQUENCY
+        ):
+            self.assertTrue(np.isscalar(frequency))
+            self.assertTrue(np.isfinite(frequency))
 
         scenario = dict(
             linear_amplitude=motion.LINEAR_AMPLITUDE,

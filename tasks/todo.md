@@ -113,7 +113,11 @@ Restored `sim/motion.py` as the single source of truth for the default
 linear/rotational amplitudes and frequencies. The main viewer, dashboard, and
 base-vs-error view now use no-argument motion calls; the base-vs-error title
 reads the public motion values directly. Explicit keyword scenarios and the
-zero-amplitude no-write path remain covered by the existing focused tests.
+zero-amplitude no-write path remain covered by the existing focused tests. A
+post-commit verification defect pinned the public levers to one numeric research
+scenario; the regression now validates lever shape/finiteness and proves that
+no-argument pose/twist calls use the current lever values without constraining
+user tuning.
 
 Verification evidence:
 - RED: `.venv/bin/python -m unittest tests.test_motion.TorsoPoseOracleTest.test_public_levers_drive_default_pose_and_twist -v` failed with `AttributeError: module 'sim.motion' has no attribute 'LINEAR_AMPLITUDE'`.
@@ -123,3 +127,7 @@ Verification evidence:
 - `rg -n "BASE_SCENARIO\\s*=" --glob '*.py' .`: no matches.
 - `.venv/bin/python -m unittest discover tests`: 75 tests passed.
 - Scope review preserved the pre-existing modified `analysis/output/base_vs_error.png` and untracked `AGENTS.md`; neither is staged.
+
+Post-commit repair evidence:
+- RED: after the user legitimately changed `LINEAR_AMPLITUDE` and `ROTATIONAL_FREQUENCY`, `.venv/bin/python -m unittest tests.test_motion tests.test_velocity -v` failed `test_public_levers_drive_default_pose_and_twist` with `AssertionError: 0 != 0.2`.
+- GREEN: pending focused verification.
