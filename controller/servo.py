@@ -41,10 +41,10 @@ from sim import targets, world
 #   the fraction KD/(1+KD) of the base velocity: larger KD trades
 #   settle speed for disturbance rejection.
 KP_POS = 20.0    # 1/s task-space bandwidth
-KP_ROT = 2.0    # 1/s
+KP_ROT = 20.0    # 1/s
 KD_POS = 0.9    # dimensionless: velocity error -> velocity command
-KD_ROT = 0.3    # dimensionless
-K_NULL = 1.0    # 1/s null-space joint-centering
+KD_ROT = 0.9    # dimensionless
+K_NULL = 0.5    # 1/s null-space joint-centering
 DAMPING = 0.05  # DLS lambda
 
 
