@@ -1,0 +1,320 @@
+"""Parallel KP_POS x KD_POS sweep for the dual-arm reactive controller."""
+
+import argparse
+import csv
+import hashlib
+import importlib.metadata
+import json
+import multiprocessing
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime, timezone
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+from analysis import live
+from controller import servo
+
+
+OUT = Path("analysis/output/position_gain_sweep")
+KP_POS_GRID = [2, 12, 22, 32, 42, 52, 62, 72, 80]
+KD_POS_GRID = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0]
+FIXED_GAIN_NAMES = ("KP_ROT", "KD_ROT", "K_NULL", "DAMPING")
+FIXED_GAINS = {name: float(getattr(servo, name)) for name in FIXED_GAIN_NAMES}
+SCENARIO = live.ExperimentConfig(
+    arms=("right", "left"),
+    linear_amplitude=np.array([0.18, 0.04, 0.05]),
+    rotational_amplitude=np.array([0.0, 0.0, -0.2]),
+    linear_frequency=0.5,
+    rotational_frequency=0.5,
+    evaluation_seconds=10.0,
+    settle_timeout=20.0,
+)
+METRIC_SCHEMA = {
+    "position_error_norm_rmse_mm": "1000 * sqrt(mean(sum(e_pos**2, axis=1)))",
+    "position_error_norm_max_mm": "1000 * max(norm(e_pos, axis=1))",
+    "peak_measured_joint_speed_rad_s": "max(abs(qdot_measured))",
+    "ee_linear_speed_norm_rmse_m_s": "sqrt(mean(sum(e_v**2, axis=1)))",
+}
+METRIC_LABELS = {
+    "position_error_norm_rmse_mm": ("position error norm RMSE", "mm"),
+    "position_error_norm_max_mm": ("maximum position error norm", "mm"),
+    "peak_measured_joint_speed_rad_s": ("peak measured joint speed", "rad/s"),
+    "ee_linear_speed_norm_rmse_m_s": ("EE linear speed norm RMSE", "m/s"),
+}
+
+
+def _finite(value):
+    value = float(value)
+    return value if np.isfinite(value) else None
+
+
+def _arm_metrics(fields, mask):
+    if not np.any(mask):
+        return {name: None for name in METRIC_SCHEMA}
+    e_pos = np.asarray(fields["e_pos"], dtype=float)[mask]
+    e_v = np.asarray(fields["e_v"], dtype=float)[mask]
+    qdot = np.asarray(fields["qdot_measured"], dtype=float)[mask]
+    return {
+        "position_error_norm_rmse_mm": _finite(
+            1000.0 * np.sqrt(np.mean(np.sum(e_pos**2, axis=1)))),
+        "position_error_norm_max_mm": _finite(
+            1000.0 * np.max(np.linalg.norm(e_pos, axis=1))),
+        "peak_measured_joint_speed_rad_s": _finite(np.max(np.abs(qdot))),
+        "ee_linear_speed_norm_rmse_m_s": _finite(
+            np.sqrt(np.mean(np.sum(e_v**2, axis=1)))),
+    }
+
+
+def episode_row(log, kp_pos, kd_pos):
+    mask = np.asarray(log.evaluation_mask, dtype=bool)
+    warnings = list(log.warning_reasons)
+    arms = {side: _arm_metrics(log.arm_data[side], mask) for side in log.arms}
+    if not np.any(mask):
+        warnings.append("missing evaluation samples")
+    if any(value is None for values in arms.values() for value in values.values()):
+        if "non-finite data" not in warnings and np.any(mask):
+            warnings.append("non-finite data")
+    valid = bool(log.settled and np.any(mask)
+                 and "non-finite data" not in warnings
+                 and all(value is not None for values in arms.values()
+                         for value in values.values()))
+    return {
+        "config_id": config_id(kp_pos, kd_pos),
+        "kp_pos": float(kp_pos),
+        "kd_pos": float(kd_pos),
+        "status": "completed",
+        "settled": bool(log.settled),
+        "settle_duration_s": _finite(log.settle_duration),
+        "valid": valid,
+        "warning_reasons": warnings,
+        "evaluation_sample_count": int(np.count_nonzero(mask)),
+        "arms": arms,
+    }
+
+
+def config_id(kp_pos, kd_pos):
+    return f"kp{float(kp_pos):g}_kd{float(kd_pos):g}"
+
+
+def all_jobs():
+    return [(kp, kd) for kp in KP_POS_GRID for kd in KD_POS_GRID]
+
+
+def fingerprint_payload():
+    scenario = live._config_json(SCENARIO)
+    return {
+        "grid": {"kp_pos": KP_POS_GRID, "kd_pos": KD_POS_GRID},
+        "scenario": {
+            key: scenario[key] for key in (
+                "arms", "linear_amplitude", "linear_frequency",
+                "rotational_amplitude", "rotational_frequency")
+        },
+        "settling": {
+            key: scenario[key] for key in (
+                "settle_pos_tol", "settle_rot_tol", "settle_dwell",
+                "settle_timeout")
+        },
+        "evaluation_seconds": SCENARIO.evaluation_seconds,
+        "fixed_gains": FIXED_GAINS,
+        "metric_schema": METRIC_SCHEMA,
+    }
+
+
+def resume_fingerprint(payload=None):
+    encoded = json.dumps(payload or fingerprint_payload(), sort_keys=True,
+                         separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def new_state():
+    return {
+        "fingerprint": resume_fingerprint(),
+        "fingerprint_payload": fingerprint_payload(),
+        "results": {},
+    }
+
+
+def write_state_atomic(state):
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / "sweep_state.json"
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(state, indent=2, allow_nan=False))
+    os.replace(temporary, path)
+
+
+def load_or_init_state(args):
+    path = OUT / "sweep_state.json"
+    if args.fresh and path.exists():
+        path.unlink()
+    if not path.exists():
+        return new_state()
+    state = json.loads(path.read_text())
+    if state.get("fingerprint") != resume_fingerprint():
+        raise RuntimeError(
+            f"{path} does not match the current sweep; pass --fresh to start over")
+    return state
+
+
+def pending_jobs(state, jobs=None):
+    pending = []
+    for job in jobs or all_jobs():
+        row = state["results"].get(config_id(*job))
+        if row is None or row.get("status") == "worker_error":
+            pending.append(job)
+    return pending
+
+
+def run_episode(job):
+    kp_pos, kd_pos = job
+    gains = dict(FIXED_GAINS, KP_POS=float(kp_pos), KD_POS=float(kd_pos))
+    log = live.run_experiment(SCENARIO, gains=gains)
+    return episode_row(log, kp_pos, kd_pos)
+
+
+def run_pending(state, jobs, workers):
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=workers, mp_context=context) as executor:
+        futures = {executor.submit(run_episode, job): job for job in jobs}
+        for future in as_completed(futures):
+            job = futures[future]
+            try:
+                row = future.result()
+            except Exception as error:
+                row = {
+                    "config_id": config_id(*job),
+                    "kp_pos": float(job[0]),
+                    "kd_pos": float(job[1]),
+                    "status": "worker_error",
+                    "error": f"{type(error).__name__}: {error}",
+                }
+            state["results"][config_id(*job)] = row
+            write_state_atomic(state)
+    return state
+
+
+def heatmap_matrix(rows, side, metric, kp_grid=None, kd_grid=None):
+    kp_grid = KP_POS_GRID if kp_grid is None else kp_grid
+    kd_grid = KD_POS_GRID if kd_grid is None else kd_grid
+    values = np.full((len(kd_grid), len(kp_grid)), np.nan)
+    invalid = np.ones(values.shape, dtype=bool)
+    kp_index = {float(value): index for index, value in enumerate(kp_grid)}
+    kd_index = {float(value): index for index, value in enumerate(kd_grid)}
+    for row in rows:
+        if row.get("status") != "completed":
+            continue
+        i = kp_index[float(row["kp_pos"])]
+        j = kd_index[float(row["kd_pos"])]
+        value = row.get("arms", {}).get(side, {}).get(metric)
+        if value is not None:
+            values[j, i] = float(value)
+        invalid[j, i] = not bool(row.get("valid")) or value is None
+    return values, invalid
+
+
+def _write_heatmap(rows, side, metric):
+    values, invalid = heatmap_matrix(rows, side, metric)
+    masked = np.ma.masked_where(invalid, values)
+    cmap = plt.get_cmap("viridis").copy()
+    cmap.set_bad("0.75")
+    fig, ax = plt.subplots(figsize=(10, 7), layout="constrained")
+    image = ax.imshow(masked, origin="lower", aspect="auto", cmap=cmap)
+    for j in range(len(KD_POS_GRID)):
+        for i in range(len(KP_POS_GRID)):
+            label = "invalid" if invalid[j, i] else f"{values[j, i]:.3g}"
+            ax.text(i, j, label, ha="center", va="center", fontsize=6,
+                    color="black" if invalid[j, i] else "white")
+    ax.set_xticks(range(len(KP_POS_GRID)), labels=KP_POS_GRID)
+    ax.set_yticks(range(len(KD_POS_GRID)), labels=KD_POS_GRID)
+    ax.set_xlabel("KP_POS [1/s]")
+    ax.set_ylabel("KD_POS [dimensionless]")
+    title, unit = METRIC_LABELS[metric]
+    ax.set_title(f"{side} arm: {title} [{unit}]")
+    fig.colorbar(image, ax=ax, label=f"{title} [{unit}]")
+    fig.savefig(OUT / f"{side}_{metric}_heatmap.png", dpi=200)
+    plt.close(fig)
+
+
+def write_summary(state):
+    OUT.mkdir(parents=True, exist_ok=True)
+    rows = [state["results"][config_id(*job)] for job in all_jobs()
+            if config_id(*job) in state["results"]]
+    flat = []
+    for row in rows:
+        item = {key: value for key, value in row.items() if key != "arms"}
+        item["warning_reasons"] = "; ".join(row.get("warning_reasons", []))
+        for side, values in row.get("arms", {}).items():
+            for metric, value in values.items():
+                item[f"{side}_{metric}"] = value
+        flat.append(item)
+    fields = sorted({key for row in flat for key in row})
+    with (OUT / "summary.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        if fields:
+            writer.writeheader()
+            writer.writerows(flat)
+    return rows
+
+
+def _dependency_versions():
+    versions = {}
+    for package in ("numpy", "matplotlib", "mujoco", "pin"):
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = "unknown"
+    return versions
+
+
+def write_metadata(workers):
+    OUT.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        **fingerprint_payload(),
+        "units": {
+            "KP_POS": "1/s", "KD_POS": "dimensionless",
+            **{key: unit for key, (_, unit) in METRIC_LABELS.items()},
+        },
+        "timestep": float(live.world.model.opt.timestep),
+        "dependency_versions": _dependency_versions(),
+        "worker_count": workers,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "git_revision": live._git_revision(),
+    }
+    (OUT / "metadata.json").write_text(json.dumps(metadata, indent=2))
+
+
+def write_artifacts(state, workers):
+    rows = write_summary(state)
+    write_metadata(workers)
+    for side in SCENARIO.arms:
+        for metric in METRIC_SCHEMA:
+            _write_heatmap(rows, side, metric)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--workers", type=int,
+                        default=min(4, os.cpu_count() or 1))
+    parser.add_argument("--fresh", action="store_true")
+    parser.add_argument("--plots-only", action="store_true")
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if args.workers < 1:
+        raise SystemExit("--workers must be at least 1")
+    state = load_or_init_state(args)
+    jobs = pending_jobs(state)
+    if not args.plots_only and jobs:
+        run_pending(state, jobs, args.workers)
+    write_artifacts(state, args.workers)
+
+
+if __name__ == "__main__":
+    main()
