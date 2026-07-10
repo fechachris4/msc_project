@@ -112,6 +112,24 @@ class ResumeTest(unittest.TestCase):
         self.out_patch.stop()
         self.tmp.cleanup()
 
+    @staticmethod
+    def _completed_row(kp_pos=2.0, kd_pos=0.2):
+        return {
+            "config_id": sweep.config_id(kp_pos, kd_pos),
+            "kp_pos": kp_pos,
+            "kd_pos": kd_pos,
+            "status": "completed",
+            "settled": True,
+            "settle_duration_s": 1.0,
+            "valid": True,
+            "warning_reasons": [],
+            "evaluation_sample_count": 10,
+            "arms": {
+                side: {metric: 1.0 for metric in sweep.METRIC_SCHEMA}
+                for side in ("right", "left")
+            },
+        }
+
     def test_fingerprint_changes_for_each_required_experiment_input(self):
         baseline = sweep.fingerprint_payload()
         required = ("grid", "scenario", "settling", "evaluation_seconds",
@@ -190,6 +208,88 @@ class ResumeTest(unittest.TestCase):
                 with self.assertRaisesRegex(
                         RuntimeError, r"malformed.*--fresh"):
                     sweep.load_or_init_state(args)
+
+    def test_malformed_completed_rows_have_clear_recovery_guidance(self):
+        valid = sweep.new_state()
+        valid["results"]["kp2_kd0.2"] = self._completed_row()
+        malformed_rows = {
+            "missing completed fields": lambda row: row.clear(),
+            "result key mismatch": lambda row: row.update(config_id="kp12_kd0.2"),
+            "config id mismatch": lambda row: row.update(config_id="wrong"),
+            "non-finite kp": lambda row: row.update(kp_pos=float("inf")),
+            "off-grid kp": lambda row: row.update(
+                kp_pos=3.0, config_id="kp3_kd0.2"),
+            "non-finite kd": lambda row: row.update(kd_pos=float("nan")),
+            "off-grid kd": lambda row: row.update(
+                kd_pos=0.3, config_id="kp2_kd0.3"),
+            "settled is not boolean": lambda row: row.update(settled=1),
+            "valid is not boolean": lambda row: row.update(valid="yes"),
+            "missing settle duration": lambda row: row.pop("settle_duration_s"),
+            "invalid settle duration": lambda row: row.update(
+                settle_duration_s=float("inf")),
+            "warnings are not a list": lambda row: row.update(
+                warning_reasons="timeout"),
+            "warning is not a string": lambda row: row.update(
+                warning_reasons=[1]),
+            "negative sample count": lambda row: row.update(
+                evaluation_sample_count=-1),
+            "boolean sample count": lambda row: row.update(
+                evaluation_sample_count=True),
+            "missing arm": lambda row: row["arms"].pop("left"),
+            "unknown arm": lambda row: row["arms"].update(extra={}),
+            "missing metric": lambda row: row["arms"]["right"].pop(
+                next(iter(sweep.METRIC_SCHEMA))),
+            "non-finite metric": lambda row: row["arms"]["left"].update(
+                position_error_norm_rmse_mm=float("nan")),
+            "non-numeric metric": lambda row: row["arms"]["right"].update(
+                position_error_norm_max_mm="high"),
+        }
+        args = argparse.Namespace(fresh=False, plots_only=False, workers=2)
+        for label, corrupt in malformed_rows.items():
+            with self.subTest(label=label):
+                state = json.loads(json.dumps(valid))
+                row = state["results"]["kp2_kd0.2"]
+                corrupt(row)
+                (sweep.OUT / "sweep_state.json").write_text(
+                    json.dumps(state, allow_nan=True))
+                with self.assertRaisesRegex(
+                        RuntimeError, r"malformed.*--fresh"):
+                    sweep.load_or_init_state(args)
+
+        state = json.loads(json.dumps(valid))
+        state["results"]["kp12_kd0.2"] = state["results"].pop("kp2_kd0.2")
+        (sweep.OUT / "sweep_state.json").write_text(json.dumps(state))
+        with self.assertRaisesRegex(RuntimeError, r"malformed.*--fresh"):
+            sweep.load_or_init_state(args)
+
+    def test_completed_row_accepts_nullable_finite_metrics_and_duration(self):
+        state = sweep.new_state()
+        row = self._completed_row()
+        row["settle_duration_s"] = None
+        row["arms"]["right"]["position_error_norm_rmse_mm"] = None
+        state["results"]["kp2_kd0.2"] = row
+        sweep.write_state_atomic(state)
+
+        loaded = sweep.load_or_init_state(
+            argparse.Namespace(fresh=False, plots_only=False, workers=2))
+
+        self.assertEqual(loaded["results"]["kp2_kd0.2"], row)
+
+    def test_retryable_rows_keep_their_minimal_schema(self):
+        state = sweep.new_state()
+        state["results"] = {
+            "kp2_kd0.2": {"status": "pending"},
+            "kp12_kd0.2": {"status": "worker_error", "error": "boom"},
+        }
+        sweep.write_state_atomic(state)
+
+        loaded = sweep.load_or_init_state(
+            argparse.Namespace(fresh=False, plots_only=False, workers=2))
+
+        self.assertEqual(
+            sweep.pending_jobs(loaded, [(2, 0.2), (12, 0.2)]),
+            [(2, 0.2), (12, 0.2)],
+        )
 
     def test_metadata_uses_persisted_provenance_without_replacing_origin(self):
         state = sweep.new_state(workers=2, timestamp="original-time")
