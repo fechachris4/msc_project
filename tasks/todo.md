@@ -174,3 +174,19 @@ Verification evidence:
 - Final independent review found no Critical or Important issues.
 - Full discovery ran 136 tests with four pre-existing failures in `test_control_trace` (2), `test_motion` (1), and `test_velocity` (1). The failures reproduce outside the new feature and reflect pinned controller expectations/current tuned motion rather than changes in the two sweep files.
 - Implementation commits: `1e5fac0`, `1e37b74`, `88bf764`, and `6ac7391`.
+
+## Orientation Gain Sweep (2026-07-10)
+
+- [x] Confirm the `KP_ROT` and `KD_ROT` grids.
+- [x] Confirm fixed positional and auxiliary gains remain at current values.
+- [x] Confirm the position sweep's mixed base-motion scenario is reused.
+- [x] Define separate-arm metrics, heatmap outputs, parallelism, and resume behaviour.
+- [x] Write and self-review the design specification.
+- [ ] Obtain written-spec approval and write the implementation plan.
+- [ ] Implement the dedicated parallel sweep and focused tests.
+- [ ] Run smoke, artifact, visual, focused-suite, and full-suite verification.
+- [ ] Record results and commit the verified implementation.
+
+## Orientation Gain Sweep Review
+
+Design approved in conversation; written specification pending user review.
