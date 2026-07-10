@@ -2,8 +2,10 @@
 is analysis.live's job, already covered by tests/test_live.py). Covers
 grid construction, disqualification, winner selection (incl. the tie
 chain and the all-disqualified raise), headroom vs.
-analysis.dashboard.headroom_frac, non-finite headroom sanitization, and
-sweep_state.json round-trip / resume-refusal / threshold-reselection.
+analysis.dashboard.headroom_frac, non-finite headroom sanitization,
+sweep_state.json round-trip / resume-refusal / threshold-reselection,
+and run_stage's plot-vs-winner-storage ordering (with run_episode and
+live.run_experiment/save_run stubbed -- still no real sim stepping).
 """
 
 import argparse
@@ -11,6 +13,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import matplotlib
 
@@ -314,6 +317,59 @@ class NonFiniteHeadroomTest(unittest.TestCase):
         self.assertIsNone(row["headroom_mean_frac"])
         self.assertIsNone(row["headroom_p95_frac"])
         json.dumps(row, allow_nan=False)  # must not raise
+
+
+class RunStageProgressionOrderingTest(unittest.TestCase):
+    """run_stage must regenerate sweep_progression.png AFTER this stage's
+    winner_config_id is stored, not before. Previously it was drawn
+    between _make_stage_plots and select_winner, so "after stage N"
+    never appeared until stage N+1 ran and redrew it (a fresh full run's
+    progression plot always ended one stage short; confirmed on both a
+    smoke run and the committed real-sweep figure).
+
+    run_episode and live.run_experiment/save_run are stubbed so this
+    exercises real run_stage control flow (real stage_grid, real
+    disqualify_reasons/select_winner, real state dict, real plot calls)
+    without any actual sim stepping -- only _make_progression_plot is
+    replaced, with a spy that records whether this stage's
+    winner_config_id is already in `state` at the moment it's called."""
+
+    def setUp(self):
+        self._orig_out = gain_sweep.OUT
+
+    def tearDown(self):
+        gain_sweep.OUT = self._orig_out
+
+    def test_progression_plot_sees_this_stages_winner(self):
+        progression_calls = []
+
+        def fake_progression_plot(state):
+            stage_state = state["stages"].get("1", {})
+            progression_calls.append(stage_state.get("winner_config_id"))
+
+        def fake_run_episode(gains):
+            # Deterministic and distinguishable per grid point (by
+            # KP_POS) so select_winner's pick is unambiguous; unrelated
+            # to the real sim.
+            return _row("ignored", 1, pos_rmse=gains["KP_POS"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            gain_sweep.OUT = Path(tmp)
+            args = argparse.Namespace(fresh=False, sat_threshold=200.0)
+            state = gain_sweep.load_or_init_state(args)
+
+            with mock.patch.object(gain_sweep, "run_episode",
+                                    fake_run_episode), \
+                 mock.patch.object(gain_sweep, "_make_progression_plot",
+                                    fake_progression_plot), \
+                 mock.patch.object(gain_sweep.live, "run_experiment",
+                                    return_value=object()), \
+                 mock.patch.object(gain_sweep.live, "save_run"):
+                winner = gain_sweep.run_stage(1, state, args)
+
+        self.assertEqual(len(progression_calls), 1)
+        self.assertIsNotNone(progression_calls[0])
+        self.assertEqual(progression_calls[0], winner["config_id"])
 
 
 class StateRoundTripTest(unittest.TestCase):

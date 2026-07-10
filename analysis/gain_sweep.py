@@ -854,11 +854,19 @@ def run_stage(stage, state, args):
 
     metric_key = "worst_arm_rot_rmse_rad" if stage == 2 else "worst_arm_pos_rmse_m"
     _make_stage_plots(stage, rows, metric_key)
-    _make_progression_plot(state)
+    # summary.csv + this stage's heatmap/panel exist before select_winner
+    # can raise (all-disqualified) -- that failure path still needs
+    # evidence to inspect (see select_winner's docstring). The
+    # progression plot is different: it only ever shows *selected*
+    # winners, so it belongs after this stage's winner is actually
+    # chosen and stored, not before -- drawn here (as it previously was)
+    # it always lagged one stage behind, since "after stage N" couldn't
+    # appear until stage N's winner_config_id existed.
 
     winner = select_winner(rows, metric_key)
     stage_state["winner_config_id"] = winner["config_id"]
     write_state_atomic(state)
+    _make_progression_plot(state)
 
     winner_log = live.run_experiment(SCENARIO, gains=winner["gains"])
     live.save_run(winner_log, SCENARIO, OUT / f"stage{stage}_winner_run")
