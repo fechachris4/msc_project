@@ -131,3 +131,16 @@ Verification evidence:
 Post-commit repair evidence:
 - RED: after the user legitimately changed `LINEAR_AMPLITUDE` and `ROTATIONAL_FREQUENCY`, `.venv/bin/python -m unittest tests.test_motion tests.test_velocity -v` failed `test_public_levers_drive_default_pose_and_twist` with `AssertionError: 0 != 0.2`.
 - GREEN: pending focused verification.
+
+## Parameter Unit Comments (2026-07-10)
+
+- [x] Inventory user-editable Python parameter surfaces and infer units from their consumers.
+- [x] Resolve the apparent degree/radian ambiguity in `controller/desired_pos.py`.
+- [x] Agree the annotation scope and comment style.
+- [ ] Add concise unit comments without changing values or behaviour.
+- [ ] Verify the diff, compile touched modules, and run focused tests.
+- [ ] Record implementation results and commit the verified comment-only change.
+
+## Parameter Unit Comments Review
+
+Design approved; implementation pending written-spec review.
