@@ -38,7 +38,7 @@ both frequencies are in hertz. Both disturbances have a two-second period.
 
 Before starting the disturbance, use the shared experiment runner's existing
 static error-threshold-and-dwell settling procedure. Allow at most 20 seconds
-to settle. After settling, evaluate exactly 10 seconds, covering five complete
+to settle. After settling, evaluate exactly 4 seconds, covering two complete
 disturbance cycles. Run both arms in every episode.
 
 ## Metrics
