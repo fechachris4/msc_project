@@ -190,6 +190,57 @@ def _valid_worker_count(value):
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1
 
 
+def _finite_number_or_none(value):
+    return (value is None
+            or (isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and np.isfinite(value)))
+
+
+def _validate_completed_row(identifier, row, path):
+    kp_pos = row.get("kp_pos")
+    kd_pos = row.get("kd_pos")
+    if (not _finite_number_or_none(kp_pos) or kp_pos is None
+            or not _finite_number_or_none(kd_pos) or kd_pos is None
+            or kp_pos not in KP_POS_GRID or kd_pos not in KD_POS_GRID):
+        _malformed_state(path, f"completed result {identifier!r} is off-grid")
+    expected_id = config_id(kp_pos, kd_pos)
+    if row.get("config_id") != expected_id or identifier != expected_id:
+        _malformed_state(
+            path, f"completed result {identifier!r} has inconsistent identity")
+    if not isinstance(row.get("settled"), bool):
+        _malformed_state(path, f"completed result {identifier!r} has invalid settled")
+    if not isinstance(row.get("valid"), bool):
+        _malformed_state(path, f"completed result {identifier!r} has invalid valid")
+    if ("settle_duration_s" not in row
+            or not _finite_number_or_none(row["settle_duration_s"])):
+        _malformed_state(
+            path, f"completed result {identifier!r} has invalid settle duration")
+    warnings = row.get("warning_reasons")
+    if (not isinstance(warnings, list)
+            or not all(isinstance(reason, str) for reason in warnings)):
+        _malformed_state(path, f"completed result {identifier!r} has invalid warnings")
+    sample_count = row.get("evaluation_sample_count")
+    if (not isinstance(sample_count, int) or isinstance(sample_count, bool)
+            or sample_count < 0):
+        _malformed_state(
+            path, f"completed result {identifier!r} has invalid sample count")
+    arms = row.get("arms")
+    if not isinstance(arms, dict) or set(arms) != set(SCENARIO.arms):
+        _malformed_state(path, f"completed result {identifier!r} has invalid arms")
+    for side in SCENARIO.arms:
+        metrics = arms[side]
+        if not isinstance(metrics, dict):
+            _malformed_state(
+                path, f"completed result {identifier!r} has invalid {side} metrics")
+        for metric in METRIC_SCHEMA:
+            if (metric not in metrics
+                    or not _finite_number_or_none(metrics[metric])):
+                _malformed_state(
+                    path,
+                    f"completed result {identifier!r} has invalid {side} metrics")
+
+
 def _validate_state(state, path):
     if not isinstance(state, dict):
         _malformed_state(path, "top level must be an object")
@@ -202,6 +253,8 @@ def _validate_state(state, path):
         status = row.get("status")
         if status not in ROW_STATUSES:
             _malformed_state(path, f"result {identifier!r} has invalid status")
+        if status == "completed":
+            _validate_completed_row(identifier, row, path)
 
     provenance = state.get("provenance")
     if not isinstance(provenance, dict):
