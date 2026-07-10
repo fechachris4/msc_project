@@ -24,7 +24,7 @@ from analysis import dashboard, gain_sweep
 def _row(config_id, stage, *, pos_rmse=0.01, rot_rmse=0.01, sat_pct=0.0,
          settle=1.0, settled=True, valid=True, warning_reasons=(),
          gains=None, headroom_mean=0.1, headroom_p95=0.2,
-         disqualification=()):
+         joint_margin_min_rad=None, disqualification=()):
     return {
         "stage": stage,
         "config_id": config_id,
@@ -42,6 +42,7 @@ def _row(config_id, stage, *, pos_rmse=0.01, rot_rmse=0.01, sat_pct=0.0,
                 "rotation_error_norm_rmse_rad": rot_rmse,
                 "rotation_error_norm_peak_rad": rot_rmse,
                 "velocity_saturation_overall_pct": sat_pct,
+                "joint_margin_min_rad": joint_margin_min_rad,
             },
         },
         "velocity_saturation_overall_pct": sat_pct,
@@ -49,6 +50,7 @@ def _row(config_id, stage, *, pos_rmse=0.01, rot_rmse=0.01, sat_pct=0.0,
         "headroom_p95_frac": headroom_p95,
         "worst_arm_pos_rmse_m": pos_rmse,
         "worst_arm_rot_rmse_rad": rot_rmse,
+        "worst_arm_joint_margin_min_rad": joint_margin_min_rad,
         "disqualification": list(disqualification),
     }
 
@@ -124,11 +126,54 @@ class DisqualifyReasonsTest(unittest.TestCase):
         row = _row("c", 1, settled=False)
         self.assertIn("not settled", gain_sweep.disqualify_reasons(row, 1))
 
-    def test_invalid_log_flagged_with_reasons(self):
+    def test_contact_detected_flagged(self):
         row = _row("c", 1, valid=False, warning_reasons=("contact detected",))
+        self.assertIn("contact detected", gain_sweep.disqualify_reasons(row, 1))
+
+    def test_torso_contact_detected_flagged(self):
+        row = _row("c", 1, valid=False,
+                   warning_reasons=("torso contact detected",))
+        self.assertIn("torso contact detected",
+                      gain_sweep.disqualify_reasons(row, 1))
+
+    def test_non_finite_data_flagged(self):
+        row = _row("c", 1, valid=False, warning_reasons=("non-finite data",))
+        self.assertIn("non-finite data", gain_sweep.disqualify_reasons(row, 1))
+
+    def test_short_evaluation_warning_ignored(self):
+        row = _row("c", 1, valid=False, warning_reasons=(
+            "evaluation shorter than one disturbance period",))
+        self.assertEqual(gain_sweep.disqualify_reasons(row, 1), [])
+
+    def test_settling_timeout_warning_not_double_counted(self):
+        # "not settled" already covers this case; the warning_reasons
+        # text itself is not one of the specifically-matched reasons.
+        row = _row("c", 1, settled=False, valid=False,
+                   warning_reasons=("settling timeout",))
+        self.assertEqual(gain_sweep.disqualify_reasons(row, 1), ["not settled"])
+
+    def test_baseline_soft_limit_penetration_not_disqualified(self):
+        # Observed at baseline gains in the real 0.3 m @ 0.1 Hz scenario:
+        # joint 6 rides its soft limit at ~-0.007 rad (-0.40 deg) on both
+        # arms during evaluation -- MuJoCo soft-limit constraint
+        # compliance, not instability. live.py's own "negative joint
+        # margin" warning fires for this (any negative margin), but must
+        # not gate the sweep.
+        row = _row("c", 1, valid=False,
+                   warning_reasons=("negative joint margin",),
+                   joint_margin_min_rad=-0.007)
+        self.assertEqual(gain_sweep.disqualify_reasons(row, 1), [])
+
+    def test_deep_joint_limit_penetration_disqualified(self):
+        row = _row("c", 1, joint_margin_min_rad=-0.03)
         reasons = gain_sweep.disqualify_reasons(row, 1)
-        self.assertTrue(any("invalid" in r and "contact detected" in r
-                            for r in reasons))
+        self.assertTrue(any("joint limit" in r for r in reasons))
+
+    def test_missing_joint_margin_field_not_disqualifying(self):
+        # Rows persisted before this field existed lack the key entirely.
+        row = _row("c", 1)
+        del row["worst_arm_joint_margin_min_rad"]
+        self.assertEqual(gain_sweep.disqualify_reasons(row, 1), [])
 
     def test_saturation_over_threshold_flagged(self):
         row = _row("c", 1, sat_pct=50.0)

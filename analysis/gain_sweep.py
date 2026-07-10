@@ -11,9 +11,13 @@ one gain group per stage and carries the winner forward:
     stage 5: reporting only (sweep_progression.png; no new episodes)
 
 Winner = lowest worst-arm position RMSE (rotation RMSE for stage 2),
-disqualifying configs that fail to settle, produce an invalid log,
-saturate a joint over --sat-threshold percent, or (stages 3-4) regress
-worst-arm rotation RMSE past ROT_GUARD_FACTOR x the stage-2 winner.
+disqualifying configs that fail to settle, contact the world/torso,
+produce non-finite data, penetrate a joint's soft limit past
+JOINT_MARGIN_TOL_RAD, saturate a joint over --sat-threshold percent, or
+(stages 3-4) regress worst-arm rotation RMSE past ROT_GUARD_FACTOR x the
+stage-2 winner. (live.py's own blanket "valid" flag is not used here --
+see disqualify_reasons -- since MuJoCo's soft joint limits are meant to
+be pushed into a little, and that alone shouldn't fail a config.)
 
 Builds on the headless harness in analysis/live.py (run_experiment,
 save_run) and analysis/metrics.py (experiment_metrics) -- no controller
@@ -89,6 +93,11 @@ SCENARIO = live.ExperimentConfig(
 SAT_THRESHOLD_PCT = 20.0  # disqualify worst-arm velocity saturation above this
 ROT_GUARD_FACTOR = 2.0   # stages 3-4: rot RMSE must stay <= this x stage-2 winner
 KD_CEILING = 0.95        # servo.py documents KD < 1 as a stability limit
+# MuJoCo soft-limit penetration of ~0.007 rad observed at baseline gains in
+# the real scenario (joint 6 rides its limit on both arms, settled and
+# otherwise tracking fine) -- constraint compliance, not instability. Only
+# deeper violations than this indicate genuine limit crashing.
+JOINT_MARGIN_TOL_RAD = -0.02
 
 GAIN_NAMES = ("KP_POS", "KP_ROT", "KD_POS", "KD_ROT", "K_NULL", "DAMPING")
 BASELINE_GAINS = {name: float(getattr(servo, name)) for name in GAIN_NAMES}
@@ -206,6 +215,16 @@ def _worst_over_arms(arms_metrics, key):
     return max(values) if values else None
 
 
+def _min_over_arms(arms_metrics, key):
+    """Like _worst_over_arms, but "worst" is the most negative value --
+    used for joint_margin_min_rad, where negative means limit
+    penetration (unlike the error/saturation metrics, where worst is
+    the largest)."""
+    values = [side[key] for side in arms_metrics.values()
+              if side[key] is not None]
+    return min(values) if values else None
+
+
 def _finite_or_none(value):
     """metrics.py's _finite_float convention, duplicated locally: a
     non-finite computed value (e.g. headroom from an unstable corner's
@@ -237,6 +256,8 @@ def _episode_row(log, gains):
                 computed["arms"][side]["rotation_error_norm_peak_rad"],
             "velocity_saturation_overall_pct":
                 computed["arms"][side]["velocity_saturation_overall_pct"],
+            "joint_margin_min_rad":
+                computed["arms"][side]["joint_margin_min_rad"],
         }
         for side in log.arms
     }
@@ -270,6 +291,8 @@ def _episode_row(log, gains):
             arms_metrics, "position_error_norm_rmse_m"),
         "worst_arm_rot_rmse_rad": _worst_over_arms(
             arms_metrics, "rotation_error_norm_rmse_rad"),
+        "worst_arm_joint_margin_min_rad": _min_over_arms(
+            arms_metrics, "joint_margin_min_rad"),
     }
 
 
@@ -283,6 +306,19 @@ def run_episode(gains):
 # --- disqualification and winner selection --------------------------------
 
 
+# live.py's ExperimentLog.valid is a blanket flag: any negative joint
+# margin at all makes it False, but MuJoCo's soft joint limits are meant
+# to be pushed into a little (see JOINT_MARGIN_TOL_RAD above) -- so
+# disqualification checks specific warning_reasons instead of the
+# blanket flag. "settling timeout" is covered by the separate "not
+# settled" check; "negative joint margin" is superseded by the
+# JOINT_MARGIN_TOL_RAD check below (which only fires on genuinely deep
+# penetration); "evaluation shorter than one disturbance period" is a
+# scenario-shape warning, irrelevant to gain selection.
+_DISQUALIFYING_WARNINGS = (
+    "contact detected", "torso contact detected", "non-finite data")
+
+
 def disqualify_reasons(row, stage, sat_threshold=SAT_THRESHOLD_PCT,
                         stage2_winner_rot_rmse=None):
     """Reasons row's config must not win its stage; empty = qualified.
@@ -292,9 +328,14 @@ def disqualify_reasons(row, stage, sat_threshold=SAT_THRESHOLD_PCT,
     reasons = []
     if not row["settled"]:
         reasons.append("not settled")
-    if not row["valid"]:
-        detail = ", ".join(row["warning_reasons"]) or "unspecified"
-        reasons.append(f"invalid log ({detail})")
+    for warning in _DISQUALIFYING_WARNINGS:
+        if warning in row["warning_reasons"]:
+            reasons.append(warning)
+    margin = row.get("worst_arm_joint_margin_min_rad")
+    if margin is not None and margin < JOINT_MARGIN_TOL_RAD:
+        reasons.append(
+            f"joint limit penetration {np.degrees(margin):.2f} deg exceeds "
+            f"tolerance {np.degrees(JOINT_MARGIN_TOL_RAD):.2f} deg")
     sat = row["velocity_saturation_overall_pct"]
     if sat is not None and sat > sat_threshold:
         reasons.append(
