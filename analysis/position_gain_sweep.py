@@ -56,6 +56,7 @@ SUMMARY_FIELDS = [
     for side in SCENARIO.arms
     for metric in METRIC_SCHEMA
 ]
+ROW_STATUSES = {"completed", "pending", "worker_error"}
 
 
 def _finite(value):
@@ -180,6 +181,61 @@ def write_state_atomic(state):
     os.replace(temporary, path)
 
 
+def _malformed_state(path, detail):
+    raise RuntimeError(
+        f"{path} is malformed ({detail}); pass --fresh to start over")
+
+
+def _valid_worker_count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _validate_state(state, path):
+    if not isinstance(state, dict):
+        _malformed_state(path, "top level must be an object")
+    results = state.get("results")
+    if not isinstance(results, dict):
+        _malformed_state(path, "results must be an object")
+    for identifier, row in results.items():
+        if not isinstance(identifier, str) or not isinstance(row, dict):
+            _malformed_state(path, "result entries must be named objects")
+        status = row.get("status")
+        if status not in ROW_STATUSES:
+            _malformed_state(path, f"result {identifier!r} has invalid status")
+
+    provenance = state.get("provenance")
+    if not isinstance(provenance, dict):
+        _malformed_state(path, "provenance must be an object")
+    timestamp = provenance.get("timestamp")
+    if not isinstance(timestamp, str) or not timestamp:
+        _malformed_state(path, "provenance timestamp must be a string")
+    if not _valid_worker_count(provenance.get("worker_count")):
+        _malformed_state(path, "provenance worker_count must be positive")
+    timestep = provenance.get("timestep")
+    if (not isinstance(timestep, (int, float)) or isinstance(timestep, bool)
+            or not np.isfinite(timestep) or timestep <= 0):
+        _malformed_state(path, "provenance timestep must be positive")
+    versions = provenance.get("dependency_versions")
+    if (not isinstance(versions, dict)
+            or not all(isinstance(name, str) and isinstance(version, str)
+                       for name, version in versions.items())):
+        _malformed_state(path, "dependency_versions must be a string mapping")
+    revision = provenance.get("git_revision")
+    if not isinstance(revision, str) or not revision:
+        _malformed_state(path, "git_revision must be a string")
+    sessions = provenance.get("execution_sessions")
+    if not isinstance(sessions, list) or not sessions:
+        _malformed_state(path, "execution_sessions must be a non-empty list")
+    for session in sessions:
+        if not isinstance(session, dict):
+            _malformed_state(path, "execution session must be an object")
+        session_timestamp = session.get("timestamp")
+        if not isinstance(session_timestamp, str) or not session_timestamp:
+            _malformed_state(path, "execution session timestamp must be a string")
+        if not _valid_worker_count(session.get("worker_count")):
+            _malformed_state(path, "execution session worker_count must be positive")
+
+
 def load_or_init_state(args):
     path = OUT / "sweep_state.json"
     if args.fresh and path.exists():
@@ -188,13 +244,14 @@ def load_or_init_state(args):
         if args.plots_only:
             raise RuntimeError("--plots-only requires a compatible saved state")
         return new_state(args.workers)
-    state = json.loads(path.read_text())
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        _malformed_state(path, f"cannot read valid JSON: {error}")
+    _validate_state(state, path)
     if state.get("fingerprint") != resume_fingerprint():
         raise RuntimeError(
             f"{path} does not match the current sweep; pass --fresh to start over")
-    if "provenance" not in state:
-        raise RuntimeError(
-            f"{path} lacks simulation provenance; pass --fresh to start over")
     return state
 
 
@@ -202,7 +259,13 @@ def pending_jobs(state, jobs=None):
     pending = []
     for job in jobs or all_jobs():
         row = state["results"].get(config_id(*job))
-        if row is None or row.get("status") == "worker_error":
+        if row is None:
+            pending.append(job)
+            continue
+        status = row.get("status")
+        if status not in ROW_STATUSES:
+            raise RuntimeError(f"result {config_id(*job)!r} has invalid status")
+        if status != "completed":
             pending.append(job)
     return pending
 
@@ -342,8 +405,9 @@ def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workers", type=int,
                         default=min(4, os.cpu_count() or 1))
-    parser.add_argument("--fresh", action="store_true")
-    parser.add_argument("--plots-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--fresh", action="store_true")
+    mode.add_argument("--plots-only", action="store_true")
     return parser
 
 

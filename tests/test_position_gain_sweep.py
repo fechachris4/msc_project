@@ -136,6 +136,17 @@ class ResumeTest(unittest.TestCase):
         pending = sweep.pending_jobs(state, [(2, 0.2), (12, 0.2), (22, 0.2)])
         self.assertEqual(pending, [(2, 0.2), (22, 0.2)])
 
+    def test_resume_retries_explicit_pending_rows(self):
+        state = sweep.new_state()
+        state["results"] = {
+            "kp2_kd0.2": {"status": "pending"},
+            "kp12_kd0.2": {"status": "completed"},
+        }
+
+        pending = sweep.pending_jobs(state, [(2, 0.2), (12, 0.2), (22, 0.2)])
+
+        self.assertEqual(pending, [(2, 0.2), (22, 0.2)])
+
     def test_mismatched_state_requires_fresh(self):
         state = sweep.new_state()
         state["fingerprint"] = "different"
@@ -148,6 +159,37 @@ class ResumeTest(unittest.TestCase):
         args = argparse.Namespace(fresh=False, plots_only=True, workers=3)
         with self.assertRaisesRegex(RuntimeError, "plots-only.*saved state"):
             sweep.load_or_init_state(args)
+
+    def test_malformed_saved_state_has_clear_recovery_guidance(self):
+        valid = sweep.new_state()
+        malformed_states = {
+            "missing results mapping": lambda state: state.pop("results"),
+            "provenance is not an object": lambda state: state.update(
+                provenance=[]),
+            "missing timestamp": lambda state: state["provenance"].pop(
+                "timestamp"),
+            "invalid worker count": lambda state: state["provenance"].update(
+                worker_count=0),
+            "invalid timestep": lambda state: state["provenance"].update(
+                timestep="fast"),
+            "invalid dependency versions": lambda state: state[
+                "provenance"].update(dependency_versions=[]),
+            "invalid git revision": lambda state: state["provenance"].update(
+                git_revision=7),
+            "invalid execution sessions": lambda state: state[
+                "provenance"].update(execution_sessions=[{"timestamp": "now"}]),
+            "unknown row status": lambda state: state["results"].update(
+                kp2_kd0_2={"status": "mystery"}),
+        }
+        args = argparse.Namespace(fresh=False, plots_only=False, workers=2)
+        for label, corrupt in malformed_states.items():
+            with self.subTest(label=label):
+                state = json.loads(json.dumps(valid))
+                corrupt(state)
+                (sweep.OUT / "sweep_state.json").write_text(json.dumps(state))
+                with self.assertRaisesRegex(
+                        RuntimeError, r"malformed.*--fresh"):
+                    sweep.load_or_init_state(args)
 
     def test_metadata_uses_persisted_provenance_without_replacing_origin(self):
         state = sweep.new_state(workers=2, timestamp="original-time")
@@ -265,15 +307,31 @@ class MatrixAndParallelTest(unittest.TestCase):
 class CliTest(unittest.TestCase):
     def test_exact_supported_flags(self):
         parser = sweep.build_parser()
-        args = parser.parse_args(["--workers", "3", "--fresh", "--plots-only"])
+        args = parser.parse_args(["--workers", "3", "--fresh"])
         self.assertEqual(args.workers, 3)
         self.assertTrue(args.fresh)
-        self.assertTrue(args.plots_only)
+        self.assertFalse(args.plots_only)
         option_strings = {
             option for action in parser._actions for option in action.option_strings
         }
         self.assertEqual(option_strings, {"-h", "--help", "--workers",
                                           "--fresh", "--plots-only"})
+
+    def test_fresh_and_plots_only_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            sweep.build_parser().parse_args(["--fresh", "--plots-only"])
+
+    def test_incompatible_flags_do_not_delete_existing_state(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(sweep, "OUT", Path(directory)):
+            state_path = sweep.OUT / "sweep_state.json"
+            original = '{"existing": "state"}'
+            state_path.write_text(original)
+
+            with self.assertRaises(SystemExit):
+                sweep.main(["--fresh", "--plots-only"])
+
+            self.assertEqual(state_path.read_text(), original)
 
 
 if __name__ == "__main__":
