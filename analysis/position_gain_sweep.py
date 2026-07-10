@@ -47,6 +47,15 @@ METRIC_LABELS = {
     "peak_measured_joint_speed_rad_s": ("peak measured joint speed", "rad/s"),
     "ee_linear_speed_norm_rmse_m_s": ("EE linear speed norm RMSE", "m/s"),
 }
+SUMMARY_FIELDS = [
+    "config_id", "kp_pos", "kd_pos", "status", "settled",
+    "settle_duration_s", "valid", "warning_reasons",
+    "evaluation_sample_count", "error",
+] + [
+    f"{side}_{metric}"
+    for side in SCENARIO.arms
+    for metric in METRIC_SCHEMA
+]
 
 
 def _finite(value):
@@ -132,12 +141,35 @@ def resume_fingerprint(payload=None):
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def new_state():
+def _timestamp():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def new_state(workers=None, timestamp=None):
+    workers = min(4, os.cpu_count() or 1) if workers is None else workers
+    timestamp = _timestamp() if timestamp is None else timestamp
     return {
         "fingerprint": resume_fingerprint(),
         "fingerprint_payload": fingerprint_payload(),
         "results": {},
+        "provenance": {
+            "timestamp": timestamp,
+            "worker_count": workers,
+            "timestep": float(live.world.model.opt.timestep),
+            "dependency_versions": _dependency_versions(),
+            "git_revision": live._git_revision(),
+            "execution_sessions": [
+                {"timestamp": timestamp, "worker_count": workers}
+            ],
+        },
     }
+
+
+def record_execution_session(state, workers, timestamp=None):
+    state["provenance"]["execution_sessions"].append({
+        "timestamp": _timestamp() if timestamp is None else timestamp,
+        "worker_count": workers,
+    })
 
 
 def write_state_atomic(state):
@@ -153,11 +185,16 @@ def load_or_init_state(args):
     if args.fresh and path.exists():
         path.unlink()
     if not path.exists():
-        return new_state()
+        if args.plots_only:
+            raise RuntimeError("--plots-only requires a compatible saved state")
+        return new_state(args.workers)
     state = json.loads(path.read_text())
     if state.get("fingerprint") != resume_fingerprint():
         raise RuntimeError(
             f"{path} does not match the current sweep; pass --fresh to start over")
+    if "provenance" not in state:
+        raise RuntimeError(
+            f"{path} lacks simulation provenance; pass --fresh to start over")
     return state
 
 
@@ -242,22 +279,30 @@ def _write_heatmap(rows, side, metric):
 
 def write_summary(state):
     OUT.mkdir(parents=True, exist_ok=True)
-    rows = [state["results"][config_id(*job)] for job in all_jobs()
-            if config_id(*job) in state["results"]]
+    rows = []
+    for kp_pos, kd_pos in all_jobs():
+        identifier = config_id(kp_pos, kd_pos)
+        rows.append(state["results"].get(identifier, {
+            "config_id": identifier,
+            "kp_pos": float(kp_pos),
+            "kd_pos": float(kd_pos),
+            "status": "pending",
+        }))
     flat = []
     for row in rows:
-        item = {key: value for key, value in row.items() if key != "arms"}
+        item = {field: "" for field in SUMMARY_FIELDS}
+        item.update({key: value for key, value in row.items()
+                     if key in SUMMARY_FIELDS})
         item["warning_reasons"] = "; ".join(row.get("warning_reasons", []))
-        for side, values in row.get("arms", {}).items():
-            for metric, value in values.items():
-                item[f"{side}_{metric}"] = value
+        for side in SCENARIO.arms:
+            for metric in METRIC_SCHEMA:
+                value = row.get("arms", {}).get(side, {}).get(metric)
+                item[f"{side}_{metric}"] = "" if value is None else value
         flat.append(item)
-    fields = sorted({key for row in flat for key in row})
     with (OUT / "summary.csv").open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields)
-        if fields:
-            writer.writeheader()
-            writer.writerows(flat)
+        writer = csv.DictWriter(stream, fieldnames=SUMMARY_FIELDS)
+        writer.writeheader()
+        writer.writerows(flat)
     return rows
 
 
@@ -271,26 +316,23 @@ def _dependency_versions():
     return versions
 
 
-def write_metadata(workers):
+def write_metadata(state):
     OUT.mkdir(parents=True, exist_ok=True)
+    provenance = state["provenance"]
     metadata = {
         **fingerprint_payload(),
         "units": {
             "KP_POS": "1/s", "KD_POS": "dimensionless",
             **{key: unit for key, (_, unit) in METRIC_LABELS.items()},
         },
-        "timestep": float(live.world.model.opt.timestep),
-        "dependency_versions": _dependency_versions(),
-        "worker_count": workers,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "git_revision": live._git_revision(),
+        **provenance,
     }
     (OUT / "metadata.json").write_text(json.dumps(metadata, indent=2))
 
 
-def write_artifacts(state, workers):
+def write_artifacts(state):
     rows = write_summary(state)
-    write_metadata(workers)
+    write_metadata(state)
     for side in SCENARIO.arms:
         for metric in METRIC_SCHEMA:
             _write_heatmap(rows, side, metric)
@@ -312,8 +354,10 @@ def main(argv=None):
     state = load_or_init_state(args)
     jobs = pending_jobs(state)
     if not args.plots_only and jobs:
+        if state["results"]:
+            record_execution_session(state, args.workers)
         run_pending(state, jobs, args.workers)
-    write_artifacts(state, args.workers)
+    write_artifacts(state)
 
 
 if __name__ == "__main__":

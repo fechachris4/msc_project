@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import tempfile
 import unittest
@@ -71,6 +72,26 @@ class MetricTest(unittest.TestCase):
         self.assertFalse(row["valid"])
         self.assertIn("missing evaluation samples", row["warning_reasons"])
 
+    def test_nonfinite_evaluation_metrics_are_json_safe_and_invalid(self):
+        log = _FakeLog()
+        log.arm_data = {
+            side: {name: values.astype(float, copy=True)
+                   for name, values in fields.items()}
+            for side, fields in log.arm_data.items()
+        }
+        log.arm_data["right"]["e_pos"][1, 0] = np.nan
+        log.arm_data["left"]["qdot_measured"][2, 0] = np.inf
+
+        row = sweep.episode_row(log, 2, 0.2)
+
+        self.assertIsNone(
+            row["arms"]["right"]["position_error_norm_rmse_mm"])
+        self.assertIsNone(
+            row["arms"]["left"]["peak_measured_joint_speed_rad_s"])
+        self.assertFalse(row["valid"])
+        self.assertIn("non-finite data", row["warning_reasons"])
+        json.dumps(row, allow_nan=False)
+
     def test_contact_warning_remains_auditable_without_invalidating_metrics(self):
         log = _FakeLog()
         log.valid = False
@@ -123,6 +144,61 @@ class ResumeTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "--fresh"):
             sweep.load_or_init_state(args)
 
+    def test_plots_only_requires_compatible_saved_state(self):
+        args = argparse.Namespace(fresh=False, plots_only=True, workers=3)
+        with self.assertRaisesRegex(RuntimeError, "plots-only.*saved state"):
+            sweep.load_or_init_state(args)
+
+    def test_metadata_uses_persisted_provenance_without_replacing_origin(self):
+        state = sweep.new_state(workers=2, timestamp="original-time")
+        sweep.record_execution_session(state, workers=4, timestamp="resume-time")
+
+        sweep.write_metadata(state)
+        metadata = json.loads((sweep.OUT / "metadata.json").read_text())
+
+        self.assertEqual(metadata["timestamp"], "original-time")
+        self.assertEqual(metadata["worker_count"], 2)
+        self.assertEqual(metadata["execution_sessions"], [
+            {"timestamp": "original-time", "worker_count": 2},
+            {"timestamp": "resume-time", "worker_count": 4},
+        ])
+
+
+class SummaryTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out_patch = mock.patch.object(sweep, "OUT", Path(self.tmp.name))
+        self.out_patch.start()
+
+    def tearDown(self):
+        self.out_patch.stop()
+        self.tmp.cleanup()
+
+    def test_summary_has_fixed_schema_and_one_row_for_every_gain_pair(self):
+        state = sweep.new_state(workers=2, timestamp="time")
+        state["results"]["kp2_kd0.2"] = {
+            "config_id": "kp2_kd0.2", "kp_pos": 2.0, "kd_pos": 0.2,
+            "status": "worker_error", "error": "RuntimeError: boom",
+        }
+
+        sweep.write_summary(state)
+
+        with (sweep.OUT / "summary.csv").open(newline="") as stream:
+            reader = csv.DictReader(stream)
+            rows = list(reader)
+            self.assertEqual(reader.fieldnames, sweep.SUMMARY_FIELDS)
+        self.assertEqual(len(rows), 90)
+        self.assertEqual(rows[0]["status"], "worker_error")
+        self.assertEqual(rows[1]["status"], "pending")
+        for row in rows[:2]:
+            self.assertEqual(row["settled"], "")
+            self.assertEqual(row["settle_duration_s"], "")
+            self.assertEqual(row["warning_reasons"], "")
+            self.assertEqual(row["evaluation_sample_count"], "")
+            for side in ("right", "left"):
+                for metric in sweep.METRIC_SCHEMA:
+                    self.assertIn(f"{side}_{metric}", row)
+
 
 class MatrixAndParallelTest(unittest.TestCase):
     def test_matrix_places_kp_on_columns_and_kd_on_rows(self):
@@ -153,8 +229,12 @@ class MatrixAndParallelTest(unittest.TestCase):
                 return self.value
 
         class FakeExecutor:
+            instances = []
+
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
+                self.submissions = []
+                self.instances.append(self)
 
             def __enter__(self):
                 return self
@@ -163,6 +243,7 @@ class MatrixAndParallelTest(unittest.TestCase):
                 pass
 
             def submit(self, function, job):
+                self.submissions.append((function, job))
                 return ImmediateFuture(rows[jobs.index(job)])
 
         state = sweep.new_state()
@@ -174,6 +255,11 @@ class MatrixAndParallelTest(unittest.TestCase):
             sweep.run_pending(state, jobs, workers=2)
         self.assertEqual(len(writes), 2)
         self.assertEqual(set(state["results"]), {"kp2_kd0.2", "kp12_kd0.4"})
+        executor = FakeExecutor.instances[0]
+        self.assertEqual(executor.kwargs["max_workers"], 2)
+        self.assertEqual(executor.kwargs["mp_context"].get_start_method(), "spawn")
+        self.assertEqual(executor.submissions,
+                         [(sweep.run_episode, job) for job in jobs])
 
 
 class CliTest(unittest.TestCase):
