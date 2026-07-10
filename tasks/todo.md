@@ -82,3 +82,18 @@ Verification evidence:
 - Production scenario, after a genuine 10 s static settle: 252.5/198.9 mm peak error, 20.2%/37.1% rejection, 41.5%/40.9% contact-step occupancy (right/left).
 - `analysis.metrics.stats` with a zero base displacement: `ZeroDivisionError` reproduced.
 - Importing `sim.world` from `/private/tmp` with the repository on `sys.path`: scene path load failure reproduced.
+
+## Telemetry-Backed Diagnostic Plotting Implementation (2026-07-10)
+
+- [x] Expose immutable controller telemetry without changing actuator commands.
+- [ ] Add a reproducible threshold-and-dwell experiment runner and persisted run artifacts.
+- [ ] Implement evaluation-only, gain-segment-aware metrics with static-base safety.
+- [ ] Add and verify the nine diagnostic figure families.
+- [ ] Unify the live dashboard, gain snapshots, and gain segmentation with the shared runner.
+- [ ] Migrate the existing analysis entry points and canonical artifact workflow.
+- [ ] Repair FK, velocity, and bandwidth validation figures.
+- [ ] Update documentation and complete automated and visual verification.
+
+## Telemetry-Backed Diagnostic Plotting Review
+
+Pending implementation and verification.
