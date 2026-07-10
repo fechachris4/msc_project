@@ -144,3 +144,18 @@ Post-commit repair evidence:
 ## Parameter Unit Comments Review
 
 Design approved; implementation pending written-spec review.
+
+## Position Gain Sweep (2026-07-10)
+
+- [x] Confirm the `KP_POS` and `KD_POS` grids.
+- [x] Confirm fixed rotational and auxiliary gains remain at current values.
+- [x] Confirm the explicit base-motion scenario, settling limit, and evaluation window.
+- [x] Define separate-arm metrics, heatmap outputs, parallelism, and resume behaviour.
+- [ ] Write and review the implementation plan.
+- [ ] Implement the dedicated parallel sweep and focused tests.
+- [ ] Run smoke, artifact, visual, and full-suite verification.
+- [ ] Record results and commit the verified implementation.
+
+## Position Gain Sweep Review
+
+Design approved; implementation pending written-spec review.
