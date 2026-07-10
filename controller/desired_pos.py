@@ -16,8 +16,8 @@ from controller.transforms import rotation_from_rpy
 from sim import targets, world
 
 POSES = {
-    "right": {"pos": [0.45, -0.20, 0.10], "rpy": [0.0, 0.0, 0.0]},
-    "left": {"pos": [0.45, 0.20, 0.10], "rpy": [0.0, 0.0, 0.0]},
+    "right": {"pos": [0.45, -.20, 0.10], "rpy": [0.0, 45.0, 190.0]},
+    "left": {"pos": [0.45, 0.40, 0.10], "rpy": [0.0, 0.0, 0.0]},
 }
 
 
