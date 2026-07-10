@@ -25,16 +25,6 @@ from sim import motion, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
-# Base-motion scenario for this run — the standing disturbance the
-# reactive controller rejects. Zero amplitudes = static base
-# (hand-draggable torso).
-BASE_SCENARIO = dict(
-    linear_amplitude=np.array([0.1, 0.3, 0.0]),   # m, world xyz
-    linear_frequency=0.1,                          # Hz
-    rotational_amplitude=np.zeros(3),              # rad, rpy
-    rotational_frequency=0.2,                      # Hz
-)
-
 choice = sys.argv[1] if len(sys.argv) > 1 else "both"
 assert choice in ("right", "left", "both"), \
     "usage: mjpython main.py [right|left|both] [tune]"
@@ -53,7 +43,7 @@ step = 0
 with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
     while viewer.is_running():
         step_start = time.time()
-        motion.set_torso_pose(world.data.time, **BASE_SCENARIO)
+        motion.set_torso_pose(world.data.time)
         # Refresh xpos/xmat from the mocap write: without this the
         # controller sees the torso pose of the previous step (t - dt)
         # paired with the base twist at t.
@@ -61,8 +51,7 @@ with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
         # set_torso_pose (mocap write) and torso_twist_at (feedforward)
         # must stay a matched pair — same scenario, same instant t.
         servo.apply_ctrl(world.model.opt.timestep,
-                         motion.torso_twist_at(world.data.time,
-                                               **BASE_SCENARIO), arms)
+                         motion.torso_twist_at(world.data.time), arms)
         mujoco.mj_step(world.model, world.data)
 
         if panel is not None:
