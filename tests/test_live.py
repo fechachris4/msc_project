@@ -225,5 +225,49 @@ class ContactAndPersistenceTest(unittest.TestCase):
         )
 
 
+class GainOverrideTest(unittest.TestCase):
+    def tearDown(self):
+        from analysis.live import _reset_simulation
+
+        _reset_simulation()
+
+    def test_overrides_land_in_first_gain_snapshot(self):
+        from analysis.live import run_experiment
+
+        log = run_experiment(_config(), gains={"KP_POS": 5.0, "K_NULL": 2.0})
+        self.assertEqual(log.gain_snapshots[0]["KP_POS"], 5.0)
+        self.assertEqual(log.gain_snapshots[0]["K_NULL"], 2.0)
+
+    def test_k_null_routed_through_set_k_null(self):
+        from analysis.live import run_experiment
+        from controller import servo
+
+        run_experiment(_config(arms=("right",)), gains={"K_NULL": 3.5})
+        self.assertTrue(np.all(
+            servo._K_NULL_VEC["right"][servo._K_NULL_MASK["right"]] == 3.5))
+
+    def test_gains_restored_after_next_reset(self):
+        from analysis.live import _INITIAL_GAINS, run_experiment
+        from controller import servo
+
+        run_experiment(_config(), gains={"KP_POS": 9.0})
+        self.assertEqual(servo.KP_POS, 9.0)
+
+        run_experiment(_config())
+        self.assertEqual(servo.KP_POS, _INITIAL_GAINS["KP_POS"])
+
+    def test_bogus_gain_name_raises(self):
+        from analysis.live import run_experiment
+
+        with self.assertRaises(ValueError):
+            run_experiment(_config(), gains={"NOT_A_GAIN": 1.0})
+
+    def test_negative_gain_value_raises(self):
+        from analysis.live import run_experiment
+
+        with self.assertRaises(ValueError):
+            run_experiment(_config(), gains={"KP_POS": -1.0})
+
+
 if __name__ == "__main__":
     unittest.main()

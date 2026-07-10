@@ -92,6 +92,24 @@ def _restore_initial_gains():
             setattr(servo, name, value)
 
 
+def _apply_gain_overrides(gains):
+    """Override servo module gains for one run. K_NULL is routed through
+    servo.set_k_null() (required -- it rescales _K_NULL_VEC; a plain
+    setattr would silently not apply); the rest are plain setattr, same
+    as _restore_initial_gains above."""
+    for name, value in gains.items():
+        if name not in _GAIN_NAMES:
+            raise ValueError(f"unknown gain override: {name!r}")
+        value = float(value)
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError(
+                f"gain override {name} must be finite and non-negative")
+        if name == "K_NULL":
+            servo.set_k_null(value)
+        else:
+            setattr(servo, name, value)
+
+
 def _validate_config(config):
     if not config.arms or any(side not in world.SIDES for side in config.arms):
         raise ValueError(f"arms must be a non-empty subset of {world.SIDES}")
@@ -311,7 +329,15 @@ def _advance(builder, phase, eval_time, scenario, on_update):
     return traces
 
 
-def run_experiment(config, on_update=None):
+def run_experiment(config, on_update=None, gains=None):
+    """Run one settle+evaluation experiment. gains, if given, overrides
+    servo module gains (see _apply_gain_overrides) after _reset_simulation
+    restores the initial gains and before the log builder takes its first
+    gain snapshot, so the override self-documents in the saved run's
+    metadata rather than looking like a mid-run gain change. Not an
+    ExperimentConfig field: the config's exact fields are contract-tested
+    (tests/test_live.py) and serialized whole in every run's
+    metadata.json; gains are already persisted via gain snapshots."""
     _validate_config(config)
     config = config._replace(
         linear_amplitude=np.asarray(config.linear_amplitude, dtype=float).copy(),
@@ -319,6 +345,8 @@ def run_experiment(config, on_update=None):
             config.rotational_amplitude, dtype=float).copy(),
     )
     _reset_simulation()
+    if gains is not None:
+        _apply_gain_overrides(gains)
     builder = _LogBuilder(tuple(config.arms))
     dt = float(world.model.opt.timestep)
     settled = False
