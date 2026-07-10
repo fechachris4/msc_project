@@ -151,11 +151,26 @@ Design approved; implementation pending written-spec review.
 - [x] Confirm fixed rotational and auxiliary gains remain at current values.
 - [x] Confirm the explicit base-motion scenario, settling limit, and evaluation window.
 - [x] Define separate-arm metrics, heatmap outputs, parallelism, and resume behaviour.
-- [ ] Write and review the implementation plan.
-- [ ] Implement the dedicated parallel sweep and focused tests.
-- [ ] Run smoke, artifact, visual, and full-suite verification.
-- [ ] Record results and commit the verified implementation.
+- [x] Write and review the implementation plan.
+- [x] Implement the dedicated parallel sweep and focused tests.
+- [x] Run smoke, artifact, visual, and full-suite verification.
+- [x] Record results and commit the verified implementation.
 
 ## Position Gain Sweep Review
 
-Design approved; implementation pending written-spec review.
+Implemented `analysis.position_gain_sweep` as a dedicated 90-cell,
+spawn-process sweep with parent-owned atomic resume state. It preserves the
+current rotational/null-space/DLS gains, uses the explicit 0.5 Hz scenario,
+and writes a fixed 90-row CSV, persisted provenance/metadata, and eight
+separate-arm heatmaps for position RMSE, position peak, measured joint-speed
+peak, and EE linear-speed RMSE. Invalid cells remain visible and completed
+invalid episodes are not rerun; worker errors and explicit pending cells are.
+
+Verification evidence:
+- `.venv/bin/python -m py_compile analysis/position_gain_sweep.py tests/test_position_gain_sweep.py`: passed.
+- Focused/relevant suite: 78 tests passed (`test_position_gain_sweep`, `test_live`, `test_metrics`, and `test_gain_sweep`).
+- Real one-worker spawned episode at `KP_POS=22`, `KD_POS=0.8` matched a direct shared-runner episode across both arms and all eight metrics at absolute tolerance `1e-12`.
+- All eight synthetic-grid heatmaps were visually checked for axis orientation, units, annotations, independent colour scales, and grey invalid cells.
+- Final independent review found no Critical or Important issues.
+- Full discovery ran 136 tests with four pre-existing failures in `test_control_trace` (2), `test_motion` (1), and `test_velocity` (1). The failures reproduce outside the new feature and reflect pinned controller expectations/current tuned motion rather than changes in the two sweep files.
+- Implementation commits: `1e5fac0`, `1e37b74`, `88bf764`, and `6ac7391`.
