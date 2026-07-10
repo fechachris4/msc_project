@@ -23,10 +23,10 @@ from sim import world
 # --- research levers ---------------------------------------------------
 # Edit these SI values to change the default base-motion scenario used by
 # the main viewer and general-purpose analysis views.
-LINEAR_AMPLITUDE = np.array([0.08, 0.04, 0.05])
-ROTATIONAL_AMPLITUDE = np.array([0.087, 0.0, 0.0])
-LINEAR_FREQUENCY = 0.4
-ROTATIONAL_FREQUENCY = 0.2
+LINEAR_AMPLITUDE = np.array([0.18, 0.04, 0.05])
+ROTATIONAL_AMPLITUDE = np.array([0.0, 0.0, -0.2])
+LINEAR_FREQUENCY = 0.5
+ROTATIONAL_FREQUENCY = 0.5
 
 _TORSO_MOCAP_IDX = world.model.body_mocapid[world.torso_body_id]
 HOME_POS = world.data.mocap_pos[_TORSO_MOCAP_IDX].copy()
