@@ -79,8 +79,7 @@ OUT = Path("analysis/output/gain_sweep")
 
 # The shared base-motion scenario for every episode: 0.3 m x-sinusoid at
 # 0.1 Hz (sim/motion.py's own research-lever defaults), both arms,
-# evaluation_seconds = 25.0 s = 2.5 periods. settle_timeout stays at
-# ExperimentConfig's own default (15.0 s).
+# evaluation_seconds = 25.0 s = 2.5 periods.
 SCENARIO = live.ExperimentConfig(
     arms=("right", "left"),
     linear_amplitude=np.array([0.3, 0.0, 0.0]),
@@ -88,6 +87,13 @@ SCENARIO = live.ExperimentConfig(
     rotational_amplitude=np.zeros(3),
     rotational_frequency=0.0,
     evaluation_seconds=25.0,
+    # ExperimentConfig's own default (15.0 s) cuts off legitimately stable
+    # high-DAMPING configs mid-settle: a per-combo settle-trajectory
+    # diagnostic showed DAMPING=0.09 decaying monotonically to ~17-18 s
+    # (higher DLS lambda attenuates commanded qdot -- slow, not unstable;
+    # even the smoke stage-3 winner needed 10.65 s), and the real sweep's
+    # stage-4 grid goes up to DAMPING=0.2. 30.0 s clears that with margin.
+    settle_timeout=30.0,
 )
 
 SAT_THRESHOLD_PCT = 20.0  # disqualify worst-arm velocity saturation above this
