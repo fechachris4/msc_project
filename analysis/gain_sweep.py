@@ -200,6 +200,18 @@ def _worst_over_arms(arms_metrics, key):
     return max(values) if values else None
 
 
+def _finite_or_none(value):
+    """metrics.py's _finite_float convention, duplicated locally: a
+    non-finite computed value (e.g. headroom from an unstable corner's
+    NaN qdot_raw) becomes JSON-safe None rather than NaN. Episodes with
+    non-finite data are already flagged invalid by live.py's own
+    "non-finite data" warning and so get disqualified anyway -- this
+    only prevents write_state_atomic's allow_nan=False json.dumps from
+    crashing (and re-crashing on every resume) on the way there."""
+    value = float(value)
+    return value if np.isfinite(value) else None
+
+
 def _episode_row(log, gains):
     mask = log.evaluation_mask
     computed = metrics.experiment_metrics(log)
@@ -222,23 +234,25 @@ def _episode_row(log, gains):
         }
         for side in log.arms
     }
-    headroom_mean = None
-    headroom_p95 = None
+    headroom_means = []
+    headroom_p95s = []
     for side in log.arms:
         qdot_raw = np.asarray(log.arm_data[side]["qdot_raw"], dtype=float)[mask]
         if qdot_raw.size == 0:
             continue
         series = _headroom_series(qdot_raw)
-        side_mean = float(np.mean(series))
-        side_p95 = float(np.percentile(series, 95.0))
-        headroom_mean = side_mean if headroom_mean is None \
-            else max(headroom_mean, side_mean)
-        headroom_p95 = side_p95 if headroom_p95 is None \
-            else max(headroom_p95, side_p95)
+        mean_val = _finite_or_none(np.mean(series))
+        p95_val = _finite_or_none(np.percentile(series, 95.0))
+        if mean_val is not None:
+            headroom_means.append(mean_val)
+        if p95_val is not None:
+            headroom_p95s.append(p95_val)
+    headroom_mean = max(headroom_means) if headroom_means else None
+    headroom_p95 = max(headroom_p95s) if headroom_p95s else None
     return {
         "gains": dict(gains),
         "settled": bool(log.settled),
-        "settle_duration_s": float(log.settle_duration),
+        "settle_duration_s": _finite_or_none(log.settle_duration),
         "valid": bool(log.valid),
         "warning_reasons": list(log.warning_reasons),
         "arms": arms_metrics,
@@ -326,7 +340,9 @@ def select_winner(rows, metric_key, strict=True):
         sat = (row["velocity_saturation_overall_pct"]
                if row["velocity_saturation_overall_pct"] is not None
                else float("inf"))
-        return (metric, sat, row["settle_duration_s"], i)
+        settle = (row["settle_duration_s"]
+                  if row["settle_duration_s"] is not None else float("inf"))
+        return (metric, sat, settle, i)
 
     qualified.sort(key=sort_key)
     return qualified[0][1]
