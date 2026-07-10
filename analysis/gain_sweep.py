@@ -32,9 +32,15 @@ live.save_run.
 Progress and state are persisted to analysis/output/gain_sweep/
 sweep_state.json after every episode (atomic temp-file + os.replace), so
 an interrupted run resumes with at most one lost episode. Resuming
-refuses (asks for --fresh) if the scenario, grids, or --sat-threshold
-have changed since the state was written -- those are baked into every
-stored row's disqualification, so mixing them silently would be wrong.
+refuses (asks for --fresh) if the scenario or grids have changed since
+the state was written -- episodes are meaningless outside the
+scenario/grid they were run under. A --sat-threshold change alone is
+allowed and free: episode results don't depend on it, so resuming
+reselects every stage's winner from the stored rows instead of
+rerunning anything -- except a stage whose base gains were inherited
+from an earlier stage's winner that moved under the new threshold,
+which is dropped and reruns from scratch (its later stages cascade the
+same way).
 
 Outputs, all under analysis/output/gain_sweep/ (analysis/output/
 gain_sweep_smoke/ for --smoke):
@@ -361,6 +367,18 @@ def _grid_fingerprint():
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _stage_grid_signature(grid):
+    """Hash of a stage_grid() result's full (config_id, gains) pairs --
+    not just the config_ids. Stage 2's config_ids only encode KP_ROT/
+    KD_ROT (not the KP_POS/KD_POS it inherits from stage 1's winner), so
+    two different stage-1 winners can produce identical config_ids with
+    different gains; hashing the gains too is what lets
+    _reconcile_state_for_threshold_change detect that a dependent
+    stage's base actually changed."""
+    payload = json.dumps([[cid, gains] for cid, gains in grid], sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def _new_state(args):
     return {
         "scenario": live._config_json(SCENARIO),
@@ -370,12 +388,75 @@ def _new_state(args):
     }
 
 
+def _reconcile_state_for_threshold_change(state, new_threshold):
+    """Episode results (settled/valid/RMSE/saturation/...) don't depend
+    on sat_threshold -- it's a selection-time filter -- so a threshold
+    change alone never requires rerunning episodes: recompute every
+    stored row's disqualification and reselect each stage's winner from
+    the stored rows, in stage order (1 -> 4) so each stage sees its
+    predecessor's already-reconciled winner.
+
+    A stage whose base gains are inherited from an earlier stage's
+    winner (2 from 1, 3 from 2, 4 from 3) is invalidated -- its rows and
+    winner dropped entirely, forcing a full rerun next time -- if that
+    earlier winner changed enough to change this stage's own grid
+    (_stage_grid_signature mismatch). Later stages then cascade-drop too,
+    since _collected_winners no longer finds a winner to inherit from."""
+    total_rows = sum(len(s["rows"]) for s in state["stages"].values())
+    print(f"sat threshold {state['sat_threshold']:.1f} -> {new_threshold:.1f}: "
+          f"reselecting winners from {total_rows} stored episodes")
+    state["sat_threshold"] = new_threshold
+
+    stage2_rot_rmse = None
+    for stage in (1, 2, 3, 4):
+        stage_key = str(stage)
+        stage_state = state["stages"].get(stage_key)
+        if not stage_state or not stage_state["rows"]:
+            continue
+
+        winners = _collected_winners(state, stage)
+        if stage >= 2 and (stage - 1) not in winners:
+            print(f"stage {stage}: stage {stage - 1} has no winner under "
+                  "the new threshold -- dropping its stored episodes")
+            del state["stages"][stage_key]
+            continue
+
+        grid = stage_grid(stage, winners)
+        if stage >= 2:
+            signature = _stage_grid_signature(grid)
+            if stage_state.get("grid_signature") != signature:
+                print(f"stage {stage}: base gains changed (stage "
+                      f"{stage - 1}'s winner moved) -- dropping its stored "
+                      "episodes; it will rerun from scratch")
+                del state["stages"][stage_key]
+                continue
+
+        rows = [stage_state["rows"][cid] for cid, _ in grid
+                if cid in stage_state["rows"]]
+        for row in rows:
+            row["disqualification"] = disqualify_reasons(
+                row, stage, sat_threshold=new_threshold,
+                stage2_winner_rot_rmse=(
+                    stage2_rot_rmse if stage in (3, 4) else None))
+
+        metric_key = "worst_arm_rot_rmse_rad" if stage == 2 else "worst_arm_pos_rmse_m"
+        winner = select_winner(rows, metric_key, strict=False) if rows else None
+        stage_state["winner_config_id"] = winner["config_id"] if winner else None
+
+        if stage == 2:
+            stage2_rot_rmse = (winner["worst_arm_rot_rmse_rad"]
+                                if winner is not None else None)
+
+
 def load_or_init_state(args):
     """Load OUT/sweep_state.json, or start fresh if absent or --fresh.
-    Refuses to resume (raises) if the scenario, grids, or --sat-threshold
-    no longer match what's stored -- those are baked into every row's
-    disqualification, so silently mixing them would be wrong; pass
-    --fresh to discard the old state and start over."""
+    Refuses to resume (raises) if the scenario or grids no longer match
+    what's stored -- episodes are meaningless outside the scenario/grid
+    they were run under, so silently mixing them would be wrong; pass
+    --fresh to discard the old state and start over. A --sat-threshold
+    change alone is allowed: episode results don't depend on it, so
+    _reconcile_state_for_threshold_change reselects winners from the
+    stored rows instead of refusing."""
     path = OUT / "sweep_state.json"
     if args.fresh and path.exists():
         path.unlink()
@@ -384,11 +465,12 @@ def load_or_init_state(args):
     stored = json.loads(path.read_text())
     fresh = _new_state(args)
     if (stored.get("fingerprint") != fresh["fingerprint"]
-            or stored.get("scenario") != fresh["scenario"]
-            or stored.get("sat_threshold") != fresh["sat_threshold"]):
+            or stored.get("scenario") != fresh["scenario"]):
         raise RuntimeError(
-            f"{path} does not match the current scenario/grids/"
-            "sat-threshold; pass --fresh to discard it and start over")
+            f"{path} does not match the current scenario/grids; "
+            "pass --fresh to discard it and start over")
+    if stored.get("sat_threshold") != fresh["sat_threshold"]:
+        _reconcile_state_for_threshold_change(stored, fresh["sat_threshold"])
     return stored
 
 
@@ -665,6 +747,11 @@ def run_stage(stage, state, args):
     grid = stage_grid(stage, winners)
     stage_state = state["stages"].setdefault(
         str(stage), {"rows": {}, "winner_config_id": None})
+    if stage >= 2:
+        # Recorded so a later --sat-threshold-only resume can tell
+        # whether this stage's inherited base gains have since changed
+        # (see _reconcile_state_for_threshold_change).
+        stage_state["grid_signature"] = _stage_grid_signature(grid)
     rows_by_id = stage_state["rows"]
 
     stage2_rot_rmse = None

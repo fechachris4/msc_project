@@ -3,7 +3,7 @@ is analysis.live's job, already covered by tests/test_live.py). Covers
 grid construction, disqualification, winner selection (incl. the tie
 chain and the all-disqualified raise), headroom vs.
 analysis.dashboard.headroom_frac, non-finite headroom sanitization, and
-sweep_state.json round-trip / fingerprint refusal.
+sweep_state.json round-trip / resume-refusal / threshold-reselection.
 """
 
 import argparse
@@ -272,13 +272,19 @@ class NonFiniteHeadroomTest(unittest.TestCase):
 
 
 class StateRoundTripTest(unittest.TestCase):
+    """sweep_state.json load/save, and the resume-refusal rules: a
+    scenario/grid mismatch refuses (needs --fresh); a sat_threshold-only
+    change is allowed and reselects winners from the stored rows without
+    rerunning any episode -- except a stage whose inherited base gains
+    moved, which is dropped so it reruns from scratch."""
+
     def setUp(self):
         self._orig_out = gain_sweep.OUT
 
     def tearDown(self):
         gain_sweep.OUT = self._orig_out
 
-    def test_round_trip_and_fingerprint_refusal(self):
+    def test_round_trip_and_fresh_discards_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             gain_sweep.OUT = Path(tmp)
             args = argparse.Namespace(fresh=False, sat_threshold=20.0)
@@ -296,15 +302,103 @@ class StateRoundTripTest(unittest.TestCase):
             self.assertEqual(
                 reloaded["stages"]["1"]["winner_config_id"], "s1_kp1_kd0")
 
-            mismatched_threshold = argparse.Namespace(
-                fresh=False, sat_threshold=5.0)
-            with self.assertRaises(RuntimeError):
-                gain_sweep.load_or_init_state(mismatched_threshold)
-
             fresh_args = argparse.Namespace(fresh=True, sat_threshold=5.0)
             fresh_state = gain_sweep.load_or_init_state(fresh_args)
             self.assertEqual(fresh_state["stages"], {})
             self.assertEqual(fresh_state["sat_threshold"], 5.0)
+
+    def test_fingerprint_mismatch_refuses_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gain_sweep.OUT = Path(tmp)
+            args = argparse.Namespace(fresh=False, sat_threshold=20.0)
+            state = gain_sweep.load_or_init_state(args)
+            state["fingerprint"] = "not-the-real-fingerprint"
+            gain_sweep.write_state_atomic(state)
+
+            with self.assertRaises(RuntimeError):
+                gain_sweep.load_or_init_state(args)
+
+    def test_threshold_change_reselects_from_stored_rows_without_rerunning(self):
+        # Real stage-1 config_ids/gains -- reconciliation aligns stored
+        # rows against a freshly regenerated stage_grid(), so fabricated
+        # IDs that aren't part of the real grid would just be dropped.
+        grid1 = gain_sweep.stage_grid(1, {})
+        cid_a, gains_a = grid1[0]
+        cid_b, gains_b = grid1[1]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            gain_sweep.OUT = Path(tmp)
+            args20 = argparse.Namespace(fresh=False, sat_threshold=20.0)
+            state = gain_sweep.load_or_init_state(args20)
+
+            # Both rows already run and stored; both disqualified for
+            # 25% > 20% saturation (as select_winner(strict=False) would
+            # have left them: no winner yet).
+            reason_20 = ["worst-arm saturation 25.0% > 20.0% threshold"]
+            row_a = _row(cid_a, 1, gains=gains_a, pos_rmse=0.05, sat_pct=25.0,
+                         disqualification=reason_20)
+            row_b = _row(cid_b, 1, gains=gains_b, pos_rmse=0.01, sat_pct=25.0,
+                         disqualification=reason_20)
+            state["stages"]["1"] = {
+                "rows": {cid_a: row_a, cid_b: row_b},
+                "winner_config_id": None,
+            }
+            gain_sweep.write_state_atomic(state)
+
+            args30 = argparse.Namespace(fresh=False, sat_threshold=30.0)
+            reloaded = gain_sweep.load_or_init_state(args30)
+
+            self.assertEqual(reloaded["sat_threshold"], 30.0)
+            # both episodes kept -- no rerun (this test never touches the
+            # sim: run_episode/live.run_experiment are never called)
+            self.assertEqual(set(reloaded["stages"]["1"]["rows"]),
+                             {cid_a, cid_b})
+            self.assertEqual(
+                reloaded["stages"]["1"]["rows"][cid_a]["disqualification"], [])
+            self.assertEqual(
+                reloaded["stages"]["1"]["rows"][cid_b]["disqualification"], [])
+            # b has the lower worst_arm_pos_rmse_m -> wins once qualified
+            self.assertEqual(reloaded["stages"]["1"]["winner_config_id"], cid_b)
+
+    def test_threshold_change_invalidates_dependent_stage_when_winner_moves(self):
+        grid1 = gain_sweep.stage_grid(1, {})
+        cid_a, gains_a = grid1[0]
+        cid_b, gains_b = grid1[-1]  # far apart in the grid -> distinct gains
+
+        with tempfile.TemporaryDirectory() as tmp:
+            gain_sweep.OUT = Path(tmp)
+            args20 = argparse.Namespace(fresh=False, sat_threshold=20.0)
+            state = gain_sweep.load_or_init_state(args20)
+
+            # Under threshold=20, only A qualifies (worse metric) -> A won.
+            row_a = _row(cid_a, 1, gains=gains_a, pos_rmse=0.05, sat_pct=5.0)
+            row_b = _row(cid_b, 1, gains=gains_b, pos_rmse=0.01, sat_pct=25.0,
+                         disqualification=[
+                             "worst-arm saturation 25.0% > 20.0% threshold"])
+            state["stages"]["1"] = {
+                "rows": {cid_a: row_a, cid_b: row_b},
+                "winner_config_id": cid_a,
+            }
+
+            # Stage 2 was built on top of A's gains.
+            grid2 = gain_sweep.stage_grid(2, {1: gains_a})
+            cid2, gains2 = grid2[0]
+            row2 = _row(cid2, 2, gains=gains2, rot_rmse=0.02, sat_pct=1.0)
+            state["stages"]["2"] = {
+                "rows": {cid2: row2},
+                "winner_config_id": cid2,
+                "grid_signature": gain_sweep._stage_grid_signature(grid2),
+            }
+            gain_sweep.write_state_atomic(state)
+
+            # Under threshold=30, B also qualifies and has the better
+            # metric -> B wins stage 1 instead -- stage 2's stored grid
+            # (built on A) no longer matches and must be dropped.
+            args30 = argparse.Namespace(fresh=False, sat_threshold=30.0)
+            reloaded = gain_sweep.load_or_init_state(args30)
+
+            self.assertEqual(reloaded["stages"]["1"]["winner_config_id"], cid_b)
+            self.assertNotIn("2", reloaded["stages"])
 
 
 if __name__ == "__main__":
