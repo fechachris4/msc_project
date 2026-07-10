@@ -42,7 +42,7 @@ class ConstantsTest(unittest.TestCase):
         np.testing.assert_array_equal(sweep.SCENARIO.rotational_amplitude, [0, 0, -0.2])
         self.assertEqual(sweep.SCENARIO.linear_frequency, 0.5)
         self.assertEqual(sweep.SCENARIO.rotational_frequency, 0.5)
-        self.assertEqual(sweep.SCENARIO.evaluation_seconds, 10.0)
+        self.assertEqual(sweep.SCENARIO.evaluation_seconds, 4.0)
         self.assertEqual(sweep.SCENARIO.settle_timeout, 20.0)
         self.assertEqual(sweep.OUT, Path("analysis/output/orientation_gain_sweep"))
 

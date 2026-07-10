@@ -32,7 +32,7 @@ SCENARIO = live.ExperimentConfig(
     rotational_amplitude=np.array([0.0, 0.0, -0.2]),
     linear_frequency=0.5,
     rotational_frequency=0.5,
-    evaluation_seconds=10.0,
+    evaluation_seconds=4.0,
     settle_timeout=20.0,
 )
 METRIC_SCHEMA = {
