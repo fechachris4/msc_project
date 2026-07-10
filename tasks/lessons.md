@@ -14,3 +14,6 @@
 
 - Pattern: Reconstructing a relative pose from MuJoCo's already-computed world end-effector pose can be mistaken for an independent forward-kinematics implementation.
   Rule: When a function is meant to express `T_base_ee(q)`, name whether it uses MuJoCo FK as the source of truth or computes FK independently from joint coordinates.
+
+- Pattern: A delegated implementation crossed its file scope and ran an entry point that overwrote a tracked artifact.
+  Rule: Give implementation agents an explicit file allowlist, snapshot Git status before delegation, and interrupt immediately on any out-of-scope mutation; never run artifact-writing entry points during a source-only checkpoint.

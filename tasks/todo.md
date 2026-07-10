@@ -86,7 +86,7 @@ Verification evidence:
 ## Telemetry-Backed Diagnostic Plotting Implementation (2026-07-10)
 
 - [x] Expose immutable controller telemetry without changing actuator commands.
-- [ ] Add a reproducible threshold-and-dwell experiment runner and persisted run artifacts.
+- [x] Add a reproducible threshold-and-dwell experiment runner and persisted run artifacts.
 - [ ] Implement evaluation-only, gain-segment-aware metrics with static-base safety.
 - [ ] Add and verify the nine diagnostic figure families.
 - [ ] Unify the live dashboard, gain snapshots, and gain segmentation with the shared runner.
