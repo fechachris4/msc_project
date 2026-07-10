@@ -1,0 +1,132 @@
+{
+  "evaluation_sample_count": 12500,
+  "peak_base_displacement_m": 0.3,
+  "contact_occupancy_total_pct": 0.0,
+  "arms": {
+    "right": {
+      "position_error_axis_mean_m": [
+        0.048389894199787724,
+        0.006177226293511829,
+        -0.024921974632535163
+      ],
+      "position_error_norm_mean_m": 0.10002414225932403,
+      "position_error_axis_rmse_m": [
+        0.1174248150172271,
+        0.012394734273064876,
+        0.04473566455095554
+      ],
+      "position_error_norm_rmse_m": 0.12626755839227094,
+      "position_error_axis_abs_peak_m": [
+        0.24246544458253755,
+        0.027600424048483563,
+        0.09783846278829911
+      ],
+      "position_error_norm_peak_m": 0.2620158014046374,
+      "rotation_error_norm_mean_rad": 0.00534739734788192,
+      "rotation_error_norm_rmse_rad": 0.00708559586134071,
+      "rotation_error_norm_peak_rad": 0.02246910331754916,
+      "rejection_pct": 12.66139953178752,
+      "velocity_saturation_overall_pct": 0.2742857142857143,
+      "joint_margin_min_rad": -0.006801483828677846,
+      "joint_margin_p01_rad": -0.0005437485652896389,
+      "contact_occupancy_total_pct": 0.0,
+      "torso_contact_occupancy_pct": 0.0
+    },
+    "left": {
+      "position_error_axis_mean_m": [
+        0.0481833839906737,
+        -0.006170667953854937,
+        -0.02454722965675987
+      ],
+      "position_error_norm_mean_m": 0.1003924053379483,
+      "position_error_axis_rmse_m": [
+        0.11774436488938018,
+        0.012379419278629284,
+        0.044670906980630365
+      ],
+      "position_error_norm_rmse_m": 0.12654041020698378,
+      "position_error_axis_abs_peak_m": [
+        0.24253008689033922,
+        0.02757419135363648,
+        0.0977613776638766
+      ],
+      "position_error_norm_peak_m": 0.2620208928685122,
+      "rotation_error_norm_mean_rad": 0.005118508430297721,
+      "rotation_error_norm_rmse_rad": 0.006718457857986242,
+      "rotation_error_norm_peak_rad": 0.0194793246072821,
+      "rejection_pct": 12.659702377162596,
+      "velocity_saturation_overall_pct": 0.38057142857142856,
+      "joint_margin_min_rad": -0.0015416646249239996,
+      "joint_margin_p01_rad": 0.008090884108097657,
+      "contact_occupancy_total_pct": 0.0,
+      "torso_contact_occupancy_pct": 0.0
+    }
+  },
+  "gain_segments": {
+    "0": {
+      "evaluation_sample_count": 12500,
+      "peak_base_displacement_m": 0.3,
+      "contact_occupancy_total_pct": 0.0,
+      "arms": {
+        "right": {
+          "position_error_axis_mean_m": [
+            0.048389894199787724,
+            0.006177226293511829,
+            -0.024921974632535163
+          ],
+          "position_error_norm_mean_m": 0.10002414225932403,
+          "position_error_axis_rmse_m": [
+            0.1174248150172271,
+            0.012394734273064876,
+            0.04473566455095554
+          ],
+          "position_error_norm_rmse_m": 0.12626755839227094,
+          "position_error_axis_abs_peak_m": [
+            0.24246544458253755,
+            0.027600424048483563,
+            0.09783846278829911
+          ],
+          "position_error_norm_peak_m": 0.2620158014046374,
+          "rotation_error_norm_mean_rad": 0.00534739734788192,
+          "rotation_error_norm_rmse_rad": 0.00708559586134071,
+          "rotation_error_norm_peak_rad": 0.02246910331754916,
+          "rejection_pct": 12.66139953178752,
+          "velocity_saturation_overall_pct": 0.2742857142857143,
+          "joint_margin_min_rad": -0.006801483828677846,
+          "joint_margin_p01_rad": -0.0005437485652896389,
+          "contact_occupancy_total_pct": 0.0,
+          "torso_contact_occupancy_pct": 0.0
+        },
+        "left": {
+          "position_error_axis_mean_m": [
+            0.0481833839906737,
+            -0.006170667953854937,
+            -0.02454722965675987
+          ],
+          "position_error_norm_mean_m": 0.1003924053379483,
+          "position_error_axis_rmse_m": [
+            0.11774436488938018,
+            0.012379419278629284,
+            0.044670906980630365
+          ],
+          "position_error_norm_rmse_m": 0.12654041020698378,
+          "position_error_axis_abs_peak_m": [
+            0.24253008689033922,
+            0.02757419135363648,
+            0.0977613776638766
+          ],
+          "position_error_norm_peak_m": 0.2620208928685122,
+          "rotation_error_norm_mean_rad": 0.005118508430297721,
+          "rotation_error_norm_rmse_rad": 0.006718457857986242,
+          "rotation_error_norm_peak_rad": 0.0194793246072821,
+          "rejection_pct": 12.659702377162596,
+          "velocity_saturation_overall_pct": 0.38057142857142856,
+          "joint_margin_min_rad": -0.0015416646249239996,
+          "joint_margin_p01_rad": 0.008090884108097657,
+          "contact_occupancy_total_pct": 0.0,
+          "torso_contact_occupancy_pct": 0.0
+        }
+      }
+    }
+  }
+}

@@ -40,9 +40,9 @@ from sim import targets, world
 #   lowers the effective bandwidth to KP/(1+KD) while feeding forward
 #   the fraction KD/(1+KD) of the base velocity: larger KD trades
 #   settle speed for disturbance rejection.
-KP_POS = 2.0    # 1/s task-space bandwidth
+KP_POS = 20.0    # 1/s task-space bandwidth
 KP_ROT = 2.0    # 1/s
-KD_POS = 0.3    # dimensionless: velocity error -> velocity command
+KD_POS = 0.9    # dimensionless: velocity error -> velocity command
 KD_ROT = 0.3    # dimensionless
 K_NULL = 1.0    # 1/s null-space joint-centering
 DAMPING = 0.05  # DLS lambda
