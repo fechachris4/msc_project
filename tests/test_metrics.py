@@ -29,6 +29,7 @@ def _log(
     e_pos,
     speed_saturated,
     joint_margin,
+    e_rot=None,
     gain_segment=None,
     contact_count=None,
     contact_pairs=None,
@@ -39,6 +40,11 @@ def _log(
     phase = np.asarray(phase, dtype="U10")
     sample_count = len(phase)
     arms = tuple(e_pos)
+    if e_rot is None:
+        e_rot = {
+            side: np.zeros_like(np.asarray(e_pos[side], dtype=float))
+            for side in arms
+        }
     if gain_segment is None:
         gain_segment = np.zeros(sample_count, dtype=int)
     if contact_pairs is None:
@@ -54,6 +60,7 @@ def _log(
     arm_data = {
         side: {
             "e_pos": np.asarray(e_pos[side], dtype=float),
+            "e_rot": np.asarray(e_rot[side], dtype=float),
             "speed_saturated": np.asarray(speed_saturated[side], dtype=bool),
             "joint_margin": np.asarray(joint_margin[side], dtype=float),
         }
@@ -96,6 +103,8 @@ class ExperimentMetricsTest(unittest.TestCase):
                                (0.0, 0.0, 0.0), (0.0, 0.0, 2.0)),
             e_pos={"right": ((99.0, 99.0, 99.0), (1.0, -2.0, 2.0),
                              (3.0, 0.0, -4.0), (-2.0, 2.0, 1.0))},
+            e_rot={"right": ((9.0, 9.0, 9.0), (0.1, 0.0, 0.0),
+                             (0.0, 0.3, 0.4), (0.0, 0.0, 0.0))},
             speed_saturated={"right": (
                 (True,) * 7,
                 (True, False, False, False, False, False, False),
@@ -134,6 +143,11 @@ class ExperimentMetricsTest(unittest.TestCase):
             arm["position_error_norm_rmse_m"], np.sqrt(43.0 / 3.0))
         self.assertEqual(arm["position_error_axis_abs_peak_m"], [3.0, 2.0, 4.0])
         self.assertEqual(arm["position_error_norm_peak_m"], 5.0)
+        # eval-only e_rot norms: 0.1, |(0, 0.3, 0.4)| = 0.5, 0.0
+        self.assertAlmostEqual(arm["rotation_error_norm_mean_rad"], 0.2)
+        self.assertAlmostEqual(
+            arm["rotation_error_norm_rmse_rad"], np.sqrt(0.26 / 3.0))
+        self.assertEqual(arm["rotation_error_norm_peak_rad"], 0.5)
         self.assertEqual(arm["rejection_pct"], 0.0)
         self.assertAlmostEqual(arm["velocity_saturation_overall_pct"], 100.0 / 7.0)
         self.assertEqual(arm["joint_margin_min_rad"], 0.1)
@@ -271,6 +285,12 @@ class ExperimentMetricsTest(unittest.TestCase):
         self.assertIsNone(empty_result["peak_base_displacement_m"])
         self.assertIsNone(empty_result["contact_occupancy_total_pct"])
         self.assertEqual(empty_result["gain_segments"], {})
+        self.assertIsNone(
+            empty_result["arms"]["right"]["rotation_error_norm_mean_rad"])
+        self.assertIsNone(
+            empty_result["arms"]["right"]["rotation_error_norm_rmse_rad"])
+        self.assertIsNone(
+            empty_result["arms"]["right"]["rotation_error_norm_peak_rad"])
         self.assertTrue(all(value is None
                             for value in empty_result["arms"]["right"].values()))
         json.dumps(empty_result, allow_nan=False)
