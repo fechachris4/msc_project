@@ -1,2 +1,3 @@
 output*/*.npz
 output/runs/
+output/gain_sweep_smoke/

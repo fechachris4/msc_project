@@ -124,22 +124,36 @@ K_NULL_GRID = [0.0, 0.5, 1.0, 2.0, 3.5, 5.0]
 
 
 def _use_smoke_mode():
-    """Swap in tiny 2x2-ish grids, a short scenario, and a separate
-    output directory -- called once from main() before anything reads
-    SCENARIO/OUT/the grids, so every downstream function (which reads
-    these as plain module globals, same pattern as bandwidth_sweep.py's
-    FREQUENCIES) sees the smoke configuration transparently."""
+    """Swap in a short, settleable scenario and near-baseline 2-point
+    grids, plus a separate output directory -- called once from main()
+    before anything reads SCENARIO/OUT/the grids, so every downstream
+    function (which reads these as plain module globals, same pattern as
+    bandwidth_sweep.py's FREQUENCIES) sees the smoke configuration
+    transparently.
+
+    This verifies the pipeline (grids/state/plots/CLI), not the
+    physics: the corner-of-the-real-grid values (KP 0.5/10, KD 0/0.9,
+    ...) were originally used here too, but at 0.5 Hz they never settle
+    within the 15 s timeout, so every smoke episode was disqualified and
+    the sweep could never complete. These near-baseline values settle
+    quickly and are only meant to exercise every code path once."""
     global SCENARIO, OUT, KP_POS_GRID, KD_POS_GRID, KP_ROT_GRID, KD_ROT_GRID
     global SCALE_GRID, DAMPING_GRID, K_NULL_GRID
-    SCENARIO = SCENARIO._replace(linear_frequency=0.5, evaluation_seconds=4.0)
+    # 0.05 m @ 0.5 Hz -> peak velocity 0.157 m/s, comparable to the real
+    # scenario's 0.3 m @ 0.1 Hz -> 0.188 m/s (the full 0.3 m amplitude at
+    # 0.5 Hz peaks at 0.94 m/s -- even the baseline gains pick up
+    # contacts at that speed).
+    SCENARIO = SCENARIO._replace(
+        linear_amplitude=np.array([0.05, 0.0, 0.0]),
+        linear_frequency=0.5, evaluation_seconds=4.0)
     OUT = Path("analysis/output/gain_sweep_smoke")
-    KP_POS_GRID = [_round4(v) for v in np.geomspace(0.5, 10.0, 2)]
-    KD_POS_GRID = [_round4(v) for v in np.linspace(0.0, 0.9, 2)]
-    KP_ROT_GRID = [_round4(v) for v in np.geomspace(0.5, 10.0, 2)]
-    KD_ROT_GRID = [_round4(v) for v in np.linspace(0.0, 0.9, 2)]
-    SCALE_GRID = [0.75, 1.3]
-    DAMPING_GRID = [_round4(v) for v in np.geomspace(0.002, 0.2, 2)]
-    K_NULL_GRID = [0.0, 2.0]
+    KP_POS_GRID = [1.5, 3.0]
+    KD_POS_GRID = [0.15, 0.45]
+    KP_ROT_GRID = [1.5, 3.0]
+    KD_ROT_GRID = [0.15, 0.45]
+    SCALE_GRID = [0.9, 1.15]
+    DAMPING_GRID = [0.02, 0.09]
+    K_NULL_GRID = [0.5, 2.0]
 
 
 # --- stage grids -------------------------------------------------------
@@ -877,9 +891,11 @@ def main(argv=None):
     parser.add_argument("--fresh", action="store_true",
                         help="discard saved sweep_state.json and start over")
     parser.add_argument("--smoke", action="store_true",
-                        help="tiny grids and a short scenario, written to "
-                             "analysis/output/gain_sweep_smoke/ (~13 "
-                             "episodes, minutes) -- pipeline smoke test")
+                        help="near-baseline 2-point grids and a short "
+                             "settleable scenario, written to "
+                             "analysis/output/gain_sweep_smoke/ (~15 "
+                             "episodes, minutes) -- verifies the pipeline, "
+                             "not the physics")
     parser.add_argument("--plots-only", action="store_true",
                         help="regenerate plots and summary.csv from the "
                              "saved state; run no new episodes")
