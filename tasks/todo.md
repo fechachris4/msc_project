@@ -189,4 +189,16 @@ Verification evidence:
 
 ## Orientation Gain Sweep Review
 
-Design approved in conversation; written specification pending user review.
+Implemented `analysis.orientation_gain_sweep` as a dedicated 90-cell
+`KP_ROT x KD_ROT` sweep. It reuses the mixed position-sweep scenario and
+settling/parallel-resume machinery, freezes positional and auxiliary gains,
+and writes separate-arm orientation-error, angular-speed, and joint-speed
+metrics with eight heatmaps under `analysis/output/orientation_gain_sweep/`.
+
+Verification evidence:
+- `.venv/bin/python -m py_compile analysis/orientation_gain_sweep.py tests/test_orientation_gain_sweep.py`: passed.
+- Focused orientation tests: 6 passed.
+- Relevant regression suite (`test_orientation_gain_sweep`, `test_live`, `test_metrics`, `test_gain_sweep`): 63 passed.
+- Direct MuJoCo episode at `KP_ROT=2`, `KD_ROT=0.2`: completed, valid, 5000 evaluation samples, finite metrics for both arms.
+- Full discovery: 143 tests ran with six failures in pre-existing `test_control_trace` (2), `test_motion` (2), `test_servo` (1), and `test_velocity` (1); none import or exercise the new orientation sweep.
+- Spawned-worker smoke could not complete from stdin because Python `spawn` requires a file-backed `__main__`; sandbox semaphore creation also required escalation. The production worker code remains structurally mirrored from the verified position sweep.
