@@ -29,6 +29,9 @@ def _empty_arm_metrics():
         "position_error_norm_rmse_m": None,
         "position_error_axis_abs_peak_m": None,
         "position_error_norm_peak_m": None,
+        "rotation_error_norm_mean_rad": None,
+        "rotation_error_norm_rmse_rad": None,
+        "rotation_error_norm_peak_rad": None,
         "rejection_pct": None,
         "velocity_saturation_overall_pct": None,
         "joint_margin_min_rad": None,
@@ -60,6 +63,9 @@ def _arm_metrics(log, side, mask, peak_base):
     axis_rmse = np.sqrt(np.mean(e_pos**2, axis=0))
     axis_peak = np.max(np.abs(e_pos), axis=0)
     peak_norm = _finite_float(np.max(e_norm))
+
+    e_rot = np.asarray(log.arm_data[side]["e_rot"], dtype=float)[mask]
+    rot_norm = np.linalg.norm(e_rot, axis=1)
     if peak_base is None or peak_base <= 0.0 or peak_norm is None:
         rejection = None
     else:
@@ -86,6 +92,10 @@ def _arm_metrics(log, side, mask, peak_base):
             np.sqrt(np.mean(e_norm**2))),
         "position_error_axis_abs_peak_m": _finite_vector(axis_peak),
         "position_error_norm_peak_m": peak_norm,
+        "rotation_error_norm_mean_rad": _finite_float(np.mean(rot_norm)),
+        "rotation_error_norm_rmse_rad": _finite_float(
+            np.sqrt(np.mean(rot_norm**2))),
+        "rotation_error_norm_peak_rad": _finite_float(np.max(rot_norm)),
         "rejection_pct": rejection,
         "velocity_saturation_overall_pct": _finite_float(
             np.mean(saturated) * 100.0) if saturated.size else None,
