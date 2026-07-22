@@ -88,7 +88,11 @@ def _log(
             int(np.max(gain_segment)) + 1 if sample_count else 1)),
         settled=True,
         settle_duration=0.0,
-        valid=True,
+        metrics_computable=True,
+        accepted=True,
+        contact_observed=bool(np.any(np.asarray(contact_count) > 0)),
+        joint_limit_within_tolerance=True,
+        limit_penetration_rad=0.0,
         warning_reasons=(),
     )
 

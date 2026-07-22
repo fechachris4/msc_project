@@ -13,7 +13,7 @@ from typing import NamedTuple
 import mujoco
 import numpy as np
 
-from analysis import metrics
+from analysis import metrics, policy
 from controller import desired_pos, frames, servo
 from sim import motion, world
 
@@ -66,12 +66,21 @@ class ExperimentLog:
     gain_snapshots: tuple[dict[str, float], ...]
     settled: bool
     settle_duration: float
-    valid: bool
+    metrics_computable: bool
+    accepted: bool
+    contact_observed: bool
+    joint_limit_within_tolerance: bool
+    limit_penetration_rad: float
     warning_reasons: tuple[str, ...]
 
     @property
     def evaluation_mask(self):
         return self.phase == "evaluation"
+
+    @property
+    def valid(self):
+        """Compatibility alias. New code must use ``accepted`` explicitly."""
+        return self.accepted
 
 
 _GAIN_NAMES = ("KP_POS", "KP_ROT", "KD_POS", "KD_ROT", "K_NULL", "DAMPING")
@@ -259,7 +268,7 @@ class _LogBuilder:
             side: np.asarray(values, dtype=bool)
             for side, values in self.torso_contact.items()
         }
-        reasons = _validity_reasons(
+        status = policy.assess_run(
             config, arrays, arm_data, torso_contact, settled)
         return ExperimentLog(
             arms=self.arms,
@@ -270,41 +279,15 @@ class _LogBuilder:
             gain_snapshots=tuple(self.gain_snapshots),
             settled=settled,
             settle_duration=float(settle_duration),
-            valid=not reasons,
-            warning_reasons=tuple(reasons),
+            metrics_computable=status.metrics_computable,
+            accepted=status.accepted,
+            contact_observed=status.contact_observed,
+            joint_limit_within_tolerance=(
+                status.joint_limit_within_tolerance),
+            limit_penetration_rad=status.limit_penetration_rad,
+            warning_reasons=status.warning_reasons,
             **arrays,
         )
-
-
-def _validity_reasons(config, arrays, arm_data, torso_contact, settled):
-    reasons = []
-    if not settled:
-        reasons.append("settling timeout")
-    if np.any(arrays["contact_count"] > 0):
-        reasons.append("contact detected")
-    if any(np.any(values) for values in torso_contact.values()):
-        reasons.append("torso contact detected")
-    if any(np.any(fields["joint_margin"] < 0.0) for fields in arm_data.values()):
-        reasons.append("negative joint margin")
-    numeric = [arrays["sim_time"], arrays["contact_time"],
-               arrays["eval_time"], arrays["base_displacement"],
-               arrays["base_linear_velocity"],
-               arrays["base_angular_velocity"]]
-    for fields in arm_data.values():
-        numeric.extend(value for name, value in fields.items()
-                       if name != "joint_margin")
-        margins = fields["joint_margin"]
-        numeric.append(margins[np.isfinite(margins)])
-    if any(not np.all(np.isfinite(value)) for value in numeric):
-        reasons.append("non-finite data")
-    periods = []
-    if np.any(config.linear_amplitude) and config.linear_frequency > 0.0:
-        periods.append(1.0 / config.linear_frequency)
-    if np.any(config.rotational_amplitude) and config.rotational_frequency > 0.0:
-        periods.append(1.0 / config.rotational_frequency)
-    if periods and config.evaluation_seconds < max(periods):
-        reasons.append("evaluation shorter than one disturbance period")
-    return reasons
 
 
 def _advance(builder, phase, eval_time, scenario, on_update):
@@ -460,8 +443,17 @@ def _metadata(log, revision):
         "settled": log.settled,
         "settle_duration": log.settle_duration,
         "evaluation_mask": log.evaluation_mask.tolist(),
-        "valid": log.valid,
+        "metrics_computable": log.metrics_computable,
+        "accepted": log.accepted,
+        "contact_observed": log.contact_observed,
+        "joint_limit_within_tolerance": log.joint_limit_within_tolerance,
+        "limit_penetration_rad": log.limit_penetration_rad,
+        "valid": log.accepted,
         "warning_reasons": list(log.warning_reasons),
+        "acceptance_policy_version": policy.ACCEPTANCE_POLICY_VERSION,
+        "evidence_schema_version": policy.EVIDENCE_SCHEMA_VERSION,
+        "joint_limit_max_penetration_rad": (
+            policy.JOINT_LIMIT_MAX_PENETRATION_RAD),
         "dependency_versions": versions,
         "git_revision": revision,
         "scene_asset_sha256": _asset_hash(),
@@ -550,6 +542,13 @@ def load_run(run_dir):
                                  for values in metadata["gain_segments"]),
             settled=bool(metadata["settled"]),
             settle_duration=float(metadata["settle_duration"]),
-            valid=bool(metadata["valid"]),
+            metrics_computable=bool(metadata.get(
+                "metrics_computable", metadata["valid"])),
+            accepted=bool(metadata.get("accepted", metadata["valid"])),
+            contact_observed=bool(metadata.get("contact_observed", False)),
+            joint_limit_within_tolerance=bool(metadata.get(
+                "joint_limit_within_tolerance", metadata["valid"])),
+            limit_penetration_rad=float(metadata.get(
+                "limit_penetration_rad", 0.0)),
             warning_reasons=tuple(metadata["warning_reasons"]),
         )
