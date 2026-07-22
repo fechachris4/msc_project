@@ -49,53 +49,35 @@ EXPECTED_QDOT_SPEED_CLIPPED = np.array([
 ])
 
 
-class TaskTwistTermsTest(unittest.TestCase):
-    def test_returns_separate_p_and_d_twists(self):
-        from controller import servo
+def _setup_scene():
+    """Right arm at HOME with a known joint velocity and a known pose
+    offset to the target — shared by ControlTraceTest and
+    ComponentTogglesTest."""
+    from controller import frames, servo
+    from sim import targets, world
 
-        self.assertTrue(hasattr(servo, "task_twist_terms"))
-        e_pos = np.array([0.1, -0.2, 0.3])
-        e_rot = np.array([-0.4, 0.5, -0.6])
-        e_v = np.array([0.7, -0.8, 0.9])
-        e_w = np.array([-1.0, 1.1, -1.2])
+    mujoco.mj_resetData(world.model, world.data)
+    for side in world.SIDES:
+        world.data.qpos[frames.qpos_adrs[side]] = HOME
+    world.data.qvel[frames.dof_adrs["right"]] = np.array(
+        [0.12, -0.08, 0.05, -0.03, 0.02, -0.01, 0.04]
+    )
+    mujoco.mj_forward(world.model, world.data)
 
-        result = servo.task_twist_terms(e_pos, e_rot, e_v, e_w)
-        self.assertEqual(len(result), 3)
-        p_twist, d_twist, task_twist = result
-
-        np.testing.assert_array_equal(
-            p_twist,
-            np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot]),
-        )
-        np.testing.assert_array_equal(
-            d_twist,
-            np.concatenate([servo.KD_POS * e_v, servo.KD_ROT * e_w]),
-        )
-        np.testing.assert_array_equal(task_twist, p_twist + d_twist)
+    pos, rot = frames.ee_pose("right")
+    axis = np.array([0.3, -0.4, 0.5])
+    axis /= np.linalg.norm(axis)
+    ref_rot = rotation_about_axis(axis, 0.7) @ rot
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, ref_rot.flatten())
+    targets.set_target("right", pos + np.array([0.35, -0.22, 0.18]))
+    targets.set_target_quat("right", quat)
+    servo.init_ctrl()
 
 
 class ControlTraceTest(unittest.TestCase):
     def setUp(self):
-        from controller import frames, servo
-        from sim import targets, world
-
-        mujoco.mj_resetData(world.model, world.data)
-        for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
-        world.data.qvel[frames.dof_adrs["right"]] = np.array(
-            [0.12, -0.08, 0.05, -0.03, 0.02, -0.01, 0.04]
-        )
-        mujoco.mj_forward(world.model, world.data)
-
-        pos, rot = frames.ee_pose("right")
-        axis = np.array([0.3, -0.4, 0.5])
-        axis /= np.linalg.norm(axis)
-        ref_rot = rotation_about_axis(axis, 0.7) @ rot
-        quat = np.zeros(4)
-        mujoco.mju_mat2Quat(quat, ref_rot.flatten())
-        targets.set_target("right", pos + np.array([0.35, -0.22, 0.18]))
-        targets.set_target_quat("right", quat)
-        servo.init_ctrl()
+        _setup_scene()
 
     def tearDown(self):
         from sim import world
@@ -220,35 +202,55 @@ class ControlTraceTest(unittest.TestCase):
                     servo.apply_ctrl(dt, BASE_TWIST, arms=("right",))
                 np.testing.assert_array_equal(world.data.ctrl, ctrl_before)
 
-    def test_task_twist_is_computed_once_and_drives_the_solve(self):
+    def test_pd_twist_terms_follow_gains(self):
         from controller import servo
         from sim import world
 
-        original = servo.task_twist_terms
-        calls = []
+        trace = servo.apply_ctrl(
+            world.model.opt.timestep, BASE_TWIST, arms=("right",)
+        )["right"]
+        np.testing.assert_array_equal(
+            trace.p_twist,
+            np.concatenate(
+                [servo.KP_POS * trace.e_pos, servo.KP_ROT * trace.e_rot]),
+        )
+        np.testing.assert_array_equal(
+            trace.d_twist,
+            np.concatenate(
+                [servo.KD_POS * trace.e_v, servo.KD_ROT * trace.e_w]),
+        )
+        np.testing.assert_array_equal(
+            trace.task_twist, trace.p_twist + trace.d_twist)
 
-        def counted(e_pos, e_rot, e_v, e_w):
-            result = original(e_pos, e_rot, e_v, e_w)
-            calls.append(result)
-            return result
+    def test_logged_task_twist_drives_the_solve(self):
+        """The trace's task_twist must be the one the DLS solve consumed,
+        and apply_ctrl's inlined control law must stay numerically
+        identical to the standalone qdot_from_error the analysis
+        scripts use."""
+        from controller import servo
+        from sim import world
 
-        servo.task_twist_terms = counted
-        self.addCleanup(setattr, servo, "task_twist_terms", original)
         trace = servo.apply_ctrl(
             world.model.opt.timestep, BASE_TWIST, arms=("right",)
         )["right"]
 
-        self.assertEqual(len(calls), 1)
-        task_twist = calls[0][2]
         qdot_task = trace.J.T @ np.linalg.solve(
             trace.J @ trace.J.T + servo.DAMPING**2 * np.eye(6),
-            task_twist,
+            trace.task_twist,
         )
         projector = np.eye(7) - np.linalg.pinv(trace.J) @ trace.J
         qdot_null = -servo._K_NULL_VEC["right"] * (
             trace.q - servo._Q_MID["right"])
         np.testing.assert_allclose(
             trace.qdot_raw, qdot_task + projector @ qdot_null,
+            atol=1e-12, rtol=0.0)
+
+        np.testing.assert_allclose(
+            trace.qdot_raw,
+            servo.qdot_from_error(
+                trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
+                trace.q, servo._Q_MID["right"], servo._K_NULL_VEC["right"],
+                damping=servo.DAMPING),
             atol=1e-12, rtol=0.0)
 
     def test_lead_clamp_mask_and_effective_rate(self):
@@ -331,6 +333,84 @@ class ControlTraceTest(unittest.TestCase):
             expected_dtype = np.bool_ if field.name.endswith(
                 ("saturated", "clamped")) else np.float64
             self.assertEqual(value.dtype, expected_dtype, field.name)
+
+
+class ComponentTogglesTest(unittest.TestCase):
+    """Position, orientation, and velocity feedback must be
+    independently disableable: a disabled component contributes exact
+    zeros to the commanded twist, the enabled ones are untouched, and
+    apply_ctrl's law still matches the standalone qdot_from_error."""
+
+    def setUp(self):
+        from controller import servo
+
+        _setup_scene()
+        for flag in ("POSITION_ENABLED", "ORIENTATION_ENABLED",
+                     "VELOCITY_ENABLED"):
+            self.addCleanup(setattr, servo, flag, getattr(servo, flag))
+
+    def tearDown(self):
+        from sim import world
+
+        mujoco.mj_resetData(world.model, world.data)
+        mujoco.mj_forward(world.model, world.data)
+
+    def _trace_matching_standalone_law(self):
+        from controller import servo
+        from sim import world
+
+        trace = servo.apply_ctrl(
+            world.model.opt.timestep, BASE_TWIST, arms=("right",)
+        )["right"]
+        np.testing.assert_allclose(
+            trace.qdot_raw,
+            servo.qdot_from_error(
+                trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
+                trace.q, servo._Q_MID["right"], servo._K_NULL_VEC["right"],
+                damping=servo.DAMPING),
+            atol=1e-12, rtol=0.0)
+        return trace
+
+    def test_flags_default_enabled(self):
+        from controller import servo
+
+        self.assertTrue(servo.POSITION_ENABLED)
+        self.assertTrue(servo.ORIENTATION_ENABLED)
+        self.assertTrue(servo.VELOCITY_ENABLED)
+
+    def test_position_only(self):
+        from controller import servo
+
+        servo.ORIENTATION_ENABLED = False
+        servo.VELOCITY_ENABLED = False
+        trace = self._trace_matching_standalone_law()
+        np.testing.assert_array_equal(
+            trace.p_twist[:3], servo.KP_POS * trace.e_pos)
+        np.testing.assert_array_equal(trace.p_twist[3:], np.zeros(3))
+        np.testing.assert_array_equal(trace.d_twist, np.zeros(6))
+
+    def test_orientation_only(self):
+        from controller import servo
+
+        servo.POSITION_ENABLED = False
+        servo.VELOCITY_ENABLED = False
+        trace = self._trace_matching_standalone_law()
+        np.testing.assert_array_equal(trace.p_twist[:3], np.zeros(3))
+        np.testing.assert_array_equal(
+            trace.p_twist[3:], servo.KP_ROT * trace.e_rot)
+        np.testing.assert_array_equal(trace.d_twist, np.zeros(6))
+
+    def test_velocity_only(self):
+        from controller import servo
+
+        servo.POSITION_ENABLED = False
+        servo.ORIENTATION_ENABLED = False
+        trace = self._trace_matching_standalone_law()
+        np.testing.assert_array_equal(trace.p_twist, np.zeros(6))
+        np.testing.assert_array_equal(
+            trace.d_twist,
+            np.concatenate(
+                [servo.KD_POS * trace.e_v, servo.KD_ROT * trace.e_w]))
 
 
 if __name__ == "__main__":
