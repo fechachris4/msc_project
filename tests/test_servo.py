@@ -1,8 +1,8 @@
 """Pose error in controller.servo.
 
-Pure math: zero at coincidence, known injected offsets recovered exactly.
-Wrapper integration: drive the real pipeline (target mocap -> servo wrappers
--> frames FK) at randomized arm configurations.
+Drives the real pipeline (target mocap -> servo.pose_error -> frames FK)
+at randomized arm configurations: zero at coincidence, known injected
+offsets recovered exactly (e = reference - actual convention).
 """
 
 import unittest
@@ -10,10 +10,9 @@ import unittest
 import mujoco
 import numpy as np
 
-from controller.transforms import rotation_about_axis, rotation_from_rpy
+from controller.transforms import rotation_about_axis
 
 N_SAMPLES = 20
-PURE_TOL = 1e-12
 WRAP_TOL = 1e-9
 
 
@@ -22,42 +21,6 @@ def random_axis_angle(rng):
     axis /= np.linalg.norm(axis)
     angle = rng.uniform(-0.95 * np.pi, 0.95 * np.pi)
     return axis, angle
-
-
-class PoseErrorPureTest(unittest.TestCase):
-    def test_zero_at_coincidence(self):
-        from controller import servo
-
-        rng = np.random.default_rng(7)
-        for _ in range(N_SAMPLES):
-            pos = rng.uniform(-1.0, 1.0, 3)
-            rot = rotation_from_rpy(rng.uniform(-np.pi, np.pi, 3))
-            np.testing.assert_allclose(
-                servo.position_error(pos, pos), np.zeros(3), atol=PURE_TOL
-            )
-            np.testing.assert_allclose(
-                servo.rotation_error(rot, rot), np.zeros(3), atol=PURE_TOL
-            )
-
-    def test_known_offset_recovered(self):
-        from controller import servo
-
-        rng = np.random.default_rng(8)
-        for _ in range(N_SAMPLES):
-            ee_pos = rng.uniform(-1.0, 1.0, 3)
-            ee_rot = rotation_from_rpy(rng.uniform(-np.pi, np.pi, 3))
-            delta_pos = rng.uniform(-0.5, 0.5, 3)
-            axis, angle = random_axis_angle(rng)
-
-            ref_pos = ee_pos + delta_pos
-            ref_rot = rotation_about_axis(axis, angle) @ ee_rot
-
-            np.testing.assert_allclose(
-                servo.position_error(ref_pos, ee_pos), delta_pos, atol=PURE_TOL
-            )
-            np.testing.assert_allclose(
-                servo.rotation_error(ref_rot, ee_rot), axis * angle, atol=PURE_TOL
-            )
 
 
 class PoseErrorWrapperTest(unittest.TestCase):
@@ -188,22 +151,7 @@ class QdotFromErrorTest(unittest.TestCase):
             self.assertLess(float(drive @ null_part), 0.0)
 
 
-class VelocityErrorTest(unittest.TestCase):
-    def test_pure_convention(self):
-        """Zero at equality; injected offset recovered: e = ref - actual."""
-        from controller import servo
-
-        rng = np.random.default_rng(14)
-        for _ in range(N_SAMPLES):
-            vel = rng.uniform(-1.0, 1.0, 3)
-            np.testing.assert_array_equal(
-                servo.velocity_error(vel, vel), np.zeros(3)
-            )
-            delta = rng.uniform(-1.0, 1.0, 3)
-            np.testing.assert_allclose(
-                servo.velocity_error(vel + delta, vel), delta, atol=PURE_TOL
-            )
-
+class TwistErrorTest(unittest.TestCase):
     def test_twist_error_is_negated_ee_velocity(self):
         """Static targets => v_des = w_des = 0, so twist_error must equal
         the negated (already 3-leg-validated) frames.ee_velocity at any
@@ -410,6 +358,36 @@ class GainInvariantsTest(unittest.TestCase):
 
         self.assertGreater(servo.KP_POS, 0.0)
         self.assertGreater(servo.KP_ROT, 0.0)
+
+    def test_defaults_are_the_last_verified_baseline(self):
+        from controller import servo
+        from controller.gain_sets import VERIFIED_BASELINE
+
+        actual = {
+            "KP_POS": servo.KP_POS,
+            "KP_ROT": servo.KP_ROT,
+            "KD_POS": servo.KD_POS,
+            "KD_ROT": servo.KD_ROT,
+            "K_NULL": servo.K_NULL,
+            "DAMPING": servo.DAMPING,
+        }
+        self.assertEqual(actual, VERIFIED_BASELINE.as_overrides())
+
+    def test_later_tuning_is_preserved_only_as_exploratory(self):
+        from controller.gain_sets import EXPLORATORY_CANDIDATES
+
+        self.assertEqual(
+            EXPLORATORY_CANDIDATES["committed_20_0.9"].as_overrides(),
+            {"KP_POS": 20.0, "KP_ROT": 20.0,
+             "KD_POS": 0.9, "KD_ROT": 0.9,
+             "K_NULL": 0.5, "DAMPING": 0.05},
+        )
+        self.assertEqual(
+            EXPLORATORY_CANDIDATES["working_tree_32_2"].as_overrides(),
+            {"KP_POS": 32.0, "KP_ROT": 32.0,
+             "KD_POS": 2.0, "KD_ROT": 2.0,
+             "K_NULL": 0.5, "DAMPING": 0.05},
+        )
 
     def test_kd_below_discrete_stability_boundary(self):
         """e_v feeds back measured qdot one step delayed — a discrete

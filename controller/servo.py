@@ -14,6 +14,18 @@ the integrator state (ctrl += qdot*dt), so at the fixed point qdot = 0
 => e -> 0, and the servos' gravity droop is compensated automatically.
 init_ctrl() must sync the setpoints to the current joint angles once
 before the loop.
+
+The file reads in control-flow order: gains, limits, and component
+switches, per-arm setup computed once at import, the error stage, the
+control law, the logging record, and finally apply_ctrl — the one loop
+body every front-end shares, where each stage appears in sequence.
+
+Position, orientation, and velocity feedback are independent
+components: POSITION_ENABLED / ORIENTATION_ENABLED / VELOCITY_ENABLED
+each gate one term of the commanded task twist, composed in one place
+(task_twist_terms). Levers: gains and limits here; the world-frame
+reference in sim/targets (set by desired_pos.apply()); the control law
+in task_twist_terms + qdot_from_error.
 """
 
 from dataclasses import dataclass
@@ -23,10 +35,11 @@ import numpy as np
 import pinocchio as pin
 
 from controller import frames
+from controller.gain_sets import VERIFIED_BASELINE
 from controller.transforms import rotation_from_quat
 from sim import targets, world
 
-# --- control math (pure: numpy + pinocchio, no MuJoCo) ---------------------
+# --- gains and limits --------------------------------------------------------
 
 # Two structural constraints on these gains (tests/test_servo.py,
 # GainInvariantsTest):
@@ -40,127 +53,27 @@ from sim import targets, world
 #   lowers the effective bandwidth to KP/(1+KD) while feeding forward
 #   the fraction KD/(1+KD) of the base velocity: larger KD trades
 #   settle speed for disturbance rejection.
-KP_POS = 20.0    # 1/s task-space bandwidth
-KP_ROT = 20.0    # 1/s
-KD_POS = 0.9    # dimensionless: velocity error -> velocity command
-KD_ROT = 0.9    # dimensionless
-K_NULL = 0.5    # 1/s null-space joint-centering
-DAMPING = 0.05  # DLS lambda
+KP_POS = VERIFIED_BASELINE.kp_pos    # 1/s task-space bandwidth
+KP_ROT = VERIFIED_BASELINE.kp_rot    # 1/s
+KD_POS = VERIFIED_BASELINE.kd_pos    # dimensionless
+KD_ROT = VERIFIED_BASELINE.kd_rot    # dimensionless
+K_NULL = VERIFIED_BASELINE.k_null    # 1/s null-space joint-centering
+DAMPING = VERIFIED_BASELINE.damping  # DLS lambda
 
-
-def _read_only_copy(value):
-    copied = np.array(value, copy=True)
-    return np.frombuffer(copied.tobytes(), dtype=copied.dtype).reshape(
-        copied.shape)
-
-
-@dataclass(frozen=True)
-class ControlTrace:
-    """Read-only snapshots of one arm's control stages for one step."""
-
-    J: np.ndarray
-    e_pos: np.ndarray
-    e_rot: np.ndarray
-    e_v: np.ndarray
-    e_w: np.ndarray
-    p_twist: np.ndarray
-    d_twist: np.ndarray
-    task_twist: np.ndarray
-    q: np.ndarray
-    qdot_measured: np.ndarray
-    qdot_raw: np.ndarray
-    qdot_speed_clipped: np.ndarray
-    qdot_effective: np.ndarray
-    ctrl_before: np.ndarray
-    ctrl_after: np.ndarray
-    speed_saturated: np.ndarray
-    lead_clamped: np.ndarray
-    range_clamped: np.ndarray
-
-    def __post_init__(self):
-        for name in self.__dataclass_fields__:
-            object.__setattr__(self, name, _read_only_copy(getattr(self, name)))
-
-
-def position_error(ref_pos, ee_pos):
-    """World-frame position error, meters: reference - actual."""
-    return ref_pos - ee_pos
-
-
-def rotation_error(ref_rot, ee_rot):
-    """World-frame axis-angle error, radians: log3(R_ref @ R_ee.T)."""
-    return pin.log3(ref_rot @ ee_rot.T)
-
-
-def velocity_error(ref_vel, ee_vel):
-    """World-frame velocity error: reference - actual. Linear (m/s) and
-    angular (rad/s) alike — angular velocity lives in R^3, no log map."""
-    return ref_vel - ee_vel
-
-
-def task_twist_terms(e_pos, e_rot, e_v, e_w):
-    """Separate P and D task-twist terms, linear first, in the world frame."""
-    p_twist = np.concatenate([KP_POS * e_pos, KP_ROT * e_rot])
-    d_twist = np.concatenate([KD_POS * e_v, KD_ROT * e_w])
-    return p_twist, d_twist, p_twist + d_twist
-
-
-def _qdot_from_task_twist(J, task_twist, q, q_mid, k_null, damping):
-    qdot_task = J.T @ np.linalg.solve(
-        J @ J.T + damping**2 * np.eye(6), task_twist)
-    J_pinv = np.linalg.pinv(J)
-    qdot_null = -k_null * (q - q_mid)
-    return qdot_task + (np.eye(J.shape[1]) - J_pinv @ J) @ qdot_null
-
-
-def qdot_from_error(J, e_pos, e_rot, e_v, e_w, q, q_mid, k_null,
-                    damping=DAMPING):
-    """World-frame pose + velocity errors -> joint rates (rad/s):
-
-    1. PD law:        v = [KP_POS*e_pos + KD_POS*e_v;
-                           KP_ROT*e_rot + KD_ROT*e_w]  (commanded twist)
-       e_v/e_w are computed velocity errors (twist_error) — never a
-       numerical derivative of the position error.
-    2. DLS inversion: qdot_task = J^T (J J^T + damping^2 I)^-1 v
-       — bounded qdot through singularities at the cost of a small bias.
-    3. null space:    qdot = qdot_task + (I - J+ J) (-k_null (q - q_mid))
-       — joint centering that cannot disturb the task; k_null may be a
-       per-joint vector (0 = no centering). The projector uses the exact
-       pseudoinverse J+, not the damped one: the damped projector leaks
-       centering into the task and left a measured ~14 mm steady-state
-       error at damping=0.05 (exact projector: 0.4 mm)."""
-    _, _, task_twist = task_twist_terms(e_pos, e_rot, e_v, e_w)
-    return _qdot_from_task_twist(
-        J, task_twist, q, q_mid, k_null, damping)
-
-
-# --- pose error from sim state (target mocap vs frames FK) ------------------
-
-
-def pose_error(side):
-    """(e_pos, e_rot) of one arm: target mocap vs FK EE pose."""
-    ee_pos, ee_rot = frames.ee_pose(side)
-    ref_pos = targets.target_position(side)
-    ref_rot = rotation_from_quat(targets.target_quat(side))
-    return (position_error(ref_pos, ee_pos),
-            rotation_error(ref_rot, ee_rot))
-
-
-def twist_error(side, base_twist, J=None):
-    """(e_v, e_w): desired minus actual EE world twist, world frame.
-
-    The desired twist comes from the target trajectory
-    (targets.target_velocity — exactly zero for the static world-frame
-    hold); the actual from frames.ee_velocity. base_twist is required
-    with no default, same loud-failure convention as ee_velocity.
-    J, if given, is forwarded to ee_velocity (reuse, see there)."""
-    v_des, w_des = targets.target_velocity(side)
-    v_ee, w_ee = frames.ee_velocity(side, base_twist, J)
-    return (velocity_error(v_des, v_ee),
-            velocity_error(w_des, w_ee))
-
-
-# --- servo actuation (qdot limits, setpoint integration, data.ctrl) ---------
+# Independent control components. Each flag gates one term of the
+# commanded task twist (composed in task_twist_terms, the single point
+# apply_ctrl and qdot_from_error share):
+# - POSITION_ENABLED:    linear P,  KP_POS * e_pos      (twist rows 0-2)
+# - ORIENTATION_ENABLED: angular P, KP_ROT * e_rot      (twist rows 3-5)
+# - VELOCITY_ENABLED:    D term,    KD * twist error    (all 6 rows)
+# A disabled component contributes exact zeros to the commanded twist.
+# NOTE the physics: the 6-row DLS still runs, so a P-disabled axis is
+# commanded ZERO RATE (rate-damped, error drifts uncorrected — see the
+# KP_ROT note above), not left free. Freeing an axis outright would
+# mean dropping Jacobian rows: a structurally different controller.
+POSITION_ENABLED = True
+ORIENTATION_ENABLED = True
+VELOCITY_ENABLED = True
 
 # Kinova Gen3 spec sheet: max joint speed, large actuators (1-4) then
 # small (5-7). The real arm saturates here, so the baseline must too.
@@ -175,6 +88,8 @@ QDOT_LIMIT = np.radians([79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9])
 # actuators) / 0.14 rad (small); 0.2 rad clears both without throttling
 # legitimate tracking.
 CTRL_LEAD = 0.2
+
+# --- per-arm setup, computed once at import ----------------------------------
 
 
 def _ctrl_bounds(ctrl_adrs):
@@ -236,11 +151,130 @@ def init_ctrl():
             world.data.qpos[frames.qpos_adrs[side]]
 
 
+# --- error stage: world-frame errors vs the target ---------------------------
+
+
+def pose_error(side):
+    """(e_pos, e_rot) of one arm: target mocap vs FK EE pose.
+
+    e_pos = ref - actual (m); e_rot = log3(R_ref @ R_ee.T), the
+    world-frame axis-angle (rad) taking actual to reference."""
+    ee_pos, ee_rot = frames.ee_pose(side)
+    ref_pos = targets.target_position(side)
+    ref_rot = rotation_from_quat(targets.target_quat(side))
+    return ref_pos - ee_pos, pin.log3(ref_rot @ ee_rot.T)
+
+
+def twist_error(side, base_twist, J=None):
+    """(e_v, e_w): desired minus actual EE world twist, world frame.
+    Linear (m/s) and angular (rad/s) alike — angular velocity lives in
+    R^3, no log map.
+
+    The desired twist comes from the target trajectory
+    (targets.target_velocity — exactly zero for the static world-frame
+    hold); the actual from frames.ee_velocity. base_twist is required
+    with no default, same loud-failure convention as ee_velocity.
+    J, if given, is forwarded to ee_velocity (reuse, see there)."""
+    v_des, w_des = targets.target_velocity(side)
+    v_ee, w_ee = frames.ee_velocity(side, base_twist, J)
+    return v_des - v_ee, w_des - w_ee
+
+
+# --- control law: errors -> joint rates ---------------------------------------
+
+
+def task_twist_terms(e_pos, e_rot, e_v, e_w):
+    """(p_twist, d_twist): the components' contributions to the
+    commanded EE task twist, linear first, world frame. The single
+    composition point for the position / orientation / velocity
+    components — a disabled component contributes exact zeros (see the
+    component flags for what that means physically)."""
+    p_twist = np.concatenate([
+        KP_POS * e_pos if POSITION_ENABLED else np.zeros(3),
+        KP_ROT * e_rot if ORIENTATION_ENABLED else np.zeros(3),
+    ])
+    d_twist = (np.concatenate([KD_POS * e_v, KD_ROT * e_w])
+               if VELOCITY_ENABLED else np.zeros(6))
+    return p_twist, d_twist
+
+
+def qdot_from_error(J, e_pos, e_rot, e_v, e_w, q, q_mid, k_null,
+                    damping=DAMPING):
+    """World-frame pose + velocity errors -> joint rates (rad/s):
+
+    1. PD law:        v = [KP_POS*e_pos + KD_POS*e_v;
+                           KP_ROT*e_rot + KD_ROT*e_w]  (commanded twist)
+       e_v/e_w are computed velocity errors (twist_error) — never a
+       numerical derivative of the position error. Each term is gated
+       by its component flag (task_twist_terms).
+    2. DLS inversion: qdot_task = J^T (J J^T + damping^2 I)^-1 v
+       — bounded qdot through singularities at the cost of a small bias.
+    3. null space:    qdot = qdot_task + (I - J+ J) (-k_null (q - q_mid))
+       — joint centering that cannot disturb the task; k_null may be a
+       per-joint vector (0 = no centering). The projector uses the exact
+       pseudoinverse J+, not the damped one: the damped projector leaks
+       centering into the task and left a measured ~14 mm steady-state
+       error at damping=0.05 (exact projector: 0.4 mm).
+
+    apply_ctrl inlines this same law so the loop reads top-to-bottom;
+    test_control_trace pins the two equal. This standalone form is for
+    the analysis scripts (dashboard, diagnose), which re-derive qdot at
+    other damping values."""
+    p_twist, d_twist = task_twist_terms(e_pos, e_rot, e_v, e_w)
+    task_twist = p_twist + d_twist
+    qdot_task = J.T @ np.linalg.solve(
+        J @ J.T + damping**2 * np.eye(6), task_twist)
+    J_pinv = np.linalg.pinv(J)
+    qdot_null = -k_null * (q - q_mid)
+    return qdot_task + (np.eye(J.shape[1]) - J_pinv @ J) @ qdot_null
+
+
+# --- per-step logging record --------------------------------------------------
+
+
+def _read_only_copy(value):
+    copied = np.array(value, copy=True)
+    return np.frombuffer(copied.tobytes(), dtype=copied.dtype).reshape(
+        copied.shape)
+
+
+@dataclass(frozen=True)
+class ControlTrace:
+    """Read-only snapshots of one arm's control stages for one step."""
+
+    J: np.ndarray
+    e_pos: np.ndarray
+    e_rot: np.ndarray
+    e_v: np.ndarray
+    e_w: np.ndarray
+    p_twist: np.ndarray
+    d_twist: np.ndarray
+    task_twist: np.ndarray
+    q: np.ndarray
+    qdot_measured: np.ndarray
+    qdot_raw: np.ndarray
+    qdot_speed_clipped: np.ndarray
+    qdot_effective: np.ndarray
+    ctrl_before: np.ndarray
+    ctrl_after: np.ndarray
+    speed_saturated: np.ndarray
+    lead_clamped: np.ndarray
+    range_clamped: np.ndarray
+
+    def __post_init__(self):
+        for name in self.__dataclass_fields__:
+            object.__setattr__(self, name, _read_only_copy(getattr(self, name)))
+
+
+# --- main loop body ------------------------------------------------------------
+
+
 def apply_ctrl(dt, base_twist, arms=world.SIDES):
     """Write the selected arms' updated servo setpoints into data.ctrl:
-    pose + twist errors -> qdot (PD) -> clip to the joint speed limits ->
-    integrate the setpoints by qdot*dt -> clamp the lead over qpos to
-    CTRL_LEAD (anti-windup) -> clip to the actuator ctrl range.
+    read state -> pose + twist errors -> qdot (PD law + DLS) -> clip to
+    the joint speed limits -> integrate the setpoints by qdot*dt ->
+    clamp the lead over qpos to CTRL_LEAD (anti-windup) -> clip to the
+    actuator ctrl range -> write data.ctrl -> record a trace.
 
     base_twist = (v_T, w_T): the torso world twist, required with no
     default (motion.torso_twist_at in sim, Vicon on hardware, zeros for
@@ -257,15 +291,36 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES):
 
     traces = {}
     for side in arms:
+        # Read the current state: joint angles and measured joint rates
+        # straight from the sim, plus the world-frame EE Jacobian.
+        q = world.data.qpos[frames.qpos_adrs[side]]
+        qdot_measured = world.data.qvel[frames.dof_adrs[side]]
         J = frames.jacobian_world(side)
+
+        # World-frame errors vs the target: pose (drives the P term)
+        # and twist (drives the D term).
         e_pos, e_rot = pose_error(side)
         e_v, e_w = twist_error(side, base_twist, J)
-        q = world.data.qpos[frames.qpos_adrs[side]]
-        p_twist, d_twist, task_twist = task_twist_terms(
-            e_pos, e_rot, e_v, e_w)
-        qdot_measured = world.data.qvel[frames.dof_adrs[side]]
-        qdot_raw = _qdot_from_task_twist(
-            J, task_twist, q, _Q_MID[side], _K_NULL_VEC[side], DAMPING)
+
+        # PD law: errors -> commanded EE task twist, linear-first. Each
+        # component (position, orientation, velocity) contributes only
+        # if its flag is enabled — task_twist_terms is the one
+        # composition point shared with qdot_from_error.
+        p_twist, d_twist = task_twist_terms(e_pos, e_rot, e_v, e_w)
+        task_twist = p_twist + d_twist
+
+        # Task twist -> joint rates: DLS inversion (bounded through
+        # singularities) plus null-space joint centering behind the
+        # exact-pseudoinverse projector (cannot disturb the task).
+        # Same law as qdot_from_error, inlined; a test pins them equal.
+        qdot_task = J.T @ np.linalg.solve(
+            J @ J.T + DAMPING**2 * np.eye(6), task_twist)
+        qdot_null = -_K_NULL_VEC[side] * (q - _Q_MID[side])
+        qdot_raw = qdot_task + (np.eye(7) - np.linalg.pinv(J) @ J) @ qdot_null
+
+        # Safety limits: clip to the Gen3 joint speed limits, integrate
+        # the setpoints, clamp the lead over qpos (anti-windup), clip to
+        # the actuator ctrl range.
         qdot_speed_clipped = np.clip(qdot_raw, -QDOT_LIMIT, QDOT_LIMIT)
         speed_saturated = qdot_raw != qdot_speed_clipped
         ctrl_before = world.data.ctrl[world.ctrl_adrs[side]].copy()
@@ -275,7 +330,12 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES):
         lead_clamped = ctrl_integrated != ctrl_lead_limited
         ctrl_after = np.clip(ctrl_lead_limited, *_BOUNDS[side])
         range_clamped = ctrl_lead_limited != ctrl_after
+
+        # Send the command: the new servo setpoints, applied at the
+        # next mj_step.
         world.data.ctrl[world.ctrl_adrs[side]] = ctrl_after
+
+        # Log every stage as an immutable snapshot.
         qdot_effective = (ctrl_after - ctrl_before) / dt
         traces[side] = ControlTrace(
             J=J,
