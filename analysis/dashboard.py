@@ -59,7 +59,7 @@ import mujoco
 import numpy as np
 
 from analysis import metrics
-from controller import desired_pos, frames, reactive_pose, servo
+from controller import desired_pos, frames, reactive_controller, servo
 from controller.state import Twist
 from plotting.style import C_BASE, SIDE_COLOR, SIDE_STYLE
 from sim import motion, targets, world
@@ -346,7 +346,7 @@ def run(arms, save_seconds=None):
             if side in tick:
                 e_pos_full = tick[side]["e_pos"]
             else:
-                e_pos_full, _ = reactive_pose.pose_error(
+                e_pos_full, _ = reactive_controller.pose_error(
                     states.for_arm(side), world_targets.for_arm(side))
             full_log[f"{side}_e"].append(e_pos_full.copy())
 

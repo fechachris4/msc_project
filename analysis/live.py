@@ -11,7 +11,7 @@ import mujoco
 import numpy as np
 
 from analysis import metrics, policy, provenance
-from controller import desired_pos, frames, reactive_pose, servo
+from controller import desired_pos, frames, reactive_controller, servo
 from controller.runner import ReactivePositionRunner
 from runtime_config import (
     CONFIG,
@@ -317,7 +317,7 @@ def _current_pose_within(runner, source_targets, config):
     states = frames.controller_states(
         plant, world.MOUNT_CALIBRATION)
     for side in config.arms:
-        e_pos, e_rot = reactive_pose.pose_error(
+        e_pos, e_rot = reactive_controller.pose_error(
             states.for_arm(side), resolved.for_arm(side))
         if (
             np.linalg.norm(e_pos) > config.settle_pos_tol

@@ -3,7 +3,7 @@
 Per-step data flow (all SI: meters, radians; mm only in the printout):
   retained TOML FramedTarget + backend PlantState  [desired_pos, sim/world]
   -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  [controller/frames]
-  -> pose + twist errors; PD + DLS qdot          [controller/reactive_pose]
+  -> pose + twist errors; PD + DLS qdot          [controller/reactive_controller]
   -> integrate joint-position command (rad)      [controller/position_actuation]
   -> backend.exchange: apply command, mj_step, return next state
 

@@ -4,7 +4,7 @@ import unittest
 import mujoco
 import numpy as np
 
-from controller import frames, position_actuation, reactive_pose, servo
+from controller import frames, position_actuation, reactive_controller, servo
 from controller.state import Twist
 from sim import targets, world
 from tests.control_test_support import apply_cycle, reconstruct_pipeline
@@ -12,7 +12,7 @@ from tests.control_test_support import apply_cycle, reconstruct_pipeline
 
 class PureControlBoundaryTest(unittest.TestCase):
     def test_control_modules_do_not_import_simulator_or_backend(self):
-        for module in (reactive_pose, position_actuation, servo):
+        for module in (reactive_controller, position_actuation, servo):
             source = inspect.getsource(module)
             self.assertNotIn("import mujoco", source, module.__name__)
             self.assertNotIn("from sim", source, module.__name__)
@@ -28,7 +28,7 @@ class PureControlBoundaryTest(unittest.TestCase):
         states = frames.controller_states(plant, world.MOUNT_CALIBRATION)
         world_targets = targets.world_targets()
 
-        controller = reactive_pose.ReactivePoseController(
+        controller = reactive_controller.ReactiveController(
             servo.CONTROL, world.PIPELINE_SETUP.right.centering)
         expected = controller.compute(states.right, world_targets.right)
         command, traces = pipeline.step(

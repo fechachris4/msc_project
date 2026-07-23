@@ -12,7 +12,7 @@ from controller.position_actuation import (
     PositionActuationLimits,
     PositionIntegrator,
 )
-from controller.reactive_pose import JointCentering, ReactivePoseController
+from controller.reactive_controller import JointCentering, ReactiveController
 from controller.state import (
     DualArmControllerStates,
     DualArmWorldTargets,
@@ -144,7 +144,7 @@ class ReactivePositionPipeline:
         self._integrators = {}
         for side in ARMS:
             arm_setup = setup.for_arm(side)
-            self._controllers[side] = ReactivePoseController(
+            self._controllers[side] = ReactiveController(
                 controller_config, arm_setup.centering
             )
             self._integrators[side] = PositionIntegrator(
