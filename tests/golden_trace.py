@@ -118,6 +118,28 @@ def _cycle_rows(cycle, dt, base_twist, traces):
         _flatten(row, "ee_rotation", ee_rot)
         _flatten(row, "ee_linear_velocity_m_s", ee_v)
         _flatten(row, "ee_angular_velocity_rad_s", ee_w)
+        qdot_task = trace.J.T @ np.linalg.solve(
+            trace.J @ trace.J.T + servo.DAMPING**2 * np.eye(6),
+            trace.task_twist,
+        )
+        qdot_null_objective = (
+            -servo._K_NULL_VEC[side] * (trace.q - servo._Q_MID[side])
+        )
+        qdot_null_projected = (
+            np.eye(7) - np.linalg.pinv(trace.J) @ trace.J
+        ) @ qdot_null_objective
+        if not np.allclose(
+            qdot_task + qdot_null_projected,
+            trace.qdot_raw,
+            rtol=0.0,
+            atol=1e-14,
+        ):
+            raise AssertionError(
+                f"trace stage reconstruction differs for cycle {cycle} {side}"
+            )
+        _flatten(row, "qdot_task", qdot_task)
+        _flatten(row, "qdot_null_objective", qdot_null_objective)
+        _flatten(row, "qdot_null_projected", qdot_null_projected)
         for name in trace.__dataclass_fields__:
             _flatten(row, name, getattr(trace, name))
         rows.append(row)
@@ -165,7 +187,9 @@ def _write_csv(path, rows):
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = tuple(rows[0])
     with path.open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer = csv.DictWriter(
+            stream, fieldnames=fieldnames, lineterminator="\n"
+        )
         writer.writeheader()
         for row in rows:
             writer.writerow({
@@ -182,23 +206,69 @@ def _sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def record():
-    rows = generate_rows()
-    _write_csv(GOLDEN_CSV, rows)
-    manifest = {
+def _manifest_without_hash():
+    return {
         "trace_schema_version": TRACE_SCHEMA_VERSION,
         "baseline_revision": BASELINE_REVISION,
         "csv": GOLDEN_CSV.name,
-        "csv_sha256": _sha256(GOLDEN_CSV),
         "cycles": STEPS,
         "arms": list(ARMS),
-        "rows": len(rows),
+        "rows": STEPS * len(ARMS),
         "dt_s": float(world.model.opt.timestep),
         "duration_s": STEPS * float(world.model.opt.timestep),
         "comparison": {"relative_tolerance": RTOL, "absolute_tolerance": ATOL},
         "controller_output_field": "qdot_raw",
         "applied_command_field": "ctrl_after",
+        "controller": {
+            "gains": {
+                "kp_pos_s_inv": float(servo.KP_POS),
+                "kp_rot_s_inv": float(servo.KP_ROT),
+                "kd_pos": float(servo.KD_POS),
+                "kd_rot": float(servo.KD_ROT),
+                "k_null_s_inv": float(servo.K_NULL),
+                "dls_damping": float(servo.DAMPING),
+            },
+            "components": {
+                "position_enabled": bool(servo.POSITION_ENABLED),
+                "orientation_enabled": bool(servo.ORIENTATION_ENABLED),
+                "velocity_enabled": bool(servo.VELOCITY_ENABLED),
+            },
+            "joint_velocity_limit_rad_s": np.asarray(
+                servo.QDOT_LIMIT, dtype=float
+            ).tolist(),
+            "position_lead_limit_rad": float(servo.CTRL_LEAD),
+        },
+        "scenario": {
+            "base_linear_amplitude_m": BASE_LINEAR_AMPLITUDE_M.tolist(),
+            "base_rotational_amplitude_rad": (
+                BASE_ROTATIONAL_AMPLITUDE_RAD.tolist()
+            ),
+            "base_linear_frequency_hz": BASE_LINEAR_FREQUENCY_HZ,
+            "base_rotational_frequency_hz": BASE_ROTATIONAL_FREQUENCY_HZ,
+            "target_linear_amplitude_m": {
+                side: TARGET_LINEAR_AMPLITUDE_M[side].tolist() for side in ARMS
+            },
+            "target_rotational_amplitude_rad": {
+                side: TARGET_ROTATIONAL_AMPLITUDE_RAD[side].tolist()
+                for side in ARMS
+            },
+            "target_linear_frequency_hz": TARGET_LINEAR_FREQUENCY_HZ,
+            "target_rotational_frequency_hz": TARGET_ROTATIONAL_FREQUENCY_HZ,
+        },
     }
+
+
+def record():
+    rows = generate_rows()
+    _write_csv(GOLDEN_CSV, rows)
+    manifest = {
+        **_manifest_without_hash(),
+        "csv_sha256": _sha256(GOLDEN_CSV),
+    }
+    if len(rows) != manifest["rows"]:
+        raise AssertionError(
+            f"generated {len(rows)} rows, expected {manifest['rows']}"
+        )
     GOLDEN_MANIFEST.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n"
     )
@@ -269,6 +339,15 @@ def check():
     if not GOLDEN_CSV.is_file() or not GOLDEN_MANIFEST.is_file():
         raise FileNotFoundError("golden trace missing; run with --record first")
     manifest = json.loads(GOLDEN_MANIFEST.read_text())
+    expected_manifest = _manifest_without_hash()
+    actual_without_hash = {
+        name: value for name, value in manifest.items() if name != "csv_sha256"
+    }
+    if actual_without_hash != expected_manifest:
+        raise AssertionError(
+            "golden manifest does not match the harness constants and "
+            "controller configuration"
+        )
     if _sha256(GOLDEN_CSV) != manifest["csv_sha256"]:
         raise AssertionError("golden CSV hash does not match its manifest")
     with tempfile.TemporaryDirectory(prefix="msc-golden-trace-") as directory:
