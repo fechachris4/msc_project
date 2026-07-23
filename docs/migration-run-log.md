@@ -70,6 +70,7 @@ and a numbered commit.
 
 ## Step 5 — explicit Runner and MuJoCo backend
 
+- Commit: `a19d3ef`
 - Full suite: 186 tests passed
 - Golden gate: 500 rows matched at `rtol=1e-12`, `atol=1e-12`
 - Independent review: PASS after routing the experiment and thesis-metric
