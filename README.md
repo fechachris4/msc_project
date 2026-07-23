@@ -11,18 +11,18 @@ against this baseline.
 Per control step, all SI (meters, radians; mm only at prints/plots):
 
 ```
-target mocap pose (world) + joint angles qpos      sim/targets, MuJoCo
-  -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  controller/frames (Pinocchio FK)
-  -> pose error  e = ref - actual (world)          controller/servo
-  -> commanded twist v = Kp*e  [m/s; rad/s]        controller/servo (P law)
-  -> joint rates qdot via damped least squares     controller/servo (DLS)
-  -> integrate position-servo setpoints (rad)      controller/servo -> data.ctrl
-  -> mj_step
+retained TOML FramedTarget + backend PlantState
+  -> resolve target/state into world frame          controller/frames
+  -> pose/twist error, PD, DLS, null-space qdot     controller/reactive_pose
+  -> clip and integrate joint-position command      controller/position_actuation
+  -> apply command, mj_step, read next PlantState   sim/world.MujocoBackend
 ```
 
 The EE pose is never read from MuJoCo in the control path — it is composed
 from the torso pose (future: Vicon) and arm FK (future: joint encoders),
 mirroring what the hardware will provide.
+`ReactivePositionRunner` owns that ordering. Target mocap bodies are display
+markers, not controller inputs.
 
 ## Setup
 
