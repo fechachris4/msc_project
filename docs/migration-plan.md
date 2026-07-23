@@ -88,8 +88,8 @@ On failure, the diagnostic procedure is:
 3. Compare the first divergent derived quantity in this order:
    world EE pose, world Jacobian, world EE twist, pose error, twist error,
    proportional twist, derivative twist, DLS task velocity, null-space
-   velocity, raw joint velocity, clipped joint velocity, integrated position,
-   lead/range clamp, final command.
+   objective, projected null-space velocity, raw joint velocity, clipped joint
+   velocity, integrated position, lead/range clamp, final command.
 4. Report the field, cycle, Python value, C++ value, absolute error, and
    relative error. Do not tune gains or widen tolerances until the first
    divergence is explained.
