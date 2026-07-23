@@ -30,7 +30,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 ├── controller/frames.py      (PlantState + framed targets → world controller state)
 │   ├── controller/pin_fk.py       (Pinocchio T_K_E(q) — CONTROL PATH)
 │   └── controller/transforms.py   (pure SE(3) math)
-├── controller/reactive_pose.py        (pure PD + DLS + null-space policy)
+├── controller/reactive_controller.py  (complete PD + DLS + null-space equations)
 ├── controller/position_actuation.py   (limits + persistent position integration)
 ├── controller/servo.py                (explicit reactive-position composition)
 ├── controller/runner.py               (frame boundary, pipeline step, backend exchange)
@@ -61,7 +61,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 | `controller/state.py` | Fixed-shape, read-only SI plant/target/command records | Implemented | numpy | backend, frames, Runner, pipelines | `test_state_frames.py` | High | Keep one-to-one with future C++ structs |
 | `controller/frames.py` | Pure boundary from plant/framed target to world controller quantities | Validated (incl. moved torso) | state, pin_fk, transforms | Runner, diagnostics | `WorldFrameEETest`, `JacobianWorldTest`, `test_state_frames.py` | High | No backend imports or controller flags |
 | `controller/desired_pos.py` | Configured framed targets and MuJoCo marker display | Implemented | state, transforms, targets | `main.py`, analysis | `test_reference.py` | High | No control math |
-| `controller/reactive_pose.py` | Pure world-frame PD, DLS IK, and null-space policy | Validated | state, runtime config | servo pipeline | golden trace + `test_reactive_pipeline.py` | High | Sole numerical implementation |
+| `controller/reactive_controller.py` | Complete world-frame PD, DLS IK, and null-space equations in reading order | Validated | state, runtime config | servo pipeline | golden trace + `test_reactive_pipeline.py` | High | Sole controller-math file |
 | `controller/position_actuation.py` | Joint-velocity clipping and persistent position integration | Validated | state | servo pipeline | golden trace + `test_reactive_pipeline.py` | High | Reconstruct to reset |
 | `controller/servo.py` | Explicit reactive-pose-to-position pipeline composition | Validated | reactive_pose, position_actuation, state | Runner, tests | golden trace + pipeline/closed-loop tests | High | No frames, backend, or MuJoCo |
 | `controller/backend.py` | Minimal plant protocol: takeover, exchange, release | Implemented | state | Runner, backends | `test_runner_backend.py` | High | Do not add backend-specific operations |
@@ -103,7 +103,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
    configurations and random torso poses (`JacobianWorldTest`).
 
 6. **Reactive controller pipeline** —
-   `reactive_pose.py` owns the pure PD/DLS/null-space law;
+   `reactive_controller.py` owns the pure PD/DLS/null-space law;
    `position_actuation.py` owns clipping and persistent position integration;
    `servo.py` composes only those two stages. The frozen 500-cycle trace and
    closed-loop tests validate the split without a numerical change.
@@ -143,7 +143,7 @@ source FramedTargets -> frames -> ReactivePositionRunner
                                   |
                                   v
                   ReactivePositionPipeline
-                  ├── ReactivePoseController
+                  ├── ReactiveController
                   └── PositionIntegrator
 
 main.py / analysis.live / analysis.base_vs_error use the same Runner path.
@@ -198,7 +198,8 @@ backend command contract.
 - `controller/pin_fk.py` — done and frozen.
 - `controller/frames.py` composition (`T_W_T · T_T_K · T_K_E`) and Jacobian —
   validated including moved torso; matches the hardware sensing story.
-- `controller/reactive_pose.py` is the sole PD/DLS/null-space numerical law.
+- `controller/reactive_controller.py` is the sole PD/DLS/null-space numerical
+  law and is ordered as an executable equation sheet.
   Do not duplicate it in a backend, diagnostic, or future controller wrapper.
 - The circular-FK investigation — found, fixed, documented (2026-07-06 spec).
 - `sim/scene.xml` mount geometry and contact excludes — working.

@@ -1,6 +1,6 @@
 """Small explicit MuJoCo harness used by control-loop regression tests."""
 
-from controller import frames, reactive_pose, servo
+from controller import frames, reactive_controller, servo
 from controller.state import Twist
 from sim import targets, world
 
@@ -35,4 +35,4 @@ def pose_error(side):
     plant = world.read_state(Twist.zero())
     state = frames.arm_controller_state(
         plant, side, world.MOUNT_CALIBRATION)
-    return reactive_pose.pose_error(state, targets.world_target(side))
+    return reactive_controller.pose_error(state, targets.world_target(side))

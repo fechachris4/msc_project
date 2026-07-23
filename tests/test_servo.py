@@ -11,7 +11,7 @@ from dataclasses import replace
 import mujoco
 import numpy as np
 
-from controller import reactive_pose
+from controller import reactive_controller
 from controller.transforms import rotation_about_axis
 from tests.control_test_support import (
     apply_cycle,
@@ -35,7 +35,7 @@ def _solve_qdot(
     control,
     damping=None,
 ):
-    return reactive_pose.solve_reactive_velocity(
+    return reactive_controller.solve_reactive_velocity(
         J,
         e_pos,
         e_rot,
@@ -83,7 +83,7 @@ class PoseErrorWrapperTest(unittest.TestCase):
             )
 
     def _check_arm(self, rng, side):
-        from controller import reactive_pose
+        from controller import reactive_controller
         from sim import targets
 
         state = _arm_state(side)
@@ -95,7 +95,7 @@ class PoseErrorWrapperTest(unittest.TestCase):
         mujoco.mju_mat2Quat(quat, ee_rot.flatten())
         targets.set_target(side, ee_pos)
         targets.set_target_quat(side, quat)
-        e_pos, e_rot = reactive_pose.pose_error(
+        e_pos, e_rot = reactive_controller.pose_error(
             state, targets.world_target(side))
         np.testing.assert_allclose(e_pos, np.zeros(3), atol=WRAP_TOL)
         np.testing.assert_allclose(e_rot, np.zeros(3), atol=WRAP_TOL)
@@ -108,7 +108,7 @@ class PoseErrorWrapperTest(unittest.TestCase):
         )
         targets.set_target(side, ee_pos + delta_pos)
         targets.set_target_quat(side, quat)
-        e_pos, e_rot = reactive_pose.pose_error(
+        e_pos, e_rot = reactive_controller.pose_error(
             state, targets.world_target(side))
         np.testing.assert_allclose(e_pos, delta_pos, atol=WRAP_TOL)
         np.testing.assert_allclose(e_rot, axis * angle, atol=WRAP_TOL)
@@ -236,7 +236,7 @@ class TwistErrorTest(unittest.TestCase):
 
             for side in world.SIDES:
                 state = _arm_state(side, base_twist)
-                e_v, e_w = reactive_pose.twist_error(
+                e_v, e_w = reactive_controller.twist_error(
                     state, targets.world_target(side))
                 v_ee = state.ee_twist_world.linear_m_s
                 w_ee = state.ee_twist_world.angular_rad_s
@@ -258,7 +258,7 @@ class TwistErrorTest(unittest.TestCase):
         zero_twist = (np.zeros(3), np.zeros(3))
         for side in world.SIDES:
             state = _arm_state(side, zero_twist)
-            e_v, e_w = reactive_pose.twist_error(
+            e_v, e_w = reactive_controller.twist_error(
                 state, targets.world_target(side))
             np.testing.assert_array_equal(e_v, np.zeros(3))
             np.testing.assert_array_equal(e_w, np.zeros(3))

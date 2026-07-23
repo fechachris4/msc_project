@@ -7,7 +7,7 @@ import numpy as np
 from controller.state import Twist
 
 from controller.transforms import rotation_about_axis
-from controller import reactive_pose
+from controller import reactive_controller
 from controller.position_actuation import PositionIntegrator
 from tests.control_test_support import apply_cycle, reconstruct_pipeline
 
@@ -293,7 +293,7 @@ class ControlTraceTest(unittest.TestCase):
 
         np.testing.assert_allclose(
             trace.qdot_raw,
-            reactive_pose.solve_reactive_velocity(
+            reactive_controller.solve_reactive_velocity(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
                 trace.q, centering.midpoint_rad, null_gain,
                 servo.CONTROL,
@@ -420,7 +420,7 @@ class ComponentTogglesTest(unittest.TestCase):
         null_gain = centering.enabled * self.control.null_gain_s_inv
         np.testing.assert_allclose(
             trace.qdot_raw,
-            reactive_pose.solve_reactive_velocity(
+            reactive_controller.solve_reactive_velocity(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
                 trace.q, centering.midpoint_rad, null_gain,
                 self.control,

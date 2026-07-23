@@ -13,7 +13,7 @@ Per control step, all SI (meters, radians; mm only at prints/plots):
 ```
 retained TOML FramedTarget + backend PlantState
   -> resolve target/state into world frame          controller/frames
-  -> pose/twist error, PD, DLS, null-space qdot     controller/reactive_pose
+  -> pose/twist error, PD, DLS, null-space qdot     controller/reactive_controller
   -> clip and integrate joint-position command      controller/position_actuation
   -> apply command, mj_step, read next PlantState   sim/world.MujocoBackend
 ```
@@ -117,7 +117,7 @@ controller/
   kinematics.py            analytical FK from MjModel constants [test reference only]
   frames.py                target/state boundary + world-frame EE kinematics
   desired_pos.py           configured framed targets and MuJoCo marker display
-  reactive_pose.py         pure pose/twist error, PD, DLS, null-space policy
+  reactive_controller.py   complete controller equations, read top-to-bottom
   position_actuation.py    velocity limits + persistent position integration
   servo.py                 explicit reactive-pose-to-position composition
 plotting/                 reusable instruments only (no MuJoCo except via callers)

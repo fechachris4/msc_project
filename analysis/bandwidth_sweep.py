@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 
-from controller import frames, reactive_pose, servo
+from controller import frames, reactive_controller, servo
 from controller.state import Twist
 from plotting.style import C_LEFT as C_PRED, C_RIGHT as C_MEAS
 from sim import target_motion, targets, world
@@ -153,7 +153,7 @@ def run_one(frequency):
                 SIDE,
                 world.MOUNT_CALIBRATION,
             )
-            e_pos, _ = reactive_pose.pose_error(
+            e_pos, _ = reactive_controller.pose_error(
                 measured, targets.world_target(SIDE))
             log_t.append(t_rel)
             log_e.append(e_pos[AXIS])

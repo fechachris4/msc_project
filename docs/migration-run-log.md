@@ -57,7 +57,7 @@ and a numbered commit.
     pose-to-joint-position flow; future direct-velocity or MPC flows are not
     routed through it.
   - Put pose/twist error, PD task twist, DLS IK, and null-space centering in
-    `reactive_pose.py`; no second numerical implementation remains in
+    `reactive_controller.py`; no second numerical implementation remains in
     diagnostics or the runtime path.
   - Give `PositionIntegrator` sole ownership of the persistent position
     command. It is seeded from measured joints at construction and has no

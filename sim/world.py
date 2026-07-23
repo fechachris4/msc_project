@@ -11,7 +11,7 @@ import mujoco
 import numpy as np
 
 from controller.position_actuation import PositionActuationLimits
-from controller.reactive_pose import JointCentering
+from controller.reactive_controller import JointCentering
 from controller.servo import ArmPipelineSetup, DualArmPipelineSetup
 from controller.state import (
     ArmJointState,
