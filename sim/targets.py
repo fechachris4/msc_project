@@ -8,7 +8,15 @@ side is "right" or "left" throughout.
 
 import numpy as np
 
-from controller.state import DualArmWorldTargets, Pose, Twist, WorldTarget
+from controller.state import (
+    DualArmFramedTargets,
+    DualArmWorldTargets,
+    FramedTarget,
+    Pose,
+    TargetFrame,
+    Twist,
+    WorldTarget,
+)
 from controller.transforms import rotation_from_quat
 from sim import world
 
@@ -61,4 +69,20 @@ def world_targets():
     return DualArmWorldTargets(
         right=world_target("right"),
         left=world_target("left"),
+    )
+
+
+def framed_world_targets():
+    """Read markers as boundary inputs explicitly declared in world."""
+    return DualArmFramedTargets(
+        right=FramedTarget(
+            TargetFrame.WORLD,
+            world_target("right").pose_world,
+            Twist.zero(),
+        ),
+        left=FramedTarget(
+            TargetFrame.WORLD,
+            world_target("left").pose_world,
+            Twist.zero(),
+        ),
     )

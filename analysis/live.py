@@ -11,14 +11,14 @@ import mujoco
 import numpy as np
 
 from analysis import metrics, policy, provenance
-from controller import desired_pos, frames, servo
-from controller.state import Twist
+from controller import desired_pos, frames, reactive_pose, servo
+from controller.runner import ReactivePositionRunner
 from runtime_config import (
     CONFIG,
     control_with_legacy_overrides,
     legacy_gain_dict,
 )
-from sim import motion, targets, world
+from sim import motion, world
 
 
 class ExperimentConfig(NamedTuple):
@@ -44,7 +44,7 @@ class ExperimentUpdate:
     base_displacement: np.ndarray
     base_linear_velocity: np.ndarray
     base_angular_velocity: np.ndarray
-    traces: dict[str, servo.ControlTrace]
+    traces: servo.DualArmControlTraces
     joint_margin: dict[str, np.ndarray]
     contact_count: int
     torso_contact: dict[str, bool]
@@ -111,18 +111,40 @@ def _validate_config(config):
             raise ValueError(f"{name} must be finite and non-negative")
 
 
-def _reset_simulation(control=CONFIG.reactive_pose):
-    mujoco.mj_resetData(world.model, world.data)
-    mujoco.mj_forward(world.model, world.data)
-    desired_pos.apply()
-    pipeline = servo.ReactivePositionPipeline(
-        world.read_state(Twist.zero()),
-        world.PIPELINE_SETUP,
-        control,
-    )
-    world.apply_command(pipeline.command())
-    mujoco.mj_forward(world.model, world.data)
-    return pipeline
+def _reset_simulation():
+    world.backend.release()
+    world.backend.configure_torso_driver(None, None)
+    world.backend.reset()
+    return desired_pos.apply()
+
+
+class _ExperimentTorsoDriver:
+    """Explicit scenario phase; MuJoCo still owns all writes and stepping."""
+
+    def __init__(self, scenario):
+        self._scenario = scenario
+        self._evaluation_start_s = None
+
+    def start_evaluation(self, sample_time_s):
+        if self._evaluation_start_s is not None:
+            raise RuntimeError("evaluation has already started")
+        self._evaluation_start_s = float(sample_time_s)
+
+    def pose_at(self, sample_time_s):
+        if self._evaluation_start_s is None:
+            return motion.HOME_POS.copy(), motion.HOME_RPY.copy()
+        return motion.torso_pose_at(
+            sample_time_s - self._evaluation_start_s,
+            **self._scenario,
+        )
+
+    def twist_at(self, sample_time_s):
+        if self._evaluation_start_s is None:
+            return np.zeros(3), np.zeros(3)
+        return motion.torso_twist_at(
+            sample_time_s - self._evaluation_start_s,
+            **self._scenario,
+        )
 
 
 def _joint_margin(side, q):
@@ -262,32 +284,39 @@ class _LogBuilder:
         )
 
 
-def _advance(builder, pipeline, phase, eval_time, scenario, on_update):
-    sim_time = float(world.data.time)
-    if phase == "evaluation":
-        motion.set_torso_pose(eval_time, **scenario)
-        mujoco.mj_kinematics(world.model, world.data)
-        base_v, base_w = motion.torso_twist_at(eval_time, **scenario)
-        base_pos, _ = motion.torso_pose_at(eval_time, **scenario)
-        base_disp = base_pos - motion.HOME_POS
-    else:
-        base_v = np.zeros(3)
-        base_w = np.zeros(3)
-        base_disp = np.zeros(3)
-    plant = world.read_state(Twist(base_v, base_w))
-    command, traces = pipeline.step(
-        frames.controller_states(plant, world.MOUNT_CALIBRATION),
-        targets.world_targets(),
-        world.model.opt.timestep,
-        builder.arms,
+def _advance(builder, runner, phase, eval_time, on_update):
+    cycle = runner.cycle()
+    plant = cycle.input_state
+    sim_time = plant.sample_time_s
+    base_v = plant.torso_twist_world.linear_m_s
+    base_w = plant.torso_twist_world.angular_rad_s
+    base_disp = (
+        plant.torso_pose_world.position_m - motion.HOME_POS
+        if phase == "evaluation"
+        else np.zeros(3)
     )
-    world.apply_command(command)
-    mujoco.mj_step(world.model, world.data)
     contact_time = sim_time
     pairs = _contact_pairs()
     builder.append(phase, sim_time, contact_time, eval_time, base_disp,
-                   base_v, base_w, traces, pairs, on_update)
-    return traces
+                   base_v, base_w, cycle.traces, pairs, on_update)
+    return cycle
+
+
+def _current_pose_within(runner, source_targets, config):
+    plant = runner.current_state
+    resolved = frames.resolve_targets_world(
+        plant, world.MOUNT_CALIBRATION, source_targets)
+    states = frames.controller_states(
+        plant, world.MOUNT_CALIBRATION)
+    for side in config.arms:
+        e_pos, e_rot = reactive_pose.pose_error(
+            states.for_arm(side), resolved.for_arm(side))
+        if (
+            np.linalg.norm(e_pos) > config.settle_pos_tol
+            or np.linalg.norm(e_rot) > config.settle_rot_tol
+        ):
+            return False
+    return True
 
 
 def run_experiment(config, on_update=None, gains=None):
@@ -303,41 +332,77 @@ def run_experiment(config, on_update=None, gains=None):
         rotational_amplitude=np.asarray(
             config.rotational_amplitude, dtype=float).copy(),
     )
-    control = control_with_legacy_overrides(CONFIG.reactive_pose, gains)
-    pipeline = _reset_simulation(control)
-    builder = _LogBuilder(tuple(config.arms), control)
-    dt = float(world.model.opt.timestep)
-    settled = False
-    dwell_start = None
-    settle_start = float(world.data.time)
-    while world.data.time - settle_start < config.settle_timeout:
-        traces = _advance(
-            builder, pipeline, "settling", -1.0, {}, on_update)
-        within = all(
-            np.linalg.norm(trace.e_pos) <= config.settle_pos_tol
-            and np.linalg.norm(trace.e_rot) <= config.settle_rot_tol
-            for trace in traces.values()
-        )
-        if within:
-            if dwell_start is None:
-                dwell_start = float(world.data.time)
-            if world.data.time - dwell_start >= config.settle_dwell:
-                settled = True
-                break
-        else:
-            dwell_start = None
-    settle_duration = float(world.data.time - settle_start)
     scenario = {
         "linear_amplitude": config.linear_amplitude,
         "linear_frequency": config.linear_frequency,
         "rotational_amplitude": config.rotational_amplitude,
         "rotational_frequency": config.rotational_frequency,
     }
-    evaluation_steps = max(1, int(np.ceil(config.evaluation_seconds / dt)))
-    for step in range(evaluation_steps):
-        _advance(
-            builder, pipeline, "evaluation", step * dt, scenario, on_update)
-    return builder.build(config, settled, settle_duration)
+    control = control_with_legacy_overrides(CONFIG.reactive_pose, gains)
+    source_targets = _reset_simulation()
+    driver = _ExperimentTorsoDriver(scenario)
+    world.backend.configure_torso_driver(driver.pose_at, driver.twist_at)
+    runner = ReactivePositionRunner(
+        world.backend,
+        world.MOUNT_CALIBRATION,
+        world.PIPELINE_SETUP,
+        source_targets,
+        config.arms,
+        control,
+    )
+    runner.start()
+    try:
+        builder = _LogBuilder(tuple(config.arms), control)
+        dt = runner.current_state.nominal_dt_s
+        settled = False
+        dwell_start = None
+        settle_start = runner.current_state.sample_time_s
+        while (
+            runner.current_state.sample_time_s - settle_start
+            < config.settle_timeout
+        ):
+            within = _current_pose_within(
+                runner, source_targets, config)
+            next_time = (
+                runner.current_state.sample_time_s + dt)
+            if within:
+                next_dwell_start = (
+                    next_time if dwell_start is None else dwell_start)
+                will_settle = (
+                    next_time - next_dwell_start
+                    >= config.settle_dwell
+                )
+            else:
+                next_dwell_start = None
+                will_settle = False
+            will_timeout = (
+                next_time - settle_start >= config.settle_timeout)
+            if will_settle or will_timeout:
+                driver.start_evaluation(next_time)
+
+            _advance(
+                builder, runner, "settling", -1.0, on_update)
+            dwell_start = next_dwell_start
+            if will_settle:
+                settled = True
+                break
+
+        settle_duration = (
+            runner.current_state.sample_time_s - settle_start)
+        evaluation_steps = max(
+            1, int(np.ceil(config.evaluation_seconds / dt)))
+        for step in range(evaluation_steps):
+            _advance(
+                builder,
+                runner,
+                "evaluation",
+                step * dt,
+                on_update,
+            )
+        return builder.build(config, settled, settle_duration)
+    finally:
+        runner.close()
+        world.backend.configure_torso_driver(None, None)
 
 
 def _git_revision():

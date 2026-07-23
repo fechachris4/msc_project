@@ -27,15 +27,14 @@ if "--save" in sys.argv:
     matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-import mujoco
 import numpy as np
 
 from analysis import metrics
-from controller import desired_pos, frames, reactive_pose, servo
-from controller.state import Twist
+from controller import desired_pos
+from controller.runner import ReactivePositionRunner
 from plotting.live_plot import LivePlot
 from plotting.style import C_BASE, C_RIGHT, C_LEFT
-from sim import motion, targets, world
+from sim import motion, world
 
 # Static settle before the scenario starts (validate_velocity.py's
 # pattern): the arms boot from a default configuration far from
@@ -49,33 +48,54 @@ WINDOW_S = 30.0  # rolling on-screen window: 3 periods at 0.1 Hz
 OUT = Path("analysis/output")
 
 
+class _DelayedDefaultMotion:
+    def __init__(self):
+        self._start_time_s = None
+
+    def start_at(self, sample_time_s):
+        self._start_time_s = float(sample_time_s)
+
+    def pose_at(self, sample_time_s):
+        if self._start_time_s is None:
+            return motion.HOME_POS.copy(), motion.HOME_RPY.copy()
+        return motion.torso_pose_at(sample_time_s - self._start_time_s)
+
+    def twist_at(self, sample_time_s):
+        if self._start_time_s is None:
+            return np.zeros(3), np.zeros(3)
+        return motion.torso_twist_at(sample_time_s - self._start_time_s)
+
+
 def run(save_seconds=None):
     """Closed-loop rollout under sim.motion defaults with a live rolling plot.
     save_seconds: if given, run headless for that many sim-seconds; otherwise
     run live until the window is closed (or Ctrl-C). Returns (log, plot)
     where log = {t, base_disp, right_e, left_e} full-run arrays
     (base_disp and *_e in meters, world frame)."""
-    mujoco.mj_resetData(world.model, world.data)
-    mujoco.mj_forward(world.model, world.data)
-    desired_pos.apply()
-    pipeline = servo.ReactivePositionPipeline(
-        world.read_state(Twist.zero()), world.PIPELINE_SETUP)
-    world.apply_command(pipeline.command())
+    world.backend.release()
+    world.backend.configure_torso_driver(None, None)
+    world.backend.reset()
+    source_targets = desired_pos.apply()
+    driver = _DelayedDefaultMotion()
+    world.backend.configure_torso_driver(driver.pose_at, driver.twist_at)
+    runner = ReactivePositionRunner(
+        world.backend,
+        world.MOUNT_CALIBRATION,
+        world.PIPELINE_SETUP,
+        source_targets,
+    )
+    runner.start()
 
-    dt = world.model.opt.timestep
-    zero_twist = (np.zeros(3), np.zeros(3))
-    for _ in range(int(SETTLE_SECONDS / dt)):
-        plant = world.read_state(Twist(*zero_twist))
-        command, _ = pipeline.step(
-            frames.controller_states(plant, world.MOUNT_CALIBRATION),
-            targets.world_targets(),
-            dt,
-        )
-        world.apply_command(command)
-        mujoco.mj_step(world.model, world.data)
+    dt = runner.current_state.nominal_dt_s
+    settle_steps = int(SETTLE_SECONDS / dt)
+    for step in range(settle_steps):
+        if step == settle_steps - 1:
+            driver.start_at(
+                runner.current_state.sample_time_s + dt)
+        runner.cycle()
 
     home_pos = motion.HOME_POS
-    t_start = world.data.time  # phase 0 at motion start: no teleport
+    t_start = runner.current_state.sample_time_s
     n_steps = int(save_seconds / dt) if save_seconds is not None else None
 
     amp_mm = motion.LINEAR_AMPLITUDE * 1000.0
@@ -107,26 +127,13 @@ def run(save_seconds=None):
             elif not plot.is_open():
                 break
 
-            t = world.data.time - t_start
-            motion.set_torso_pose(t)
-            # refresh xpos/xmat so the logged state sees the torso pose
-            # at t, not the previous step's (main.py/diagnose.py pattern)
-            mujoco.mj_kinematics(world.model, world.data)
-            # set_torso_pose (mocap write) and torso_twist_at
-            # (feedforward) must stay a matched pair — same scenario,
-            # same instant t.
-            base_twist = motion.torso_twist_at(t)
-
-            plant = world.read_state(Twist(*base_twist))
-            states = frames.controller_states(
-                plant, world.MOUNT_CALIBRATION)
-            world_targets = targets.world_targets()
+            cycle = runner.cycle()
+            plant = cycle.input_state
+            t = plant.sample_time_s - t_start
             base_pos = plant.torso_pose_world.position_m
             base_disp = base_pos - home_pos
-            right_e, _ = reactive_pose.pose_error(
-                states.right, world_targets.right)
-            left_e, _ = reactive_pose.pose_error(
-                states.left, world_targets.left)
+            right_e = cycle.traces.right.e_pos
+            left_e = cycle.traces.left.e_pos
 
             log["t"].append(t)
             log["base_disp"].append(base_disp)
@@ -138,13 +145,12 @@ def run(save_seconds=None):
                 "left EE error": left_e * 1000.0,
             })
 
-            command, _ = pipeline.step(
-                states, world_targets, dt)
-            world.apply_command(command)
-            mujoco.mj_step(world.model, world.data)
             step += 1
     except KeyboardInterrupt:
         pass  # fall through to the stats table
+    finally:
+        runner.close()
+        world.backend.configure_torso_driver(None, None)
 
     return {k: np.asarray(v) for k, v in log.items()}, plot
 

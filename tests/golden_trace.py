@@ -13,6 +13,7 @@ import argparse
 import csv
 import hashlib
 import json
+from functools import partial
 from pathlib import Path
 import tempfile
 
@@ -20,7 +21,7 @@ import mujoco
 import numpy as np
 
 from controller import desired_pos, frames, servo
-from controller.state import Twist
+from controller.runner import ReactivePositionRunner
 from runtime_config import CONFIG
 from sim import motion, target_motion, targets, world
 
@@ -75,13 +76,31 @@ def _reset_current_code():
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
     target_motion.init_home()
-    plant = world.read_state(Twist.zero())
-    pipeline = servo.ReactivePositionPipeline(
-        plant, world.PIPELINE_SETUP
+    world.backend.configure_torso_driver(
+        partial(
+            motion.torso_pose_at,
+            linear_amplitude=BASE_LINEAR_AMPLITUDE_M,
+            linear_frequency=BASE_LINEAR_FREQUENCY_HZ,
+            rotational_amplitude=BASE_ROTATIONAL_AMPLITUDE_RAD,
+            rotational_frequency=BASE_ROTATIONAL_FREQUENCY_HZ,
+        ),
+        partial(
+            motion.torso_twist_at,
+            linear_amplitude=BASE_LINEAR_AMPLITUDE_M,
+            linear_frequency=BASE_LINEAR_FREQUENCY_HZ,
+            rotational_amplitude=BASE_ROTATIONAL_AMPLITUDE_RAD,
+            rotational_frequency=BASE_ROTATIONAL_FREQUENCY_HZ,
+        ),
     )
-    world.apply_command(pipeline.command())
-    mujoco.mj_forward(world.model, world.data)
-    return pipeline
+    runner = ReactivePositionRunner(
+        world.backend,
+        world.MOUNT_CALIBRATION,
+        world.PIPELINE_SETUP,
+        targets.framed_world_targets(),
+        ARMS,
+    )
+    runner.start()
+    return runner
 
 
 def _flatten(row, prefix, value):
@@ -93,10 +112,13 @@ def _flatten(row, prefix, value):
         row[f"{prefix}_{index}"] = item.item()
 
 
-def _cycle_rows(cycle, dt, base_twist, traces):
-    plant = world.read_state(Twist(*base_twist))
+def _cycle_rows(cycle, dt, plant, traces):
     torso_pos = plant.torso_pose_world.position_m
     torso_rot = plant.torso_pose_world.rotation
+    base_twist = (
+        plant.torso_twist_world.linear_m_s,
+        plant.torso_twist_world.angular_rad_s,
+    )
     rows = []
     for side in ARMS:
         trace = traces[side]
@@ -109,7 +131,7 @@ def _cycle_rows(cycle, dt, base_twist, traces):
         row = {
             "cycle": cycle,
             "arm": side,
-            "sample_time_s": world.data.time,
+            "sample_time_s": plant.sample_time_s,
             "dt_s": dt,
         }
         _flatten(row, "torso_position_m", torso_pos)
@@ -158,45 +180,33 @@ def _cycle_rows(cycle, dt, base_twist, traces):
 
 
 def generate_rows():
-    pipeline = _reset_current_code()
+    runner = _reset_current_code()
     dt = float(world.model.opt.timestep)
     rows = []
-    for cycle in range(STEPS):
-        t = float(world.data.time)
-        motion.set_torso_pose(
-            t,
-            BASE_LINEAR_AMPLITUDE_M,
-            BASE_LINEAR_FREQUENCY_HZ,
-            BASE_ROTATIONAL_AMPLITUDE_RAD,
-            BASE_ROTATIONAL_FREQUENCY_HZ,
-        )
-        for side in ARMS:
-            target_motion.set_target_pose(
-                t,
-                side,
-                TARGET_LINEAR_AMPLITUDE_M[side],
-                TARGET_LINEAR_FREQUENCY_HZ,
-                TARGET_ROTATIONAL_AMPLITUDE_RAD[side],
-                TARGET_ROTATIONAL_FREQUENCY_HZ,
+    try:
+        for cycle in range(STEPS):
+            t = runner.current_state.sample_time_s
+            for side in ARMS:
+                target_motion.set_target_pose(
+                    t,
+                    side,
+                    TARGET_LINEAR_AMPLITUDE_M[side],
+                    TARGET_LINEAR_FREQUENCY_HZ,
+                    TARGET_ROTATIONAL_AMPLITUDE_RAD[side],
+                    TARGET_ROTATIONAL_FREQUENCY_HZ,
+                )
+            result = runner.cycle(targets.framed_world_targets())
+            rows.extend(
+                _cycle_rows(
+                    cycle,
+                    dt,
+                    result.input_state,
+                    result.traces,
+                )
             )
-        mujoco.mj_kinematics(world.model, world.data)
-        base_twist = motion.torso_twist_at(
-            t,
-            BASE_LINEAR_AMPLITUDE_M,
-            BASE_LINEAR_FREQUENCY_HZ,
-            BASE_ROTATIONAL_AMPLITUDE_RAD,
-            BASE_ROTATIONAL_FREQUENCY_HZ,
-        )
-        plant = world.read_state(Twist(*base_twist))
-        command, traces = pipeline.step(
-            frames.controller_states(plant, world.MOUNT_CALIBRATION),
-            targets.world_targets(),
-            dt,
-            ARMS,
-        )
-        world.apply_command(command)
-        rows.extend(_cycle_rows(cycle, dt, base_twist, traces))
-        mujoco.mj_step(world.model, world.data)
+    finally:
+        runner.close()
+        world.backend.configure_torso_driver(None, None)
     return rows
 
 

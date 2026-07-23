@@ -6,7 +6,7 @@ Per-step data flow (all SI: meters, radians; mm only in the printout):
   -> pose + twist errors e, e_v (world)            [controller/servo]
   -> commanded twist v = Kp*e + Kd*e_v -> qdot via DLS  [controller/servo]
   -> integrate position-servo setpoints data.ctrl (rad)  [controller/servo]
-  -> mj_step
+  -> backend.exchange: apply command, mj_step, return next state
 
 usage: mjpython main.py [right|left|both]
 """
@@ -17,10 +17,10 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
-from controller import desired_pos, frames, reactive_pose, servo
-from controller.state import Twist
+from controller import desired_pos
+from controller.runner import ReactivePositionRunner
 from runtime_config import CONFIG, print_effective_config
-from sim import motion, targets, world
+from sim import motion, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
@@ -41,63 +41,53 @@ def main(argv=None):
     arms = _parse_args(sys.argv[1:] if argv is None else argv)
     print_effective_config(CONFIG)
     source_targets = desired_pos.apply()
-    initial_plant = world.read_state(Twist.zero())
-    pipeline = servo.ReactivePositionPipeline(
-        initial_plant, world.PIPELINE_SETUP
+    world.backend.configure_torso_driver(
+        motion.torso_pose_at, motion.torso_twist_at)
+    runner = ReactivePositionRunner(
+        world.backend,
+        world.MOUNT_CALIBRATION,
+        world.PIPELINE_SETUP,
+        source_targets,
+        arms,
     )
-    world.apply_command(pipeline.command())
+    runner.start()
 
     step = 0
-    with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
-        while viewer.is_running():
-            step_start = time.perf_counter()
-            motion.set_torso_pose(world.data.time)
-            # Refresh xpos/xmat from the mocap write: without this the
-            # controller sees the torso pose of the previous step (t - dt)
-            # paired with the base twist at t.
-            mujoco.mj_kinematics(world.model, world.data)
-            # set_torso_pose (mocap write) and torso_twist_at (feedforward)
-            # must stay a matched pair — same scenario, same instant t.
-            base_twist = motion.torso_twist_at(world.data.time)
-            plant = world.read_state(Twist(*base_twist))
-            world_targets = frames.resolve_targets_world(
-                plant, world.MOUNT_CALIBRATION, source_targets)
-            desired_pos.show_targets(world_targets)
-            command, _ = pipeline.step(
-                frames.controller_states(
-                    plant, world.MOUNT_CALIBRATION),
-                world_targets,
-                world.model.opt.timestep,
-                arms,
-            )
-            world.apply_command(command)
-            mujoco.mj_step(world.model, world.data)
+    try:
+        with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
+            while viewer.is_running():
+                step_start = time.perf_counter()
+                cycle = runner.cycle()
+                desired_pos.show_targets(cycle.resolved_targets)
 
-            if step % PRINT_EVERY == 0:
-                display_plant = world.read_state(Twist.zero())
-                display_targets = targets.world_targets()
-                for side in world.SIDES:
-                    state = frames.arm_controller_state(
-                        display_plant, side, world.MOUNT_CALIBRATION)
-                    e_pos, _ = reactive_pose.pose_error(
-                        state, display_targets.for_arm(side))
-                    e_mm = e_pos * 1000.0
-                    # sigma_min -> 0 means a task direction is being lost.
-                    sigma = np.linalg.svd(
-                        state.jacobian_world, compute_uv=False)
-                    print(f"t={world.data.time:6.2f}s  {side:5s} "
-                          f"|e|={np.linalg.norm(e_mm):.1f} mm  "
-                          f"e_pos=[{e_mm[0]: 7.1f} {e_mm[1]: 7.1f} "
-                          f"{e_mm[2]: 7.1f}]  "
-                          f"sigma=[{' '.join(f'{s:.3f}' for s in sigma)}]")
-            step += 1
+                if step % PRINT_EVERY == 0:
+                    for side, trace in cycle.traces.items():
+                        e_pos = trace.e_pos
+                        state = cycle.input_state
+                        sample_time = state.sample_time_s
+                        e_mm = e_pos * 1000.0
+                        sigma = np.linalg.svd(
+                            trace.J, compute_uv=False)
+                        print(
+                            f"t={sample_time:6.2f}s  {side:5s} "
+                            f"|e|={np.linalg.norm(e_mm):.1f} mm  "
+                            f"e_pos=[{e_mm[0]: 7.1f} {e_mm[1]: 7.1f} "
+                            f"{e_mm[2]: 7.1f}]  "
+                            f"sigma=[{' '.join(f'{s:.3f}' for s in sigma)}]"
+                        )
+                step += 1
 
-            viewer.sync()
+                viewer.sync()
 
-            time_until_next_step = (
-                world.model.opt.timestep - (time.perf_counter() - step_start))
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
+                time_until_next_step = (
+                    world.model.opt.timestep
+                    - (time.perf_counter() - step_start)
+                )
+                if time_until_next_step > 0:
+                    time.sleep(time_until_next_step)
+    finally:
+        runner.close()
+        world.backend.configure_torso_driver(None, None)
 
 
 if __name__ == "__main__":
