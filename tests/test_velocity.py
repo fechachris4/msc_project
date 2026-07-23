@@ -23,6 +23,8 @@ import mujoco
 import numpy as np
 import pinocchio as pin
 
+from tests.control_test_support import apply_cycle, reconstruct_pipeline
+
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
 
@@ -199,11 +201,12 @@ class ComposedVsMeasuredFDTest(unittest.TestCase):
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline()
 
         dt = world.model.opt.timestep
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, (np.zeros(3), np.zeros(3)))
+            apply_cycle(
+                pipeline, dt, (np.zeros(3), np.zeros(3)))
             mujoco.mj_step(world.model, world.data)
 
         n = int(self.MOTION_SECONDS / dt)
@@ -229,7 +232,7 @@ class ComposedVsMeasuredFDTest(unittest.TestCase):
                 )
                 v[s][k] = state.ee_twist_world.linear_m_s
                 w[s][k] = state.ee_twist_world.angular_rad_s
-            servo.apply_ctrl(dt, base_twist)
+            apply_cycle(pipeline, dt, base_twist)
             mujoco.mj_step(world.model, world.data)
 
         for s in world.SIDES:

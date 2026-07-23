@@ -19,8 +19,9 @@ def _array(value, shape, name):
     if array.shape != shape or not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must be a finite shape-{shape} array")
     result = array.copy()
-    result.setflags(write=False)
-    return result
+    return np.frombuffer(result.tobytes(), dtype=result.dtype).reshape(
+        result.shape
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,3 +224,43 @@ class ArmControllerState:
             "jacobian_world",
             _array(self.jacobian_world, (6, 7), "jacobian_world"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DualArmControllerStates:
+    right: ArmControllerState
+    left: ArmControllerState
+
+    def for_arm(self, side):
+        if side == "right":
+            return self.right
+        if side == "left":
+            return self.left
+        raise ValueError(f"unknown arm: {side!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class JointPositionCommand:
+    """Backend-facing position command in radians for both seven-DOF arms."""
+
+    right_position_rad: np.ndarray
+    left_position_rad: np.ndarray
+
+    def __post_init__(self):
+        object.__setattr__(
+            self,
+            "right_position_rad",
+            _array(self.right_position_rad, (7,), "right_position_rad"),
+        )
+        object.__setattr__(
+            self,
+            "left_position_rad",
+            _array(self.left_position_rad, (7,), "left_position_rad"),
+        )
+
+    def for_arm(self, side):
+        if side == "right":
+            return self.right_position_rad
+        if side == "left":
+            return self.left_position_rad
+        raise ValueError(f"unknown arm: {side!r}")

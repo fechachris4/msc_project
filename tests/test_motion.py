@@ -14,6 +14,11 @@ import numpy as np
 
 from controller.transforms import rotation_from_rpy
 from controller.state import Twist
+from tests.control_test_support import (
+    apply_cycle,
+    pose_error,
+    reconstruct_pipeline,
+)
 
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
@@ -158,12 +163,12 @@ class BaseMotionRejectionTest(unittest.TestCase):
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline()
 
         dt = world.model.opt.timestep
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            apply_cycle(pipeline, dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
 
         t_start = world.data.time  # phase 0 at motion start: no teleport
@@ -178,10 +183,10 @@ class BaseMotionRejectionTest(unittest.TestCase):
                 t_rel, linear_amplitude=self.TEST_AMPLITUDE,
                 linear_frequency=self.TEST_FREQUENCY,
                 rotational_amplitude=np.zeros(3))
-            servo.apply_ctrl(dt, base_twist)
+            apply_cycle(pipeline, dt, base_twist)
             mujoco.mj_step(world.model, world.data)
             for side in world.SIDES:
-                e_pos, _ = servo.pose_error(side)
+                e_pos, _ = pose_error(side)
                 peak[side] = max(peak[side], np.linalg.norm(e_pos))
 
         for side in world.SIDES:
@@ -224,12 +229,12 @@ class PDvsPDisturbanceTest(unittest.TestCase):
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline(control)
 
         dt = world.model.opt.timestep
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist, control=control)
+            apply_cycle(pipeline, dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
 
         t_start = world.data.time
@@ -243,10 +248,10 @@ class PDvsPDisturbanceTest(unittest.TestCase):
                 t_rel, linear_amplitude=self.AMPLITUDE,
                 linear_frequency=self.FREQUENCY,
                 rotational_amplitude=np.zeros(3))
-            servo.apply_ctrl(dt, base_twist, control=control)
+            apply_cycle(pipeline, dt, base_twist)
             mujoco.mj_step(world.model, world.data)
             for side in world.SIDES:
-                e_pos, _ = servo.pose_error(side)
+                e_pos, _ = pose_error(side)
                 peak[side] = max(peak[side], np.linalg.norm(e_pos))
         return peak
 

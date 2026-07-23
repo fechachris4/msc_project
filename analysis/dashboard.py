@@ -8,11 +8,9 @@ one or both arms.
     python -m analysis.dashboard both --save 10   # headless, 10 sim-seconds
 
 Base motion follows the public research levers in sim.motion. Every
-per-tick quantity is
-recomputed from the same public functions apply_ctrl itself calls
-(servo.pose_error, servo.twist_error, servo.qdot_from_error,
-frames.jacobian_world) — the analysis/diagnose.py convention: the
-dashboard shows exactly what the controller saw, nothing re-derived.
+per-tick quantity comes from the explicit controller state and immutable
+ControlTrace produced by the real pipeline — the analysis/diagnose.py
+convention: the dashboard shows exactly what the controller saw.
 
 Panels (top to bottom), sharing the time axis:
   1-3. world x, y, z: signed per-axis error (mm, e = ref - actual) —
@@ -61,7 +59,7 @@ import mujoco
 import numpy as np
 
 from analysis import metrics
-from controller import desired_pos, frames, servo
+from controller import desired_pos, frames, reactive_pose, servo
 from controller.state import Twist
 from plotting.style import C_BASE, SIDE_COLOR, SIDE_STYLE
 from sim import motion, targets, world
@@ -107,7 +105,7 @@ def ctrl_lead_deg(ctrl, q):
 
 def sigma_min(J):
     """Smallest singular value of the Jacobian — DLS is materially active
-    once this falls near DAMPING (servo.qdot_from_error's lambda)."""
+    once this falls near the controller's DLS damping."""
     return float(np.linalg.svd(J, compute_uv=False).min())
 
 
@@ -115,8 +113,8 @@ def sigma_min(J):
 
 
 def run(arms, save_seconds=None):
-    """Run the dashboard. arms: subset of world.SIDES to drive (via
-    servo.apply_ctrl) and plot — an unselected arm holds posture and is
+    """Run the dashboard. arms: subset of world.SIDES to drive and plot
+    — an unselected arm holds posture and is
     not shown on the live panels (same selection semantics as main.py),
     though its pose_error is still logged for the final table. Both
     sides are always driven+plotted+logged when arms == world.SIDES
@@ -124,7 +122,9 @@ def run(arms, save_seconds=None):
     that many sim-seconds and save analysis/output/dashboard.png;
     otherwise run live until the figure window is closed."""
     desired_pos.apply()
-    servo.init_ctrl()
+    pipeline = servo.ReactivePositionPipeline(
+        world.read_state(Twist.zero()), world.PIPELINE_SETUP)
+    world.apply_command(pipeline.command())
 
     dt = world.model.opt.timestep
 
@@ -136,7 +136,15 @@ def run(arms, save_seconds=None):
         # buffer ages the transient out on its own.
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            plant = world.read_state(Twist(*zero_twist))
+            command, _ = pipeline.step(
+                frames.controller_states(
+                    plant, world.MOUNT_CALIBRATION),
+                targets.world_targets(),
+                dt,
+                arms,
+            )
+            world.apply_command(command)
             mujoco.mj_step(world.model, world.data)
     t_start = world.data.time  # phase 0 at motion start: no teleport
 
@@ -299,26 +307,27 @@ def run(arms, save_seconds=None):
         base_twist = motion.torso_twist_at(t)
 
         plant = world.read_state(Twist(*base_twist))
+        states = frames.controller_states(
+            plant, world.MOUNT_CALIBRATION)
+        world_targets = targets.world_targets()
         base_pos = plant.torso_pose_world.position_m
         base_disp = base_pos - motion.HOME_POS  # (3,) m, signed
 
-        # Pre-control state: exactly what apply_ctrl is about to use.
+        command, traces = pipeline.step(
+            states, world_targets, dt, arms)
+
+        # Pre-control state and pure controller output for this cycle.
         tick = {}
         for s in arms:
-            state = frames.arm_controller_state(
-                plant, s, world.MOUNT_CALIBRATION)
-            target = targets.world_target(s)
-            J = state.jacobian_world
-            e_pos, e_rot = servo.pose_error_from_state(state, target)
-            e_v, e_w = servo.twist_error_from_state(state, target)
-            q = state.joints.position_rad
-            qdot_raw = servo.qdot_from_error(
-                J, e_pos, e_rot, e_v, e_w, q,
-                servo._Q_MID[s], servo._null_gain_vector(s))
+            trace = traces[s]
+            J = trace.J
+            e_pos, e_rot = trace.e_pos, trace.e_rot
+            q = trace.q
+            qdot_raw = trace.qdot_raw
             tick[s] = dict(J=J, e_pos=e_pos, e_rot=e_rot, q=q,
                            qdot_raw=qdot_raw)
 
-        servo.apply_ctrl(dt, base_twist, arms)
+        world.apply_command(command)
 
         # Post-control: the setpoints the servos will now chase.
         for s in arms:
@@ -337,7 +346,8 @@ def run(arms, save_seconds=None):
             if side in tick:
                 e_pos_full = tick[side]["e_pos"]
             else:
-                e_pos_full, _ = servo.pose_error(side)
+                e_pos_full, _ = reactive_pose.pose_error(
+                    states.for_arm(side), world_targets.for_arm(side))
             full_log[f"{side}_e"].append(e_pos_full.copy())
 
         t_buf.append(t)

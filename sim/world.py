@@ -12,11 +12,15 @@ import numpy as np
 
 from controller.state import (
     ArmJointState,
+    JointPositionCommand,
     MountCalibration,
     PlantState,
     Pose,
     Twist,
 )
+from controller.position_actuation import PositionActuationLimits
+from controller.reactive_pose import JointCentering
+from controller.servo import ArmPipelineSetup, DualArmPipelineSetup
 from controller.transforms import rotation_from_quat
 from runtime_config import CONFIG
 
@@ -137,3 +141,44 @@ def jnt_range(side):
             low[i - 1], high[i - 1] = model.jnt_range[jnt_id]
             limited[i - 1] = True
     return low, high, limited
+
+
+def _actuator_ctrl_bounds(side):
+    low = np.full(7, -np.inf)
+    high = np.full(7, np.inf)
+    for index, address in enumerate(ctrl_adrs[side]):
+        if model.actuator_ctrllimited[address]:
+            low[index], high[index] = model.actuator_ctrlrange[address]
+    return low, high
+
+
+def _arm_pipeline_setup(side):
+    joint_low, joint_high, limited = jnt_range(side)
+    midpoint = np.zeros(7)
+    midpoint[limited] = 0.5 * (
+        joint_low[limited] + joint_high[limited]
+    )
+    command_low, command_high = _actuator_ctrl_bounds(side)
+    return ArmPipelineSetup(
+        centering=JointCentering(midpoint, limited),
+        actuation_limits=PositionActuationLimits(
+            velocity_rad_s=np.asarray(CONFIG.limits.joint_velocity_rad_s),
+            lead_rad=CONFIG.limits.position_lead_rad,
+            lower_position_rad=command_low,
+            upper_position_rad=command_high,
+        ),
+    )
+
+
+PIPELINE_SETUP = DualArmPipelineSetup(
+    right=_arm_pipeline_setup("right"),
+    left=_arm_pipeline_setup("left"),
+)
+
+
+def apply_command(command):
+    """Apply a complete dual-arm position command to MuJoCo ctrl."""
+    if not isinstance(command, JointPositionCommand):
+        raise TypeError("command must be a JointPositionCommand")
+    for side in SIDES:
+        data.ctrl[ctrl_adrs[side]] = command.for_arm(side)

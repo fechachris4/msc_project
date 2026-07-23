@@ -75,8 +75,13 @@ def _reset_current_code():
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
     target_motion.init_home()
-    servo.init_ctrl()
+    plant = world.read_state(Twist.zero())
+    pipeline = servo.ReactivePositionPipeline(
+        plant, world.PIPELINE_SETUP
+    )
+    world.apply_command(pipeline.command())
     mujoco.mj_forward(world.model, world.data)
+    return pipeline
 
 
 def _flatten(row, prefix, value):
@@ -122,7 +127,14 @@ def _cycle_rows(cycle, dt, base_twist, traces):
             trace.task_twist,
         )
         qdot_null_objective = (
-            -servo._null_gain_vector(side) * (trace.q - servo._Q_MID[side])
+            -(
+                world.PIPELINE_SETUP.for_arm(side).centering.enabled
+                * servo.CONTROL.null_gain_s_inv
+            )
+            * (
+                trace.q
+                - world.PIPELINE_SETUP.for_arm(side).centering.midpoint_rad
+            )
         )
         qdot_null_projected = (
             np.eye(7) - np.linalg.pinv(trace.J) @ trace.J
@@ -146,7 +158,7 @@ def _cycle_rows(cycle, dt, base_twist, traces):
 
 
 def generate_rows():
-    _reset_current_code()
+    pipeline = _reset_current_code()
     dt = float(world.model.opt.timestep)
     rows = []
     for cycle in range(STEPS):
@@ -175,7 +187,14 @@ def generate_rows():
             BASE_ROTATIONAL_AMPLITUDE_RAD,
             BASE_ROTATIONAL_FREQUENCY_HZ,
         )
-        traces = servo.apply_ctrl(dt, base_twist, ARMS)
+        plant = world.read_state(Twist(*base_twist))
+        command, traces = pipeline.step(
+            frames.controller_states(plant, world.MOUNT_CALIBRATION),
+            targets.world_targets(),
+            dt,
+            ARMS,
+        )
+        world.apply_command(command)
         rows.extend(_cycle_rows(cycle, dt, base_twist, traces))
         mujoco.mj_step(world.model, world.data)
     return rows

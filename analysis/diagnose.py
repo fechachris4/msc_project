@@ -1,8 +1,7 @@
 """Diagnose the right-arm tracking failure under torso roll. Read-only:
-the controller is never modified — every logged quantity is recomputed
-from sim state with the same public functions apply_ctrl itself calls
-(servo.pose_error, frames.jacobian_world, servo.qdot_from_error), so the
-log shows exactly what the controller saw each cycle.
+the controller is never modified — every logged quantity is taken from
+the explicit controller state and immutable ControlTrace produced by the
+real pipeline, so the log shows exactly what the controller saw each cycle.
 
     python -m analysis.diagnose
 
@@ -60,7 +59,9 @@ def run():
     mujoco.mj_resetData(world.model, world.data)
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
-    servo.init_ctrl()
+    pipeline = servo.ReactivePositionPipeline(
+        world.read_state(Twist.zero()), world.PIPELINE_SETUP)
+    world.apply_command(pipeline.command())
 
     dt = world.model.opt.timestep
     n_steps = int(SIM_SECONDS / dt)
@@ -105,21 +106,22 @@ def run():
         # the torso pose at t, not the previous step's (as main.py)
         mujoco.mj_kinematics(world.model, world.data)
         plant = world.read_state(Twist(*base_twist))
+        states = frames.controller_states(
+            plant, world.MOUNT_CALIBRATION)
+        world_targets = targets.world_targets()
+        command, traces = pipeline.step(
+            states, world_targets, dt)
 
-        # Pre-control state: exactly what apply_ctrl is about to use.
+        # Pre-control state and pure controller output for this cycle.
         for s in world.SIDES:
             L = log[s]
-            state = frames.arm_controller_state(
-                plant, s, world.MOUNT_CALIBRATION)
-            target = targets.world_target(s)
-            e_pos, e_rot = servo.pose_error_from_state(state, target)
-            e_v, e_w = servo.twist_error_from_state(state, target)
-            J = state.jacobian_world
+            state = states.for_arm(s)
+            trace = traces[s]
+            e_pos, e_rot = trace.e_pos, trace.e_rot
+            J = trace.J
             sv = np.linalg.svd(J, compute_uv=False)
-            q = state.joints.position_rad
-            qdot_raw = servo.qdot_from_error(
-                J, e_pos, e_rot, e_v, e_w, q, servo._Q_MID[s],
-                servo._null_gain_vector(s))
+            q = trace.q
+            qdot_raw = trace.qdot_raw
             qdot_meas = state.joints.velocity_rad_s
             low, high = jlims[s]
 
@@ -146,12 +148,14 @@ def run():
             ])
             L["v_ach"][k] = J @ qdot_meas
 
-        servo.apply_ctrl(dt, base_twist)
+        world.apply_command(command)
 
         # Post-control: the setpoints the servos will now chase.
         for s in world.SIDES:
             ctrl = world.data.ctrl[world.ctrl_adrs[s]].copy()
-            lo, hi = servo._BOUNDS[s]
+            limits = world.PIPELINE_SETUP.for_arm(s).actuation_limits
+            lo = limits.lower_position_rad
+            hi = limits.upper_position_rad
             log[s]["ctrl_dist"][k] = np.minimum(ctrl - lo, hi - ctrl)
             log[s]["servo_lag"][k] = ctrl - log[s]["q"][k]
 
@@ -242,7 +246,9 @@ def make_figures(log, ev):
     for s, cs in (("right", C_RIGHT), ("left", C_LEFT)):
         L = log[s]
         low, high, _ = world.jnt_range(s)
-        lo_c, hi_c = servo._BOUNDS[s]
+        limits = world.PIPELINE_SETUP.for_arm(s).actuation_limits
+        lo_c = limits.lower_position_rad
+        hi_c = limits.upper_position_rad
         fig, axes = plt.subplots(7, 1, sharex=True, figsize=(9, 12),
                                  layout="constrained")
         for j in range(7):

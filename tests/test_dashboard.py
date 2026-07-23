@@ -17,6 +17,7 @@ import mujoco
 import numpy as np
 
 from analysis import dashboard
+from tests.control_test_support import apply_cycle, reconstruct_pipeline
 
 
 class HeadroomFracTest(unittest.TestCase):
@@ -111,13 +112,15 @@ class ImmutableDampingConfigTest(unittest.TestCase):
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos + np.array([0.05, 0.0, 0.05]))
             targets.set_target_quat(side, quat)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline(control)
 
         before = {side: world.data.ctrl[world.ctrl_adrs[side]].copy()
                   for side in world.SIDES}
-        servo.apply_ctrl(world.model.opt.timestep,
-                         (np.zeros(3), np.zeros(3)),
-                         control=control)
+        apply_cycle(
+            pipeline,
+            world.model.opt.timestep,
+            (np.zeros(3), np.zeros(3)),
+        )
         return {side: world.data.ctrl[world.ctrl_adrs[side]] - before[side]
                 for side in world.SIDES}
 

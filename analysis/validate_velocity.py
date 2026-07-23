@@ -67,12 +67,20 @@ def run():
         mujoco.mju_mat2Quat(quat, rot.flatten())
         targets.set_target(side, pos)
         targets.set_target_quat(side, quat)
-    servo.init_ctrl()
+    pipeline = servo.ReactivePositionPipeline(
+        world.read_state(Twist.zero()), world.PIPELINE_SETUP)
+    world.apply_command(pipeline.command())
 
     dt = world.model.opt.timestep
     zero_twist = (np.zeros(3), np.zeros(3))
     for _ in range(int(SETTLE_SECONDS / dt)):
-        servo.apply_ctrl(dt, zero_twist)
+        plant = world.read_state(Twist(*zero_twist))
+        command, _ = pipeline.step(
+            frames.controller_states(plant, world.MOUNT_CALIBRATION),
+            targets.world_targets(),
+            dt,
+        )
+        world.apply_command(command)
         mujoco.mj_step(world.model, world.data)
 
     n = int(MOTION_SECONDS / dt)
@@ -115,7 +123,12 @@ def run():
             L["w_direct"][k] = vel6[:3]
             L["v_direct"][k] = vel6[3:]
 
-        servo.apply_ctrl(dt, base_twist)
+        command, _ = pipeline.step(
+            frames.controller_states(plant, world.MOUNT_CALIBRATION),
+            targets.world_targets(),
+            dt,
+        )
+        world.apply_command(command)
         mujoco.mj_step(world.model, world.data)
 
     # Ground truth by central differences of the measured pose; trim the
