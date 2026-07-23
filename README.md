@@ -49,7 +49,8 @@ repo root (model paths are CWD-relative).
 Closed-loop simulation with viewer (controlled arms selectable):
 
 ```bash
-mjpython main.py [right|left|both]        # default: both
+mjpython main.py                          # arm from [run].arm in control.toml
+mjpython main.py [right|left|both]        # optional command-line override
 ```
 
 Base motion is configured by the levers at the top of `sim/motion.py`
@@ -102,7 +103,7 @@ python -m unittest discover tests
 main.py                    viewer loop: closed-loop world-frame pose hold
 runtime_config.py          strict immutable loader for shared control TOML
 config/
-  control.toml             gains, limits, nominal dt, and startup targets
+  control.toml             arm, gains, limits, nominal dt, and startup targets
 sim/
   scene.xml                MJCF scene: torso mocap body + dual Kinova Gen3 + targets
   world.py                 MuJoCo backend: model/data, exchange, lifecycle

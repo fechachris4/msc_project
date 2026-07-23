@@ -22,7 +22,7 @@ never read directly from MuJoCo — mirroring what will be available on hardware
 
 ```
 sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attached Gen3)
-├── config/control.toml     (gains, limits, nominal dt, startup targets)
+├── config/control.toml     (arm, gains, limits, nominal dt, startup targets)
 ├── runtime_config.py       (strict immutable TOML loader)
 ├── controller/state.py       (fixed-shape SI records; Python/C++ boundary)
 ├── controller/backend.py     (takeover / exchange / release contract)
@@ -49,7 +49,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 | Module/File | Purpose | Status | Depends On | Used By | Tests | Confidence | Touch? |
 | ----------- | ------- | ------ | ---------- | ------- | ----- | ---------- | ------ |
 | `sim/scene.xml` | Torso + dual Gen3 scene, targets, contact excludes | Validated | `assets/kinova_gen3/gen3.xml` | `world.py` | Loads in all tests | High | Touch only if needed |
-| `config/control.toml` | Shared startup gains, limits, nominal dt, and targets | Implemented | — | `runtime_config.py` | `test_runtime_config.py` + golden trace | High | Single tuning surface |
+| `config/control.toml` | Shared arm selection, startup gains, limits, nominal dt, and targets | Implemented | — | `runtime_config.py` | `test_runtime_config.py` + golden trace | High | Single tuning surface |
 | `runtime_config.py` | Strict immutable TOML loader and effective-config stamp | Implemented | control.toml | controller, sim, analysis | `test_runtime_config.py` | High | Keep Python/C++ schema aligned |
 | `sim/assets/kinova_gen3/` | Vendored Gen3 MJCF (position-servo actuators) | Validated (kinematics + closed loop) | — | scene, `pin_fk.py` | Indirect via FK tests | High | Touch only if needed |
 | `sim/world.py` | `MujocoBackend`: model/data ownership, checked ids, state read, command apply, stepping, lifecycle | Implemented | scene.xml, state records | Runner, viewers, ground-truth tests | `test_runner_backend.py` + integration suite | High | Backend-specific code only |
