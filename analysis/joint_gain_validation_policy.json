@@ -1,0 +1,24 @@
+{
+  "schema_version": "joint-gain-validation-1",
+  "status": "policy_pending",
+  "scenario_matrix": [],
+  "acceptance_thresholds": {},
+  "required_dimensions": [
+    "position_and_orientation_performance",
+    "joint_limit_penetration",
+    "joint_speed_saturation",
+    "command_lead",
+    "contact_occupancy_and_bodies",
+    "jacobian_singular_value_margin",
+    "cross_platform_repeatability",
+    "controller_computation_timing",
+    "clean_primary_environment_evidence"
+  ],
+  "diagnostic_evidence_kinds": [
+    "position_gain_sweep",
+    "orientation_gain_sweep",
+    "staged_gain_sweep"
+  ],
+  "promotion_enabled": false,
+  "reason": "Joint scenarios and numerical acceptance thresholds have not been defined and approved."
+}
