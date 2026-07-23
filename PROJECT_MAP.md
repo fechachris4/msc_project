@@ -54,7 +54,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 | `sim/assets/kinova_gen3/` | Vendored Gen3 MJCF (position-servo actuators) | Validated (kinematics + closed loop) | — | scene, `pin_fk.py` | Indirect via FK tests | High | Touch only if needed |
 | `sim/world.py` | `MujocoBackend`: model/data ownership, checked ids, state read, command apply, stepping, lifecycle | Implemented | scene.xml, state records | Runner, viewers, ground-truth tests | `test_runner_backend.py` + integration suite | High | Backend-specific code only |
 | `sim/targets.py` | Display target mocap poses | Implemented | `world.py` | desired_pos | `test_reference.py` | Medium-High | Never a controller input |
-| `sim/motion.py` | Scripted sinusoidal base motion; pure mechanism, off by default — each entry point passes its own scenario kwargs (zero amplitude = static, no mocap write) | Validated | world, transforms | main, plotting | `test_motion`: pose oracle, zero-guard, closed-loop rejection at 0.1 Hz | High | Scenario lives at the entry point (`BASE_SCENARIO` in main.py) |
+| `sim/motion.py` | Matched scripted torso pose/twist functions | Validated | transforms | MuJoCo backend drivers, experiments | `test_motion`: pose/twist oracle, zero-guard, closed-loop rejection | High | `main.py` uses module defaults; experiments own `ExperimentConfig` |
 | `controller/transforms.py` | Pure SE(3)/rotation math | Validated | numpy | kinematics, frames, desired_pos | `test_kinematics.RotationHelpersTest`, `test_transforms` (vs Pinocchio) | High | Do not touch |
 | `controller/kinematics.py` | Analytical FK from MjModel constants | Validated, **demoted to test reference** | transforms | `test_pin_fk.py` only | `AnalyticalFKTest` vs MuJoCo, 50 cfg/arm, 1e-9 | High | Do not touch |
 | `controller/pin_fk.py` | Pinocchio-backed `T_K_E(q)` — control path FK | Validated | pinocchio, `gen3.xml` | `frames.py` | `test_pin_fk` vs analytical FK, 1e-9 | High | Do not touch |
@@ -232,13 +232,12 @@ backend command contract.
 Resolved since the original audit: moved-torso coverage of `T_W_T` (now
 tested), missing Jacobian (added + validated), empty controller (implemented +
 validated), `torso_mocap_id` naming hazard (renamed `torso_body_id`), stale
-README (refreshed), `reference.py` re-resolution hazard (targets are resolved
-once into world-frame mocap bodies; the controller never re-resolves).
+README (refreshed), and implicit target-marker state (replaced by retained
+framed targets resolved explicitly at the Runner boundary each cycle).
 
 ## 11. Extending the Sim
 
-Five contracts for the ways this codebase is likely to grow (two-year
-horizon, dozens of experiments).
+Four concrete change rules for the current simulation scope.
 
 1. **New trajectory shape** (circle, figure-eight, square wave): implement
    it as an `offset(t)`/`rate(t)` pair in `controller/transforms.py`,
@@ -259,13 +258,8 @@ horizon, dozens of experiments).
    and telemetry. Do not add a controller-mode flag or force a controller
    through IK or position integration if it bypasses that stage.
 
-4. **Another arm**: keyed by `world.SIDES` and the `f"{side}_..."` scene
-   naming convention. Two hardcoded assumptions to revisit first:
-   `controller/desired_pos.py`'s `POSES` dict hardcodes the side keys, and
-   `controller/frames.py` shares one `gen3.xml` Pinocchio model across all
-   sides — a different limb model per arm breaks that assumption.
-
-5. **Disabling features**: base motion off = zero amplitudes in the entry
-   point's scenario block (the default if omitted); target motion off =
-   don't call `target_motion.set_target_pose` (off by default, no module
-   levers); one arm only = the `main.py` CLI arg (`right`/`left`/`both`).
+4. **Disabling features**: base motion off = install the matched motion
+   functions with zero amplitudes (or no torso driver); target motion off =
+   retain the configured static targets; one arm only = the `main.py` CLI arg
+   (`right`/`left`/`both`). The fixed two-arm records are deliberate scope,
+   not a general limb registry.

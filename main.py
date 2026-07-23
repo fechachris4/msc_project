@@ -1,7 +1,7 @@
 """Viewer entry point: world-frame EE pose hold, closed loop.
 
 Per-step data flow (all SI: meters, radians; mm only in the printout):
-  target mocap pose (world) + joint angles qpos  [sim/targets, MuJoCo]
+  retained TOML FramedTarget + backend PlantState  [desired_pos, sim/world]
   -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  [controller/frames]
   -> pose + twist errors; PD + DLS qdot          [controller/reactive_pose]
   -> integrate joint-position command (rad)      [controller/position_actuation]
