@@ -15,9 +15,7 @@ import tomllib
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "control.toml"
 ARMS = ("right", "left")
-# Step 2 preserves the existing torso-authored startup target exactly.
-# World/base selection becomes valid only when Step 3 adds the frame boundary.
-TARGET_FRAMES = ("torso",)
+TARGET_FRAMES = ("world", "base", "torso")
 
 
 @dataclass(frozen=True)

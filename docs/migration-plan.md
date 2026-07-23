@@ -2,7 +2,9 @@
 
 This plan preserves the current Python/MuJoCo reactive baseline while making
 the control math portable to C++ and, later, Kinova BaseCyclic hardware.
-Work pauses for review after every numbered step.
+Steps 1–6 execute continuously under the current build contract. Each step
+must pass its tests, golden gate, and independent conformance review before its
+numbered commit; execution then proceeds immediately to the next step.
 
 ## Fixed rulings
 

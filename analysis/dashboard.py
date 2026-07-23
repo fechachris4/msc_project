@@ -62,8 +62,9 @@ import numpy as np
 
 from analysis import metrics
 from controller import desired_pos, frames, servo
+from controller.state import Twist
 from plotting.style import C_BASE, SIDE_COLOR, SIDE_STYLE
-from sim import motion, world
+from sim import motion, targets, world
 
 WINDOW_S = 15.0        # rolling window kept on screen, seconds
 REDRAW_EVERY = 25      # sim steps between redraws (LivePlot's convention)
@@ -297,16 +298,20 @@ def run(arms, save_seconds=None):
         # must stay a matched pair — same scenario, same instant t.
         base_twist = motion.torso_twist_at(t)
 
-        base_pos, _ = frames.torso_pose()
+        plant = world.read_state(Twist(*base_twist))
+        base_pos = plant.torso_pose_world.position_m
         base_disp = base_pos - motion.HOME_POS  # (3,) m, signed
 
         # Pre-control state: exactly what apply_ctrl is about to use.
         tick = {}
         for s in arms:
-            J = frames.jacobian_world(s)
-            e_pos, e_rot = servo.pose_error(s)
-            e_v, e_w = servo.twist_error(s, base_twist, J)
-            q = world.data.qpos[frames.qpos_adrs[s]].copy()
+            state = frames.arm_controller_state(
+                plant, s, world.MOUNT_CALIBRATION)
+            target = targets.world_target(s)
+            J = state.jacobian_world
+            e_pos, e_rot = servo.pose_error_from_state(state, target)
+            e_v, e_w = servo.twist_error_from_state(state, target)
+            q = state.joints.position_rad
             qdot_raw = servo.qdot_from_error(
                 J, e_pos, e_rot, e_v, e_w, q,
                 servo._Q_MID[s], servo._null_gain_vector(s))

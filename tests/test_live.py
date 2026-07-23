@@ -87,7 +87,7 @@ class ResetAndRunTest(unittest.TestCase):
         for side in world.SIDES:
             np.testing.assert_array_equal(
                 world.data.ctrl[world.ctrl_adrs[side]],
-                world.data.qpos[frames.qpos_adrs[side]],
+                world.data.qpos[world.qpos_adrs[side]],
             )
         self.assertTrue(np.all(np.isfinite(world.data.mocap_pos)))
         self.assertTrue(np.all(np.isfinite(world.data.mocap_quat)))

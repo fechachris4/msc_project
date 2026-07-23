@@ -26,6 +26,7 @@ import mujoco
 import numpy as np
 
 from controller import frames, servo
+from controller.state import Twist
 from plotting.style import C_LEFT as C_PRED, C_RIGHT as C_MEAS
 from sim import target_motion, targets, world
 
@@ -61,10 +62,16 @@ def _reset_to_home():
     sweep would measure limit clipping, not loop bandwidth."""
     mujoco.mj_resetData(world.model, world.data)
     for side in world.SIDES:
-        world.data.qpos[frames.qpos_adrs[side]] = HOME
+        world.data.qpos[world.qpos_adrs[side]] = HOME
     mujoco.mj_forward(world.model, world.data)
     for side in world.SIDES:
-        pos, rot = frames.ee_pose(side)
+        state = frames.arm_controller_state(
+            world.read_state(Twist.zero()),
+            side,
+            world.MOUNT_CALIBRATION,
+        )
+        pos = state.ee_pose_world.position_m
+        rot = state.ee_pose_world.rotation
         quat = np.zeros(4)
         mujoco.mju_mat2Quat(quat, rot.flatten())
         targets.set_target(side, pos)

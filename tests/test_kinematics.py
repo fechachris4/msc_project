@@ -134,7 +134,7 @@ class AnalyticalFKTest(unittest.TestCase):
 
 
 class WorldFrameEETest(unittest.TestCase):
-    """frames.ee_pose(side) must match MuJoCo's world EE pose while
+    """Explicit-state FK must match MuJoCo's world EE pose while
     reading the EE pose only on the comparison side."""
 
     def _check(self, ee_pose, site_id_name):
@@ -213,16 +213,42 @@ class WorldFrameEETest(unittest.TestCase):
 
     def test_ee_pose_matches_mujoco(self):
         from controller import frames
+        from controller.state import Twist
         from sim import world
+
+        def ee_pose(side):
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            return (
+                state.ee_pose_world.position_m,
+                state.ee_pose_world.rotation,
+            )
+
         for side in world.SIDES:
-            self._check(lambda s=side: frames.ee_pose(s),
+            self._check(lambda s=side: ee_pose(s),
                         f"{side}_pinch_site")
 
     def test_ee_pose_matches_mujoco_under_moved_torso(self):
         from controller import frames
+        from controller.state import Twist
         from sim import world
+
+        def ee_pose(side):
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            return (
+                state.ee_pose_world.position_m,
+                state.ee_pose_world.rotation,
+            )
+
         for side in world.SIDES:
-            self._check_moved_torso(lambda s=side: frames.ee_pose(s),
+            self._check_moved_torso(lambda s=side: ee_pose(s),
                                     f"{side}_pinch_site")
 
 
@@ -237,7 +263,15 @@ class JacobianWorldTest(unittest.TestCase):
     def test_jacobians_match_mujoco(self):
         import mujoco
         from controller import frames
+        from controller.state import Twist
         from sim import world
+
+        def jacobian(side):
+            return frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            ).jacobian_world
 
         arms = []
         for side in world.SIDES:
@@ -251,7 +285,7 @@ class JacobianWorldTest(unittest.TestCase):
                 )])
                 for i in range(1, 8)
             ]
-            arms.append((lambda s=side: frames.jacobian_world(s),
+            arms.append((lambda s=side: jacobian(s),
                          site_id, dof_adrs))
 
         mocap_idx = world.model.body_mocapid[world.torso_body_id]

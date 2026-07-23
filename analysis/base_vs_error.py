@@ -32,6 +32,7 @@ import numpy as np
 
 from analysis import metrics
 from controller import desired_pos, frames, servo
+from controller.state import Twist
 from plotting.live_plot import LivePlot
 from plotting.style import C_BASE, C_RIGHT, C_LEFT
 from sim import motion, world
@@ -108,7 +109,8 @@ def run(save_seconds=None):
             # same instant t.
             base_twist = motion.torso_twist_at(t)
 
-            base_pos, _ = frames.torso_pose()
+            plant = world.read_state(Twist(*base_twist))
+            base_pos = plant.torso_pose_world.position_m
             base_disp = base_pos - home_pos
             right_e, _ = servo.pose_error("right")
             left_e, _ = servo.pose_error("left")

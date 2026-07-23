@@ -20,6 +20,7 @@ import mujoco
 import numpy as np
 
 from controller import desired_pos, frames, servo
+from controller.state import Twist
 from plotting.style import C_RIGHT, C_LEFT, C_XYZ
 from sim import motion, targets, world
 
@@ -32,16 +33,6 @@ SIM_SECONDS = 40.0                  # 4 periods
 
 SV_THRESHOLDS = (0.05, 0.01, 0.001)
 OUT = Path("analysis/output")
-
-
-def _dof_adrs(side):
-    adrs = []
-    for i in range(1, 8):
-        jnt_id = mujoco.mj_name2id(
-            world.model, mujoco.mjtObj.mjOBJ_JOINT, f"{side}_joint_{i}"
-        )
-        adrs.append(int(world.model.jnt_dofadr[jnt_id]))
-    return adrs
 
 
 def _arm_body_ids(side):
@@ -73,7 +64,6 @@ def run():
 
     dt = world.model.opt.timestep
     n_steps = int(SIM_SECONDS / dt)
-    dofs = {s: _dof_adrs(s) for s in world.SIDES}
     jlims = {s: world.jnt_range(s)[:2] for s in world.SIDES}
     bodies = {s: _arm_body_ids(s) for s in world.SIDES}
 
@@ -114,24 +104,28 @@ def run():
         # refresh xpos/xmat so the logged state and the controller see
         # the torso pose at t, not the previous step's (as main.py)
         mujoco.mj_kinematics(world.model, world.data)
+        plant = world.read_state(Twist(*base_twist))
 
         # Pre-control state: exactly what apply_ctrl is about to use.
         for s in world.SIDES:
             L = log[s]
-            e_pos, e_rot = servo.pose_error(s)
-            e_v, e_w = servo.twist_error(s, base_twist)
-            J = frames.jacobian_world(s)
+            state = frames.arm_controller_state(
+                plant, s, world.MOUNT_CALIBRATION)
+            target = targets.world_target(s)
+            e_pos, e_rot = servo.pose_error_from_state(state, target)
+            e_v, e_w = servo.twist_error_from_state(state, target)
+            J = state.jacobian_world
             sv = np.linalg.svd(J, compute_uv=False)
-            q = world.data.qpos[frames.qpos_adrs[s]].copy()
+            q = state.joints.position_rad
             qdot_raw = servo.qdot_from_error(
                 J, e_pos, e_rot, e_v, e_w, q, servo._Q_MID[s],
                 servo._null_gain_vector(s))
-            qdot_meas = world.data.qvel[dofs[s]].copy()
+            qdot_meas = state.joints.velocity_rad_s
             low, high = jlims[s]
 
             L["t"][k] = t
             L["target_pos"][k] = targets.target_position(s)
-            L["ee_pos"][k] = frames.ee_pose(s)[0]
+            L["ee_pos"][k] = state.ee_pose_world.position_m
             L["e_pos"][k] = e_pos
             L["e_norm"][k] = np.linalg.norm(e_pos)
             L["e_rot"][k] = e_rot

@@ -4,6 +4,8 @@ import unittest
 import mujoco
 import numpy as np
 
+from controller.state import Twist
+
 from controller.transforms import rotation_about_axis
 
 
@@ -58,13 +60,19 @@ def _setup_scene():
 
     mujoco.mj_resetData(world.model, world.data)
     for side in world.SIDES:
-        world.data.qpos[frames.qpos_adrs[side]] = HOME
-    world.data.qvel[frames.dof_adrs["right"]] = np.array(
+        world.data.qpos[world.qpos_adrs[side]] = HOME
+    world.data.qvel[world.dof_adrs["right"]] = np.array(
         [0.12, -0.08, 0.05, -0.03, 0.02, -0.01, 0.04]
     )
     mujoco.mj_forward(world.model, world.data)
 
-    pos, rot = frames.ee_pose("right")
+    state = frames.arm_controller_state(
+        world.read_state(Twist.zero()),
+        "right",
+        world.MOUNT_CALIBRATION,
+    )
+    pos = state.ee_pose_world.position_m
+    rot = state.ee_pose_world.rotation
     axis = np.array([0.3, -0.4, 0.5])
     axis /= np.linalg.norm(axis)
     ref_rot = rotation_about_axis(axis, 0.7) @ rot
@@ -305,7 +313,7 @@ class ControlTraceTest(unittest.TestCase):
         q6 = 5
         actuator = world.ctrl_adrs["right"][q6]
         high = world.model.actuator_ctrlrange[actuator, 1]
-        world.data.qpos[frames.qpos_adrs["right"][q6]] = high - 0.05
+        world.data.qpos[world.qpos_adrs["right"][q6]] = high - 0.05
         world.data.ctrl[actuator] = high + 0.05
         mujoco.mj_kinematics(world.model, world.data)
 

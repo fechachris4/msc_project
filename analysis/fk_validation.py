@@ -14,14 +14,20 @@ kinematics, not just frame algebra.
 import mujoco
 
 from controller import frames
+from controller.state import Twist
 from plotting.live_plot import LivePlot
 from sim import world
 
 
 def sample():
     """One comparison sample: (sim time, direct EE xyz, FK-composed EE xyz)."""
-    fk_pos, _ = frames.ee_pose("right")
-    direct_pos, _ = frames.measured_ee_pose("right")
+    state = frames.arm_controller_state(
+        world.read_state(Twist.zero()),
+        "right",
+        world.MOUNT_CALIBRATION,
+    )
+    fk_pos = state.ee_pose_world.position_m
+    direct_pos = world.measured_ee_pose("right").position_m
     return world.data.time, direct_pos, fk_pos
 
 

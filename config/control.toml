@@ -25,11 +25,11 @@ joint_velocity_rad_s = [
 position_lead_rad = 0.2
 
 [targets.right]
-reference_frame = "torso"
-position_m = [0.45, -0.20, 0.10]
+reference_frame = "world"
+position_m = [0.45, -0.20, 1.20]
 rpy_rad = [0.0, 1.6, 0.8]
 
 [targets.left]
-reference_frame = "torso"
-position_m = [0.45, 0.30, 0.10]
+reference_frame = "world"
+position_m = [0.45, 0.30, 1.20]
 rpy_rad = [0.0, 0.0, 0.0]

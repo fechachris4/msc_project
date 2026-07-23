@@ -8,6 +8,8 @@ side is "right" or "left" throughout.
 
 import numpy as np
 
+from controller.state import Pose, Twist, WorldTarget
+from controller.transforms import rotation_from_quat
 from sim import world
 
 
@@ -44,3 +46,11 @@ def target_velocity(side):
     twist. If feedforward enters scope later, wire this to
     target_motion.target_twist_at and recalibrate both."""
     return np.zeros(3), np.zeros(3)
+
+
+def world_target(side):
+    """Read the controller-facing world target from the simulation marker."""
+    return WorldTarget(
+        Pose(target_position(side), rotation_from_quat(target_quat(side))),
+        Twist(*target_velocity(side)),
+    )

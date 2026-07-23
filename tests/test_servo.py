@@ -17,6 +17,16 @@ N_SAMPLES = 20
 WRAP_TOL = 1e-9
 
 
+def _arm_state(side, base_twist=None):
+    from controller import frames
+    from controller.state import Twist
+    from sim import world
+
+    twist = Twist.zero() if base_twist is None else Twist(*base_twist)
+    return frames.arm_controller_state(
+        world.read_state(twist), side, world.MOUNT_CALIBRATION)
+
+
 def random_axis_angle(rng):
     axis = rng.normal(size=3)
     axis /= np.linalg.norm(axis)
@@ -41,10 +51,12 @@ class PoseErrorWrapperTest(unittest.TestCase):
             )
 
     def _check_arm(self, rng, side):
-        from controller import frames, servo
+        from controller import servo
         from sim import targets
 
-        ee_pos, ee_rot = frames.ee_pose(side)
+        state = _arm_state(side)
+        ee_pos = state.ee_pose_world.position_m
+        ee_rot = state.ee_pose_world.rotation
 
         # Target at the FK pose -> zero error.
         quat = np.zeros(4)
@@ -165,7 +177,7 @@ class TwistErrorTest(unittest.TestCase):
         """Static targets => v_des = w_des = 0, so twist_error must equal
         the negated (already 3-leg-validated) frames.ee_velocity at any
         joint state, joint velocity, and base twist."""
-        from controller import frames, servo
+        from controller import servo
         from sim import world
 
         def reset():
@@ -177,9 +189,9 @@ class TwistErrorTest(unittest.TestCase):
         rng = np.random.default_rng(15)
         for _ in range(5):
             for side in world.SIDES:
-                world.data.qpos[frames.qpos_adrs[side]] = \
+                world.data.qpos[world.qpos_adrs[side]] = \
                     rng.uniform(-1.0, 1.0, 7)
-                world.data.qvel[frames.dof_adrs[side]] = \
+                world.data.qvel[world.dof_adrs[side]] = \
                     rng.uniform(-1.0, 1.0, 7)
             mujoco.mj_kinematics(world.model, world.data)
             base_twist = (rng.uniform(-0.5, 0.5, 3),
@@ -187,7 +199,9 @@ class TwistErrorTest(unittest.TestCase):
 
             for side in world.SIDES:
                 e_v, e_w = servo.twist_error(side, base_twist)
-                v_ee, w_ee = frames.ee_velocity(side, base_twist)
+                state = _arm_state(side, base_twist)
+                v_ee = state.ee_twist_world.linear_m_s
+                w_ee = state.ee_twist_world.angular_rad_s
                 np.testing.assert_allclose(e_v, -v_ee, atol=1e-12)
                 np.testing.assert_allclose(e_w, -w_ee, atol=1e-12)
 
@@ -230,7 +244,7 @@ class ArmSelectionTest(unittest.TestCase):
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
         desired_pos.apply()
         servo.init_ctrl()
@@ -263,7 +277,7 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
     ROT_TOL = 0.05   # rad
 
     def test_converges_static_base(self):
-        from controller import frames, servo
+        from controller import servo
         from sim import targets, world
 
         def reset():
@@ -277,17 +291,19 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
         home = np.array(HOME)
 
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = \
+            world.data.qpos[world.qpos_adrs[side]] = \
                 home + rng.uniform(-0.3, 0.3, 7)
             mujoco.mj_kinematics(world.model, world.data)
-            pos, rot = frames.ee_pose(side)
+            state = _arm_state(side)
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
 
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = home
+            world.data.qpos[world.qpos_adrs[side]] = home
         mujoco.mj_forward(world.model, world.data)
         servo.init_ctrl()
 
@@ -318,7 +334,7 @@ class AntiWindupTest(unittest.TestCase):
     BLOCKED_SECONDS = 5.0
 
     def test_ctrl_lead_bounded_while_blocked(self):
-        from controller import frames, servo
+        from controller import servo
         from sim import targets, world
 
         def reset():
@@ -329,13 +345,15 @@ class AntiWindupTest(unittest.TestCase):
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
         servo.init_ctrl()
 
         # Unreachable-while-blocked target: 0.5 m above the current EE.
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = _arm_state(side)
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos + np.array([0.0, 0.0, 0.5]))
@@ -350,7 +368,7 @@ class AntiWindupTest(unittest.TestCase):
 
         for side in world.SIDES:
             lead = np.abs(world.data.ctrl[world.ctrl_adrs[side]]
-                          - world.data.qpos[frames.qpos_adrs[side]])
+                          - world.data.qpos[world.qpos_adrs[side]])
             self.assertLessEqual(
                 lead.max(), servo.LIMITS.position_lead_rad + 1e-12, side)
 
