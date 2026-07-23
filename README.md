@@ -66,6 +66,15 @@ python -m analysis.base_vs_error
 python -m analysis.base_vs_error --save 30
 ```
 
+Provenance-stamped reactive-baseline validation with a thesis-ready
+mean/RMSE/peak figure:
+
+```bash
+python -m analysis.reactive_baseline
+# A canonical evidence run requires a clean worktree and pinned environment:
+python -m analysis.reactive_baseline --canonical --output /tmp/reactive-baseline
+```
+
 Live 7-panel control-loop dashboard, one or both arms (same `--save T`
 convention):
 
@@ -96,23 +105,27 @@ config/
   control.toml             gains, limits, nominal dt, and startup targets
 sim/
   scene.xml                MJCF scene: torso mocap body + dual Kinova Gen3 + targets
-  world.py                 model/data singletons, checked id lookups
+  world.py                 MuJoCo backend: model/data, exchange, lifecycle
   targets.py               set/read EE target poses (mocap spheres, world frame)
   motion.py                scripted base motion: sinusoidal torso disturbance
   assets/kinova_gen3/      vendored Kinova Gen3 model
 controller/
+  backend.py               minimal takeover/exchange/release plant contract
+  runner.py                explicit reactive pose-to-position cycle ordering
   transforms.py            pure SE(3)/rotation math (NumPy only)
   pin_fk.py                Pinocchio FK for one arm: T_K_E(q)   [control path]
   kinematics.py            analytical FK from MjModel constants [test reference only]
-  frames.py                world-frame EE pose + Jacobian: T_W_T · T_T_K · T_K_E
-  desired_pos.py           desired EE poses; resolved to world targets once
-  servo.py                 the controller: P law + DLS (pure math) and the MuJoCo
-                           plumbing (errors, setpoint integration, data.ctrl)
+  frames.py                target/state boundary + world-frame EE kinematics
+  desired_pos.py           configured framed targets and MuJoCo marker display
+  reactive_pose.py         pure pose/twist error, PD, DLS, null-space policy
+  position_actuation.py    velocity limits + persistent position integration
+  servo.py                 explicit reactive-pose-to-position composition
 plotting/                 reusable instruments only (no MuJoCo except via callers)
   live_plot.py             generic live time-series plot, expand-only autoscale
   style.py                 shared Okabe-Ito colors + side conventions
 analysis/                  every experiment script; figures -> analysis/output/
   metrics.py               one metric definition: stats/print_stats/windowed_stats
+  reactive_baseline.py     stamped validation run + mean/RMSE/peak figure
   dashboard.py             live 7-panel control-loop dashboard, one or both arms
   base_vs_error.py         thesis success-criterion figure: base disp vs EE error
   diagnose.py              pinned-scenario failure diagnosis
@@ -135,8 +148,9 @@ Do not unify them.
   MuJoCo order `[w, x, y, z]`.
 - All internal math is SI (meters, radians). Millimetres appear only at
   human-facing boundaries (prints, plots).
-- End-effector references are world-frame: resolved against the torso once
-  at startup, then held fixed in the world while the base moves.
+- Controller math is world-frame. World/base/torso target selection is resolved
+  at the Runner boundary every cycle; the configured baseline references are
+  world-frame and therefore remain fixed while the base moves.
 - Runtime control values come from `config/control.toml`. Edit that file and
   restart; the effective configuration and source hash are printed at startup
   and stamped into saved experiment metadata.

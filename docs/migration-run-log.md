@@ -48,6 +48,7 @@ and a numbered commit.
 
 ## Step 4 — pure controller and reconstruction-only state
 
+- Commit: `97ed090`
 - Full suite: 182 tests passed
 - Golden gate: 500 rows matched at `rtol=1e-12`, `atol=1e-12`
 - Independent review: PASS
@@ -92,3 +93,38 @@ and a numbered commit.
   - The first review found that `analysis.live` and `base_vs_error` still
     stepped MuJoCo directly. Both were moved to Runner/backend exchange before
     the Step 5 commit; the re-review passed.
+
+## Step 6 — provenance-stamped reactive baseline
+
+- Full suite: 188 tests passed
+- Golden gate: 500 rows matched at `rtol=1e-12`, `atol=1e-12`
+- Independent review: PASS after correcting the evidence-status wording
+- Preview validation:
+  - Settling gate passed and the run was accepted under the existing policy.
+  - Right position-error mean/RMSE/peak:
+    `69.0 / 77.4 / 124.5 mm`.
+  - Left position-error mean/RMSE/peak:
+    `136.7 / 151.7 / 257.8 mm`.
+  - Contact and torso-contact warnings remained visible; contact occupancy was
+    `20.15%` and the left arm had negative disturbance rejection.
+  - Maximum joint-limit penetration was `0.008974 rad`, inside the existing
+    `0.02 rad` policy threshold.
+- Boring choices:
+  - Validate the current default scripted motion without retuning gains or
+    changing the controller.
+  - Evaluate two complete periods of the current `0.5 Hz` motion after the
+    existing settle phase.
+  - Use the `10 mm` settling tolerance only to choose the evaluation start;
+    retain and report the raw residual and all evaluation errors.
+  - Produce one run artifact plus one figure containing world-frame error
+    traces and grouped mean/RMSE/peak bars.
+  - Stamp the concrete Runner, controller pipeline, backend, exchange
+    operation, MuJoCo timing source, effective TOML, and hashes into both
+    metadata and manifest.
+- Deviations:
+  - The first review found that `PROJECT_MAP.md` called the dirty-worktree
+    preview a canonical run. The wording was corrected before commit; the
+    clean canonical run remains a post-commit gate.
+  - The default scenario is not a strong final baseline: left-arm tracking and
+    torso contact require diagnosis in a later behavior-changing task. Step 6
+    records this result honestly rather than tuning around it.
