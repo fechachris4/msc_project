@@ -3,17 +3,14 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import csv
-import hashlib
-import importlib.metadata
 import json
 from pathlib import Path
-import subprocess
 from typing import NamedTuple
 
 import mujoco
 import numpy as np
 
-from analysis import metrics, policy
+from analysis import metrics, policy, provenance
 from controller import desired_pos, frames, servo
 from sim import motion, world
 
@@ -86,9 +83,6 @@ class ExperimentLog:
 _GAIN_NAMES = ("KP_POS", "KP_ROT", "KD_POS", "KD_ROT", "K_NULL", "DAMPING")
 _INITIAL_GAINS = {name: float(getattr(servo, name)) for name in _GAIN_NAMES}
 _TRACE_FIELDS = tuple(servo.ControlTrace.__dataclass_fields__)
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
 def _gain_snapshot():
     return {name: float(getattr(servo, name)) for name in _GAIN_NAMES}
 
@@ -364,23 +358,11 @@ def run_experiment(config, on_update=None, gains=None):
 
 
 def _git_revision():
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=_PROJECT_ROOT,
-            check=True, capture_output=True, text=True).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
+    return provenance.git_provenance()["revision"]
 
 
 def _asset_hash():
-    digest = hashlib.sha256()
-    paths = [_PROJECT_ROOT / "sim" / "scene.xml"]
-    paths.extend(sorted((_PROJECT_ROOT / "sim" / "assets").rglob("*")))
-    for path in paths:
-        if path.is_file():
-            digest.update(path.relative_to(_PROJECT_ROOT).as_posix().encode())
-            digest.update(path.read_bytes())
-    return digest.hexdigest()
+    return provenance._scene_asset_sha256()
 
 
 def _config_json(config):
@@ -423,13 +405,11 @@ def _configs_equal(left, right):
     )
 
 
-def _metadata(log, revision):
-    versions = {}
-    for package in ("numpy", "matplotlib", "mujoco", "pin"):
-        try:
-            versions[package] = importlib.metadata.version(package)
-        except importlib.metadata.PackageNotFoundError:
-            versions[package] = "unknown"
+def _metadata(log, revision, identity=None, git=None):
+    identity = (provenance.experiment_identity(
+        _config_json(log.config), log.gain_snapshots[0])
+        if identity is None else identity)
+    git = provenance.git_provenance() if git is None else git
     return {
         "configuration": _config_json(log.config),
         "gains": log.gain_snapshots[0],
@@ -454,14 +434,20 @@ def _metadata(log, revision):
         "evidence_schema_version": policy.EVIDENCE_SCHEMA_VERSION,
         "joint_limit_max_penetration_rad": (
             policy.JOINT_LIMIT_MAX_PENETRATION_RAD),
-        "dependency_versions": versions,
+        "dependency_versions": identity["environment"]["dependencies"],
+        "environment": identity["environment"],
         "git_revision": revision,
+        "git": git,
+        "source_sha256": identity["source_sha256"],
+        "analysis_sha256": identity["analysis_sha256"],
+        "experiment_identity_sha256": identity["identity_sha256"],
         "scene_asset_sha256": _asset_hash(),
+        "controller_configuration": identity["controller"],
         "arms": list(log.arms),
     }
 
 
-def save_run(log, config, output_root):
+def save_run(log, config, output_root, *, canonical=False, final_outputs=()):
     output_root = Path(output_root)
     _validate_config(config)
     normalized_config = config._replace(
@@ -470,9 +456,15 @@ def save_run(log, config, output_root):
     )
     if not _configs_equal(log.config, normalized_config):
         raise ValueError("config does not match the configuration used for log")
+    git = provenance.git_provenance()
+    environment = provenance.environment_snapshot()
+    if canonical:
+        provenance.require_canonical_preconditions(log, git, environment)
     run_metrics = metrics.experiment_metrics(log)
     flat_metrics = metrics.flatten_metrics(run_metrics)
-    revision = _git_revision()
+    revision = git["revision"]
+    identity = provenance.experiment_identity(
+        _config_json(log.config), log.gain_snapshots[0])
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     run_dir = output_root / f"{stamp}-{revision[:7]}"
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -495,13 +487,37 @@ def save_run(log, config, output_root):
             arrays[f"arm__{side}__{name}"] = value
     np.savez_compressed(run_dir / "run.npz", **arrays)
     (run_dir / "metadata.json").write_text(
-        json.dumps(_metadata(log, revision), indent=2) + "\n")
+        json.dumps(_metadata(log, revision, identity, git), indent=2) + "\n")
     (run_dir / "metrics.json").write_text(
         json.dumps(run_metrics, indent=2, allow_nan=False) + "\n")
     with (run_dir / "metrics.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=flat_metrics)
         writer.writeheader()
         writer.writerow(flat_metrics)
+    artifact_digests, output_digests = provenance.artifact_hashes(
+        run_dir, final_outputs)
+    manifest = {
+        "evidence_schema_version": policy.EVIDENCE_SCHEMA_VERSION,
+        "classification": "canonical" if canonical else "exploratory",
+        "accepted": log.accepted,
+        "experiment_identity_sha256": identity["identity_sha256"],
+        "source_sha256": identity["source_sha256"],
+        "analysis_sha256": identity["analysis_sha256"],
+        "scene_asset_sha256": identity["scene_asset_sha256"],
+        "git": git,
+        "environment": environment,
+        "configuration": _config_json(log.config),
+        "controller_configuration": identity["controller"],
+        "policy": {
+            "acceptance_policy_version": policy.ACCEPTANCE_POLICY_VERSION,
+            "joint_limit_max_penetration_rad": (
+                policy.JOINT_LIMIT_MAX_PENETRATION_RAD),
+        },
+        "artifacts": artifact_digests,
+        "final_outputs": output_digests,
+    }
+    (run_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, allow_nan=False) + "\n")
     return run_dir
 
 

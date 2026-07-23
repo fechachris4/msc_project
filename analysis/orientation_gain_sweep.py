@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from analysis import live
+from analysis import live, provenance
 from controller import servo
 
 
@@ -49,7 +49,9 @@ METRIC_LABELS = {
 }
 SUMMARY_FIELDS = [
     "config_id", "kp_rot", "kd_rot", "status", "settled",
-    "settle_duration_s", "valid", "warning_reasons",
+    "settle_duration_s", "metrics_computable", "accepted",
+    "contact_observed", "joint_limit_within_tolerance",
+    "limit_penetration_rad", "warning_reasons",
     "evaluation_sample_count", "error",
 ] + [
     f"{side}_{metric}"
@@ -90,10 +92,19 @@ def episode_row(log, kp_rot, kd_rot):
     if any(value is None for values in arms.values() for value in values.values()):
         if "non-finite data" not in warnings and np.any(mask):
             warnings.append("non-finite data")
-    valid = bool(log.settled and np.any(mask)
-                 and "non-finite data" not in warnings
-                 and all(value is not None for values in arms.values()
-                         for value in values.values()))
+    metrics_computable = bool(
+        np.any(mask)
+        and "non-finite data" not in warnings
+        and all(value is not None for values in arms.values()
+                for value in values.values()))
+    joint_limit_within_tolerance = bool(getattr(
+        log, "joint_limit_within_tolerance", True))
+    accepted = bool(
+        getattr(log, "accepted", log.settled)
+        and metrics_computable and joint_limit_within_tolerance)
+    contact_observed = bool(getattr(
+        log, "contact_observed",
+        any("contact detected" in reason for reason in warnings)))
     return {
         "config_id": config_id(kp_rot, kd_rot),
         "kp_rot": float(kp_rot),
@@ -101,7 +112,12 @@ def episode_row(log, kp_rot, kd_rot):
         "status": "completed",
         "settled": bool(log.settled),
         "settle_duration_s": _finite(log.settle_duration),
-        "valid": valid,
+        "metrics_computable": metrics_computable,
+        "accepted": accepted,
+        "contact_observed": contact_observed,
+        "joint_limit_within_tolerance": joint_limit_within_tolerance,
+        "limit_penetration_rad": float(getattr(
+            log, "limit_penetration_rad", 0.0)),
         "warning_reasons": warnings,
         "evaluation_sample_count": int(np.count_nonzero(mask)),
         "arms": arms,
@@ -133,6 +149,8 @@ def fingerprint_payload():
         "evaluation_seconds": SCENARIO.evaluation_seconds,
         "fixed_gains": FIXED_GAINS,
         "metric_schema": METRIC_SCHEMA,
+        "experiment_identity": provenance.experiment_identity(
+            scenario, FIXED_GAINS),
     }
 
 
@@ -149,9 +167,11 @@ def _timestamp():
 def new_state(workers=None, timestamp=None):
     workers = min(4, os.cpu_count() or 1) if workers is None else workers
     timestamp = _timestamp() if timestamp is None else timestamp
+    payload = fingerprint_payload()
+    identity = payload["experiment_identity"]
     return {
-        "fingerprint": resume_fingerprint(),
-        "fingerprint_payload": fingerprint_payload(),
+        "fingerprint": resume_fingerprint(payload),
+        "fingerprint_payload": payload,
         "results": {},
         "provenance": {
             "timestamp": timestamp,
@@ -159,6 +179,12 @@ def new_state(workers=None, timestamp=None):
             "timestep": float(live.world.model.opt.timestep),
             "dependency_versions": _dependency_versions(),
             "git_revision": live._git_revision(),
+            "git": provenance.git_provenance(),
+            "source_sha256": identity["source_sha256"],
+            "analysis_sha256": identity["analysis_sha256"],
+            "scene_asset_sha256": identity["scene_asset_sha256"],
+            "environment": identity["environment"],
+            "experiment_identity_sha256": identity["identity_sha256"],
             "execution_sessions": [
                 {"timestamp": timestamp, "worker_count": workers}
             ],
@@ -210,8 +236,16 @@ def _validate_completed_row(identifier, row, path):
             path, f"completed result {identifier!r} has inconsistent identity")
     if not isinstance(row.get("settled"), bool):
         _malformed_state(path, f"completed result {identifier!r} has invalid settled")
-    if not isinstance(row.get("valid"), bool):
-        _malformed_state(path, f"completed result {identifier!r} has invalid valid")
+    for field in ("metrics_computable", "accepted", "contact_observed",
+                  "joint_limit_within_tolerance"):
+        if not isinstance(row.get(field), bool):
+            _malformed_state(
+                path, f"completed result {identifier!r} has invalid {field}")
+    penetration = row.get("limit_penetration_rad")
+    if (not _finite_number_or_none(penetration) or penetration is None
+            or penetration < 0.0):
+        _malformed_state(
+            path, f"completed result {identifier!r} has invalid penetration")
     if ("settle_duration_s" not in row
             or not _finite_number_or_none(row["settle_duration_s"])):
         _malformed_state(
@@ -366,7 +400,7 @@ def heatmap_matrix(rows, side, metric, kp_grid=None, kd_grid=None):
         value = row.get("arms", {}).get(side, {}).get(metric)
         if value is not None:
             values[j, i] = float(value)
-        invalid[j, i] = not bool(row.get("valid")) or value is None
+        invalid[j, i] = not bool(row.get("accepted")) or value is None
     return values, invalid
 
 
