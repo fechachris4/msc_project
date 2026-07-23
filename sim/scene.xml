@@ -1,6 +1,6 @@
 <mujoco model="humansl_torso_dual_gen3">
   <compiler angle="radian"/>
-  <option integrator="implicitfast" timestep="0.002"/>
+  <option integrator="implicitfast"/>
 
   <asset>
     <model name="gen3_arm" file="assets/kinova_gen3/gen3.xml"/>

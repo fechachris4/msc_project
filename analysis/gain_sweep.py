@@ -74,6 +74,7 @@ import numpy as np
 from analysis import live, metrics, policy
 from controller import servo
 from plotting.style import C_XYZ, SIDE_COLOR, SIDE_STYLE
+from runtime_config import CONFIG, legacy_gain_dict
 
 OUT = Path("analysis/output/gain_sweep")
 
@@ -104,7 +105,7 @@ KD_CEILING = 0.95        # servo.py documents KD < 1 as a stability limit
 JOINT_MARGIN_TOL_RAD = -policy.JOINT_LIMIT_MAX_PENETRATION_RAD
 
 GAIN_NAMES = ("KP_POS", "KP_ROT", "KD_POS", "KD_ROT", "K_NULL", "DAMPING")
-BASELINE_GAINS = {name: float(getattr(servo, name)) for name in GAIN_NAMES}
+BASELINE_GAINS = legacy_gain_dict(CONFIG.reactive_pose)
 
 
 def _round4(value):
@@ -116,7 +117,7 @@ def _fmt_id(value):
     return f"{value:g}"
 
 
-# --- grids (ranges from plotting/gain_panel.py's sliders) -------------------
+# --- exploratory grids -------------------------------------------------------
 
 KP_POS_GRID = [_round4(v) for v in np.geomspace(0.5, 10.0, 8)]
 KD_POS_GRID = [_round4(v) for v in np.linspace(0.0, 0.9, 7)]
@@ -224,7 +225,11 @@ def _headroom_series(qdot_raw_eval):
     test_gain_sweep.py checks the two agree per step). Discriminates
     configs that all show 0% clipped saturation but differ in how close
     to the limit they run."""
-    return np.max(np.abs(qdot_raw_eval) / servo.QDOT_LIMIT, axis=-1)
+    return np.max(
+        np.abs(qdot_raw_eval)
+        / np.asarray(servo.LIMITS.joint_velocity_rad_s),
+        axis=-1,
+    )
 
 
 def _worst_over_arms(arms_metrics, key):
@@ -444,10 +449,14 @@ def _stage_grid_signature(grid):
 
 
 def _new_state(args):
+    identity = live.provenance.experiment_identity(
+        live._config_json(SCENARIO), BASELINE_GAINS)
     return {
         "scenario": live._config_json(SCENARIO),
         "sat_threshold": float(args.sat_threshold),
         "fingerprint": _grid_fingerprint(),
+        "effective_control_config": identity["effective_control_config"],
+        "control_config_sha256": identity["control_config_sha256"],
         "stages": {},
     }
 

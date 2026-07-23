@@ -125,7 +125,7 @@ def run():
             q = world.data.qpos[frames.qpos_adrs[s]].copy()
             qdot_raw = servo.qdot_from_error(
                 J, e_pos, e_rot, e_v, e_w, q, servo._Q_MID[s],
-                servo._K_NULL_VEC[s])
+                servo._null_gain_vector(s))
             qdot_meas = world.data.qvel[dofs[s]].copy()
             low, high = jlims[s]
 
@@ -143,11 +143,13 @@ def run():
             L["q"][k] = q
             L["qdot_meas"][k] = qdot_meas
             L["qdot_raw"][k] = qdot_raw
-            L["qdot_sat"][k] = np.clip(qdot_raw, -servo.QDOT_LIMIT,
-                                       servo.QDOT_LIMIT)
+            qdot_limit = np.asarray(servo.LIMITS.joint_velocity_rad_s)
+            L["qdot_sat"][k] = np.clip(qdot_raw, -qdot_limit, qdot_limit)
             L["jlim_dist"][k] = np.minimum(q - low, high - q)
-            L["v_des"][k] = np.concatenate([servo.KP_POS * e_pos,
-                                            servo.KP_ROT * e_rot])
+            L["v_des"][k] = np.concatenate([
+                servo.CONTROL.kp_position_s_inv * e_pos,
+                servo.CONTROL.kp_rotation_s_inv * e_rot,
+            ])
             L["v_ach"][k] = J @ qdot_meas
 
         servo.apply_ctrl(dt, base_twist)
@@ -271,15 +273,16 @@ def make_figures(log, ev):
     # 5 — is velocity saturation preventing recovery?
     fig, axes = plt.subplots(7, 1, sharex=True, figsize=(9, 12),
                              layout="constrained")
-    sat_frac = np.mean(np.abs(r["qdot_raw"]) > servo.QDOT_LIMIT, axis=0)
+    qdot_limit = np.asarray(servo.LIMITS.joint_velocity_rad_s)
+    sat_frac = np.mean(np.abs(r["qdot_raw"]) > qdot_limit, axis=0)
     for j in range(7):
         ax = axes[j]
         ax.plot(t, r["qdot_raw"][:, j], color="0.6", linewidth=0.8,
                 label="commanded (raw)" if j == 0 else None)
         ax.plot(t, r["qdot_sat"][:, j], color=C_RIGHT, linewidth=1.0,
                 label="after saturation" if j == 0 else None)
-        ax.axhline(servo.QDOT_LIMIT[j], color="red", linewidth=0.8)
-        ax.axhline(-servo.QDOT_LIMIT[j], color="red", linewidth=0.8)
+        ax.axhline(qdot_limit[j], color="red", linewidth=0.8)
+        ax.axhline(-qdot_limit[j], color="red", linewidth=0.8)
         ax.set_ylabel(f"q̇{j + 1} [rad/s]")
     _mark_events(axes[0], ev["right"])
     axes[0].legend(loc="upper right", fontsize=8)
@@ -354,7 +357,7 @@ def print_summary(log, ev):
         print(f"  min dist to ctrlrange  {np.min(L['ctrl_dist']):.4f} rad "
               f"(joint {int(np.unravel_index(np.argmin(L['ctrl_dist']), L['ctrl_dist'].shape)[1]) + 1})")
         print(f"  qdot saturation: any-joint fraction "
-              f"{np.mean(np.any(np.abs(L['qdot_raw']) > servo.QDOT_LIMIT, axis=1)):.2%}")
+              f"{np.mean(np.any(np.abs(L['qdot_raw']) > qdot_limit, axis=1)):.2%}")
         print(f"  servo lag |ctrl-q| peak {np.abs(L['servo_lag']).max():.3f} rad")
         print(f"  contacts: max {L['contacts'].max()} "
               f"(steps with any: {np.mean(L['contacts'] > 0):.2%})")

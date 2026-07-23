@@ -1,11 +1,13 @@
 """Named reactive-controller gain sets and their evidence status.
 
-Only ``VERIFIED_BASELINE`` is allowed to provide controller defaults.  The
+``VERIFIED_BASELINE`` mirrors the immutable TOML startup configuration.  The
 other sets preserve exploratory tuning without implying that independent
 position/orientation sweep winners form a validated joint baseline.
 """
 
 from dataclasses import dataclass
+
+from runtime_config import CONFIG
 
 
 @dataclass(frozen=True)
@@ -30,12 +32,12 @@ class GainSet:
 
 # Last controller snapshot whose complete then-current suite passed: 8e4b6db.
 VERIFIED_BASELINE = GainSet(
-    kp_pos=2.0,
-    kp_rot=2.0,
-    kd_pos=0.3,
-    kd_rot=0.3,
-    k_null=1.0,
-    damping=0.05,
+    kp_pos=CONFIG.reactive_pose.kp_position_s_inv,
+    kp_rot=CONFIG.reactive_pose.kp_rotation_s_inv,
+    kd_pos=CONFIG.reactive_pose.kd_position,
+    kd_rot=CONFIG.reactive_pose.kd_rotation,
+    k_null=CONFIG.reactive_pose.null_gain_s_inv,
+    damping=CONFIG.reactive_pose.dls_damping,
 )
 
 # Preserved tuning history.  These are explicitly not canonical baselines.

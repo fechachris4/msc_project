@@ -10,10 +10,10 @@ class EntrypointTest(unittest.TestCase):
     def test_argument_contract(self):
         import main
 
-        self.assertEqual(main._parse_args([]), (("right", "left"), False))
-        self.assertEqual(main._parse_args(["right"]), (("right",), False))
-        self.assertEqual(main._parse_args(["left", "tune"]),
-                         (("left",), True))
+        self.assertEqual(main._parse_args([]), ("right", "left"))
+        self.assertEqual(main._parse_args(["right"]), ("right",))
+        with self.assertRaises(SystemExit):
+            main._parse_args(["left", "tune"])
         with self.assertRaises(SystemExit):
             main._parse_args(["invalid"])
 

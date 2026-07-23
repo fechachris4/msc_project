@@ -57,8 +57,8 @@ Base motion is configured by the levers at the top of `sim/motion.py`
 stays hand-draggable in the viewer as an improvised perturbation.
 
 Base motion vs. EE error, both arms, headless (plain `python` is fine —
-no MuJoCo viewer; live mode opens a rolling plot + live gain panel and
-runs until the window is closed; `--save T` runs headlessly for `T`
+no MuJoCo viewer; live mode opens a rolling plot and runs until the
+window is closed; `--save T` runs headlessly for `T`
 sim-seconds instead):
 
 ```bash
@@ -91,6 +91,9 @@ python -m unittest discover tests
 
 ```
 main.py                    viewer loop: closed-loop world-frame pose hold
+runtime_config.py          strict immutable loader for shared control TOML
+config/
+  control.toml             gains, limits, nominal dt, and startup targets
 sim/
   scene.xml                MJCF scene: torso mocap body + dual Kinova Gen3 + targets
   world.py                 model/data singletons, checked id lookups
@@ -107,7 +110,6 @@ controller/
                            plumbing (errors, setpoint integration, data.ctrl)
 plotting/                 reusable instruments only (no MuJoCo except via callers)
   live_plot.py             generic live time-series plot, expand-only autoscale
-  gain_panel.py            the one live gain-tuning panel (GainPanel)
   style.py                 shared Okabe-Ito colors + side conventions
 analysis/                  every experiment script; figures -> analysis/output/
   metrics.py               one metric definition: stats/print_stats/windowed_stats
@@ -135,3 +137,6 @@ Do not unify them.
   human-facing boundaries (prints, plots).
 - End-effector references are world-frame: resolved against the torso once
   at startup, then held fixed in the world while the base moves.
+- Runtime control values come from `config/control.toml`. Edit that file and
+  restart; the effective configuration and source hash are printed at startup
+  and stamped into saved experiment metadata.

@@ -1,7 +1,7 @@
 """Record and check a deterministic trace of the current controller.
 
-This deliberately calls the current unrefactored modules directly. It is the
-behavior lock for the migration, not the desired final control architecture.
+This deliberately calls the current modules directly. It is the behavior lock
+for the migration, not the desired final control architecture.
 
 Usage from the repository root:
 
@@ -20,7 +20,7 @@ import mujoco
 import numpy as np
 
 from controller import desired_pos, frames, servo
-from controller.gain_sets import VERIFIED_BASELINE
+from runtime_config import CONFIG
 from sim import motion, target_motion, targets, world
 
 
@@ -53,31 +53,23 @@ TARGET_LINEAR_FREQUENCY_HZ = 0.7
 TARGET_ROTATIONAL_FREQUENCY_HZ = 0.4
 
 
-def _assert_baseline_gains():
-    actual = (
-        servo.KP_POS,
-        servo.KP_ROT,
-        servo.KD_POS,
-        servo.KD_ROT,
-        servo.K_NULL,
-        servo.DAMPING,
-    )
-    expected = (
-        VERIFIED_BASELINE.kp_pos,
-        VERIFIED_BASELINE.kp_rot,
-        VERIFIED_BASELINE.kd_pos,
-        VERIFIED_BASELINE.kd_rot,
-        VERIFIED_BASELINE.k_null,
-        VERIFIED_BASELINE.damping,
-    )
-    if actual != expected:
+def _assert_baseline_configuration():
+    if servo.CONTROL != CONFIG.reactive_pose:
         raise RuntimeError(
-            f"golden trace requires baseline gains; got {actual}, expected {expected}"
+            "golden trace requires the committed reactive controller config"
+        )
+    if servo.LIMITS != CONFIG.limits:
+        raise RuntimeError(
+            "golden trace requires the committed controller limits"
+        )
+    if world.model.opt.timestep != CONFIG.run.nominal_dt_s:
+        raise RuntimeError(
+            "golden trace requires the committed nominal timestep"
         )
 
 
 def _reset_current_code():
-    _assert_baseline_gains()
+    _assert_baseline_configuration()
     mujoco.mj_resetData(world.model, world.data)
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
@@ -119,11 +111,11 @@ def _cycle_rows(cycle, dt, base_twist, traces):
         _flatten(row, "ee_linear_velocity_m_s", ee_v)
         _flatten(row, "ee_angular_velocity_rad_s", ee_w)
         qdot_task = trace.J.T @ np.linalg.solve(
-            trace.J @ trace.J.T + servo.DAMPING**2 * np.eye(6),
+            trace.J @ trace.J.T + servo.CONTROL.dls_damping**2 * np.eye(6),
             trace.task_twist,
         )
         qdot_null_objective = (
-            -servo._K_NULL_VEC[side] * (trace.q - servo._Q_MID[side])
+            -servo._null_gain_vector(side) * (trace.q - servo._Q_MID[side])
         )
         qdot_null_projected = (
             np.eye(7) - np.linalg.pinv(trace.J) @ trace.J
@@ -221,22 +213,22 @@ def _manifest_without_hash():
         "applied_command_field": "ctrl_after",
         "controller": {
             "gains": {
-                "kp_pos_s_inv": float(servo.KP_POS),
-                "kp_rot_s_inv": float(servo.KP_ROT),
-                "kd_pos": float(servo.KD_POS),
-                "kd_rot": float(servo.KD_ROT),
-                "k_null_s_inv": float(servo.K_NULL),
-                "dls_damping": float(servo.DAMPING),
+                "kp_pos_s_inv": servo.CONTROL.kp_position_s_inv,
+                "kp_rot_s_inv": servo.CONTROL.kp_rotation_s_inv,
+                "kd_pos": servo.CONTROL.kd_position,
+                "kd_rot": servo.CONTROL.kd_rotation,
+                "k_null_s_inv": servo.CONTROL.null_gain_s_inv,
+                "dls_damping": servo.CONTROL.dls_damping,
             },
             "components": {
-                "position_enabled": bool(servo.POSITION_ENABLED),
-                "orientation_enabled": bool(servo.ORIENTATION_ENABLED),
-                "velocity_enabled": bool(servo.VELOCITY_ENABLED),
+                "position_enabled": servo.CONTROL.position_enabled,
+                "orientation_enabled": servo.CONTROL.orientation_enabled,
+                "velocity_enabled": servo.CONTROL.velocity_enabled,
             },
-            "joint_velocity_limit_rad_s": np.asarray(
-                servo.QDOT_LIMIT, dtype=float
-            ).tolist(),
-            "position_lead_limit_rad": float(servo.CTRL_LEAD),
+            "joint_velocity_limit_rad_s": list(
+                servo.LIMITS.joint_velocity_rad_s
+            ),
+            "position_lead_limit_rad": servo.LIMITS.position_lead_rad,
         },
         "scenario": {
             "base_linear_amplitude_m": BASE_LINEAR_AMPLITUDE_M.tolist(),

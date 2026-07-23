@@ -21,6 +21,8 @@ never read directly from MuJoCo — mirroring what will be available on hardware
 
 ```
 sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attached Gen3)
+├── config/control.toml     (gains, limits, nominal dt, startup targets)
+├── runtime_config.py       (strict immutable TOML loader)
 └── sim/world.py            (MjModel/MjData singletons, checked id lookups)
     ├── sim/targets.py      (write/read target mocap poses, world frame)
     ├── sim/motion.py       (scripted base motion: sinusoidal torso disturbance)
@@ -35,7 +37,6 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
     ├── main.py                        (viewer loop: closed loop via servo.apply_ctrl)
     ├── plotting/                      (reusable instruments only)
     │   ├── live_plot.py               (generic live time-series plot, expand-only autoscale)
-    │   ├── gain_panel.py              (the one live gain-tuning panel, GainPanel)
     │   └── style.py                   (shared Okabe-Ito colors + side conventions)
     └── analysis/                      (every experiment script; figures → analysis/output/)
         ├── metrics.py                 (one metric definition: stats/print_stats/windowed_stats)
@@ -52,6 +53,8 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 | Module/File | Purpose | Status | Depends On | Used By | Tests | Confidence | Touch? |
 | ----------- | ------- | ------ | ---------- | ------- | ----- | ---------- | ------ |
 | `sim/scene.xml` | Torso + dual Gen3 scene, targets, contact excludes | Validated | `assets/kinova_gen3/gen3.xml` | `world.py` | Loads in all tests | High | Touch only if needed |
+| `config/control.toml` | Shared startup gains, limits, nominal dt, and targets | Implemented | — | `runtime_config.py` | `test_runtime_config.py` + golden trace | High | Single tuning surface |
+| `runtime_config.py` | Strict immutable TOML loader and effective-config stamp | Implemented | control.toml | controller, sim, analysis | `test_runtime_config.py` | High | Keep Python/C++ schema aligned |
 | `sim/assets/kinova_gen3/` | Vendored Gen3 MJCF (position-servo actuators) | Validated (kinematics + closed loop) | — | scene, `pin_fk.py` | Indirect via FK tests | High | Touch only if needed |
 | `sim/world.py` | Model/data load, checked id lookups | Implemented | scene.xml | everything | Indirect (all tests import it) | High | Do not touch |
 | `sim/targets.py` | Set/read target mocap poses | Implemented | `world.py` | desired_pos, servo | Indirect via `test_servo` wrapper tests | Medium-High | Touch only if needed |
@@ -64,11 +67,10 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 | `controller/servo.py` | The controller: P law + DLS (pure math) + MuJoCo plumbing (errors, setpoint integration, qdot limits) | Validated | frames, targets, world | main, plotting | `test_servo`: pure errors, DLS vs pinv, wrapper offsets, arm selection, `ClosedLoopConvergenceTest` | High | Touch only if needed |
 | `main.py` | Viewer loop, closed loop, arm selection CLI | Implemented | desired_pos, servo, world | user | Loop body shared with `ClosedLoopConvergenceTest` via `apply_ctrl` | Medium-High | Grows with base motion |
 | `plotting/live_plot.py` | Generic live plot, expand-only y-autoscale | Implemented | matplotlib | base_vs_error, fk_validation | None (visually exercised) | Medium | Do not touch |
-| `plotting/gain_panel.py` | The one live gain-tuning panel (`GainPanel`, `on_change` hook) | Implemented | servo, matplotlib.widgets | main (tune), dashboard, base_vs_error | None (visually exercised) | Medium | Touch only if needed |
 | `plotting/style.py` | Shared Okabe-Ito colors + side→color/linestyle maps | Implemented | — | dashboard, base_vs_error, diagnose, validate_velocity, bandwidth_sweep | None (constants only) | High | Touch only if needed |
 | `analysis/metrics.py` | One metric definition: `stats`/`print_stats` (full-run) + `windowed_stats` | Implemented | numpy, world | base_vs_error, dashboard | Hand-verified: windowed_stats matches stats() on identical data | High | Touch only if needed |
-| `analysis/dashboard.py` | Live 7-panel control-loop dashboard (per-axis error, e_rot, headroom, σ_min, margins) | Implemented | frames, servo, gain_panel, metrics | user | `test_dashboard.py`: pure per-tick helpers + DAMPING runtime guard | Medium-High | Touch only if needed |
-| `analysis/base_vs_error.py` | Thesis success-criterion figure: base displacement vs. per-axis EE error | Implemented | frames, servo, live_plot, gain_panel, metrics | user | Visual + printed table only | Medium-High | Touch only if needed |
+| `analysis/dashboard.py` | Live 7-panel control-loop dashboard (per-axis error, e_rot, headroom, σ_min, margins) | Implemented | frames, servo, metrics | user | `test_dashboard.py`: pure per-tick helpers + immutable-config routing | Medium-High | Touch only if needed |
+| `analysis/base_vs_error.py` | Thesis success-criterion figure: base displacement vs. per-axis EE error | Implemented | frames, servo, live_plot, metrics | user | Visual + printed table only | Medium-High | Touch only if needed |
 | `analysis/fk_validation.py` | Live direct-vs-FK comparison | Implemented | frames, world, live_plot | user | Visual only | Medium | Touch only if needed |
 | `README.md` | Setup + pipeline + layout docs | Current (refreshed 2026-07-07) | — | — | — | High | Keep in sync |
 | `tasks/todo.md` | Historical task log | Stale (history, not current state) | — | — | — | — | Do not touch (append-only) |
@@ -140,9 +142,9 @@ sim/assets/kinova_gen3/gen3.xml (vendored, position-servo actuators)
 │       ├── controller/kinematics.py  (transforms; TEST REFERENCE ONLY)
 │       ├── controller/desired_pos.py  (frames + transforms + targets)
 │       ├── controller/servo.py  (frames + targets; P law + DLS inside)
-│       │   ├── main.py  (viewer closed loop, optional plotting/gain_panel.py)
-│       │   ├── analysis/dashboard.py  (side from CLI arg; gain_panel + metrics)
-│       │   └── analysis/base_vs_error.py  (both arms; gain_panel + metrics + live_plot)
+│       │   ├── main.py  (viewer closed loop)
+│       │   ├── analysis/dashboard.py  (side from CLI arg; metrics)
+│       │   └── analysis/base_vs_error.py  (both arms; metrics + live_plot)
 │       └── analysis/fk_validation.py (frames, no controller)
 │           └── plotting/live_plot.py  (matplotlib only, MuJoCo-free)
 └── tests/  (test_kinematics, test_pin_fk, test_reference, test_transforms, test_servo, test_dashboard)

@@ -8,9 +8,7 @@ Per-step data flow (all SI: meters, radians; mm only in the printout):
   -> integrate position-servo setpoints data.ctrl (rad)  [controller/servo]
   -> mj_step
 
-usage: mjpython main.py [right|left|both] [tune]
-  tune: opt in to the live gain panel (plotting.gain_panel) alongside
-  the MuJoCo viewer.
+usage: mjpython main.py [right|left|both]
 """
 
 import time
@@ -20,35 +18,29 @@ import mujoco.viewer
 import numpy as np
 
 from controller import desired_pos, frames, servo
+from runtime_config import CONFIG, print_effective_config
 from sim import motion, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
 def _parse_args(argv):
     values = list(argv)
-    usage = "usage: mjpython main.py [right|left|both] [tune]"
-    if len(values) > 2:
+    usage = "usage: mjpython main.py [right|left|both]"
+    if len(values) > 1:
         raise SystemExit(usage)
     choice = values[0] if values else "both"
     if choice not in ("right", "left", "both"):
         raise SystemExit(usage)
-    if len(values) == 2 and values[1] != "tune":
-        raise SystemExit(usage)
-    return (world.SIDES if choice == "both" else (choice,),
-            len(values) == 2)
+    return world.SIDES if choice == "both" else (choice,)
 
 
 def main(argv=None):
     import sys
 
-    arms, tune = _parse_args(sys.argv[1:] if argv is None else argv)
+    arms = _parse_args(sys.argv[1:] if argv is None else argv)
+    print_effective_config(CONFIG)
     desired_pos.apply()
     servo.init_ctrl()
-
-    panel = None
-    if tune:
-        from plotting.gain_panel import GainPanel
-        panel = GainPanel()
 
     step = 0
     with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
@@ -64,9 +56,6 @@ def main(argv=None):
             servo.apply_ctrl(world.model.opt.timestep,
                              motion.torso_twist_at(world.data.time), arms)
             mujoco.mj_step(world.model, world.data)
-
-            if panel is not None:
-                panel.pump()
 
             if step % PRINT_EVERY == 0:
                 for side in world.SIDES:

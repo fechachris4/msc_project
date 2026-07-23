@@ -6,6 +6,7 @@ keep the world-frame EE error well below the base amplitude while the
 torso sways — the disturbance-rejection regression tripwire.
 """
 
+from dataclasses import replace
 import unittest
 
 import mujoco
@@ -192,9 +193,11 @@ class PDvsPDisturbanceTest(unittest.TestCase):
     MOTION_SECONDS = 4.0                     # two periods
     PEAK_FLOOR = 0.005                       # m: disturbance engaged
 
-    def _run_peak(self):
+    def _run_peak(self, control=None):
         from controller import frames, servo
         from sim import motion, targets, world
+
+        control = servo.CONTROL if control is None else control
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
@@ -211,7 +214,7 @@ class PDvsPDisturbanceTest(unittest.TestCase):
         dt = world.model.opt.timestep
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            servo.apply_ctrl(dt, zero_twist, control=control)
             mujoco.mj_step(world.model, world.data)
 
         t_start = world.data.time
@@ -225,7 +228,7 @@ class PDvsPDisturbanceTest(unittest.TestCase):
                 t_rel, linear_amplitude=self.AMPLITUDE,
                 linear_frequency=self.FREQUENCY,
                 rotational_amplitude=np.zeros(3))
-            servo.apply_ctrl(dt, base_twist)
+            servo.apply_ctrl(dt, base_twist, control=control)
             mujoco.mj_step(world.model, world.data)
             for side in world.SIDES:
                 e_pos, _ = servo.pose_error(side)
@@ -239,12 +242,9 @@ class PDvsPDisturbanceTest(unittest.TestCase):
         self.addCleanup(_restore_world)
 
         peak_pd = self._run_peak()
-        kd_pos, kd_rot = servo.KD_POS, servo.KD_ROT
-        servo.KD_POS = servo.KD_ROT = 0.0
-        try:
-            peak_p = self._run_peak()
-        finally:
-            servo.KD_POS, servo.KD_ROT = kd_pos, kd_rot
+        p_only = replace(
+            servo.CONTROL, kd_position=0.0, kd_rotation=0.0)
+        peak_p = self._run_peak(p_only)
 
         for side in world.SIDES:
             self.assertGreater(peak_pd[side], self.PEAK_FLOOR, side)
