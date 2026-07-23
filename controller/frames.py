@@ -12,6 +12,7 @@ import pinocchio as pin
 from controller.pin_fk import build_pin_model, pin_T_K_E
 from controller.state import (
     ArmControllerState,
+    DualArmControllerStates,
     DualArmFramedTargets,
     DualArmWorldTargets,
     FramedTarget,
@@ -96,6 +97,13 @@ def arm_controller_state(plant, side, calibration):
         ee_pose_world=ee_pose_world,
         ee_twist_world=ee_twist_world,
         jacobian_world=jacobian_world,
+    )
+
+
+def controller_states(plant, calibration):
+    return DualArmControllerStates(
+        right=arm_controller_state(plant, "right", calibration),
+        left=arm_controller_state(plant, "left", calibration),
     )
 
 

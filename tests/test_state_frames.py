@@ -16,6 +16,7 @@ from controller.state import (
 )
 from controller.transforms import rotation_from_rpy
 from sim import world
+from tests.control_test_support import apply_cycle, reconstruct_pipeline
 
 
 def _arm():
@@ -126,8 +127,6 @@ class TargetFrameBoundaryTest(unittest.TestCase):
             resolved.twist_world.angular_rad_s, [0.0, 0.0, 2.0], atol=1e-12)
 
     def test_control_path_re_resolves_live_targets_each_cycle(self):
-        from controller import servo
-
         mujoco.mj_resetData(world.model, world.data)
         mujoco.mj_forward(world.model, world.data)
         mocap_index = world.model.body_mocapid[world.torso_body_id]
@@ -187,8 +186,9 @@ class TargetFrameBoundaryTest(unittest.TestCase):
                     atol=1e-12,
                 )
 
-            servo.init_ctrl()
-            traces = servo.apply_ctrl(
+            pipeline = reconstruct_pipeline()
+            traces = apply_cycle(
+                pipeline,
                 world.model.opt.timestep,
                 (np.zeros(3), np.zeros(3)),
                 world_targets=live_after,

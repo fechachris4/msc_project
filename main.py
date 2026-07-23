@@ -17,10 +17,10 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
-from controller import desired_pos, frames, servo
+from controller import desired_pos, frames, reactive_pose, servo
 from controller.state import Twist
 from runtime_config import CONFIG, print_effective_config
-from sim import motion, world
+from sim import motion, targets, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
@@ -41,7 +41,11 @@ def main(argv=None):
     arms = _parse_args(sys.argv[1:] if argv is None else argv)
     print_effective_config(CONFIG)
     source_targets = desired_pos.apply()
-    servo.init_ctrl()
+    initial_plant = world.read_state(Twist.zero())
+    pipeline = servo.ReactivePositionPipeline(
+        initial_plant, world.PIPELINE_SETUP
+    )
+    world.apply_command(pipeline.command())
 
     step = 0
     with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
@@ -59,24 +63,26 @@ def main(argv=None):
             world_targets = frames.resolve_targets_world(
                 plant, world.MOUNT_CALIBRATION, source_targets)
             desired_pos.show_targets(world_targets)
-            servo.apply_ctrl(
+            command, _ = pipeline.step(
+                frames.controller_states(
+                    plant, world.MOUNT_CALIBRATION),
+                world_targets,
                 world.model.opt.timestep,
-                base_twist,
                 arms,
-                world_targets=world_targets,
             )
+            world.apply_command(command)
             mujoco.mj_step(world.model, world.data)
 
             if step % PRINT_EVERY == 0:
+                display_plant = world.read_state(Twist.zero())
+                display_targets = targets.world_targets()
                 for side in world.SIDES:
-                    e_pos, _ = servo.pose_error(side)
+                    state = frames.arm_controller_state(
+                        display_plant, side, world.MOUNT_CALIBRATION)
+                    e_pos, _ = reactive_pose.pose_error(
+                        state, display_targets.for_arm(side))
                     e_mm = e_pos * 1000.0
                     # sigma_min -> 0 means a task direction is being lost.
-                    state = frames.arm_controller_state(
-                        world.read_state(Twist.zero()),
-                        side,
-                        world.MOUNT_CALIBRATION,
-                    )
                     sigma = np.linalg.svd(
                         state.jacobian_world, compute_uv=False)
                     print(f"t={world.data.time:6.2f}s  {side:5s} "

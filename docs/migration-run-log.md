@@ -30,6 +30,7 @@ and a numbered commit.
 
 ## Step 3 — explicit state and world-frame boundary
 
+- Commit: `2a9fb42`
 - Full suite: 178 tests passed
 - Golden gate: 500 rows matched at `rtol=1e-12`, `atol=1e-12`
 - Independent review: PASS after correcting live target integration
@@ -43,4 +44,25 @@ and a numbered commit.
   - Encode the frozen baseline target as its equivalent world pose in TOML;
     retained torso/base targets are re-resolved from each plant sample and
     include transport twist.
+- Deviations: none.
+
+## Step 4 — pure controller and reconstruction-only state
+
+- Full suite: 182 tests passed
+- Golden gate: 500 rows matched at `rtol=1e-12`, `atol=1e-12`
+- Independent review: PASS
+- Boring choices:
+  - Keep one explicit `ReactivePositionPipeline` for the current
+    pose-to-joint-position flow; future direct-velocity or MPC flows are not
+    routed through it.
+  - Put pose/twist error, PD task twist, DLS IK, and null-space centering in
+    `reactive_pose.py`; no second numerical implementation remains in
+    diagnostics or the runtime path.
+  - Give `PositionIntegrator` sole ownership of the persistent position
+    command. It is seeded from measured joints at construction and has no
+    reset method.
+  - Derive MuJoCo joint/actuator facts in `sim.world`, then pass immutable
+    setup records into the controller pipeline.
+  - Retain `ControlTrace` field order so existing telemetry and the frozen
+    golden schema remain unchanged.
 - Deviations: none.

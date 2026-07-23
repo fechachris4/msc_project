@@ -1,8 +1,8 @@
 """Base motion vs. end-effector error, live: the thesis success criterion
 made visible while the sim runs. Read-only, same pattern as
 analysis/diagnose.py and analysis/validate_velocity.py: the controller
-runs unmodified, every logged quantity comes from the public functions
-apply_ctrl itself calls (servo.pose_error), nothing re-derived.
+runs unmodified, and logged errors come from the same explicit state and
+pure world-frame error function used by the controller.
 
     python -m analysis.base_vs_error               # live, both arms
     python -m analysis.base_vs_error --save 30      # headless, 30 sim-seconds
@@ -31,11 +31,11 @@ import mujoco
 import numpy as np
 
 from analysis import metrics
-from controller import desired_pos, frames, servo
+from controller import desired_pos, frames, reactive_pose, servo
 from controller.state import Twist
 from plotting.live_plot import LivePlot
 from plotting.style import C_BASE, C_RIGHT, C_LEFT
-from sim import motion, world
+from sim import motion, targets, world
 
 # Static settle before the scenario starts (validate_velocity.py's
 # pattern): the arms boot from a default configuration far from
@@ -58,12 +58,20 @@ def run(save_seconds=None):
     mujoco.mj_resetData(world.model, world.data)
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
-    servo.init_ctrl()
+    pipeline = servo.ReactivePositionPipeline(
+        world.read_state(Twist.zero()), world.PIPELINE_SETUP)
+    world.apply_command(pipeline.command())
 
     dt = world.model.opt.timestep
     zero_twist = (np.zeros(3), np.zeros(3))
     for _ in range(int(SETTLE_SECONDS / dt)):
-        servo.apply_ctrl(dt, zero_twist)
+        plant = world.read_state(Twist(*zero_twist))
+        command, _ = pipeline.step(
+            frames.controller_states(plant, world.MOUNT_CALIBRATION),
+            targets.world_targets(),
+            dt,
+        )
+        world.apply_command(command)
         mujoco.mj_step(world.model, world.data)
 
     home_pos = motion.HOME_POS
@@ -110,10 +118,15 @@ def run(save_seconds=None):
             base_twist = motion.torso_twist_at(t)
 
             plant = world.read_state(Twist(*base_twist))
+            states = frames.controller_states(
+                plant, world.MOUNT_CALIBRATION)
+            world_targets = targets.world_targets()
             base_pos = plant.torso_pose_world.position_m
             base_disp = base_pos - home_pos
-            right_e, _ = servo.pose_error("right")
-            left_e, _ = servo.pose_error("left")
+            right_e, _ = reactive_pose.pose_error(
+                states.right, world_targets.right)
+            left_e, _ = reactive_pose.pose_error(
+                states.left, world_targets.left)
 
             log["t"].append(t)
             log["base_disp"].append(base_disp)
@@ -125,7 +138,9 @@ def run(save_seconds=None):
                 "left EE error": left_e * 1000.0,
             })
 
-            servo.apply_ctrl(dt, base_twist)
+            command, _ = pipeline.step(
+                states, world_targets, dt)
+            world.apply_command(command)
             mujoco.mj_step(world.model, world.data)
             step += 1
     except KeyboardInterrupt:

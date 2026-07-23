@@ -12,8 +12,8 @@ sweeps across frequency).
 
 Outputs: analysis/output/bw_error_amplitude.png,
 analysis/output/bw_phase_lag.png, and a summary table on stdout. No
-controller changes — every logged quantity comes from servo.pose_error,
-the same public function apply_ctrl itself uses.
+controller changes — errors use the same explicit state and pure
+world-frame error calculation as the real controller.
 """
 
 from pathlib import Path
@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 
-from controller import frames, servo
+from controller import frames, reactive_pose, servo
 from controller.state import Twist
 from plotting.style import C_LEFT as C_PRED, C_RIGHT as C_MEAS
 from sim import target_motion, targets, world
@@ -77,7 +77,10 @@ def _reset_to_home():
         targets.set_target(side, pos)
         targets.set_target_quat(side, quat)
     target_motion.init_home()
-    servo.init_ctrl()
+    pipeline = servo.ReactivePositionPipeline(
+        world.read_state(Twist.zero()), world.PIPELINE_SETUP)
+    world.apply_command(pipeline.command())
+    return pipeline
 
 
 def _fit_sine(t, signal, w):
@@ -101,12 +104,18 @@ def run_one(frequency):
     the standard Bode-style quantity (0 at low frequency, -> 90 deg
     above bandwidth), not the error signal's own (less intuitive) phase.
     """
-    _reset_to_home()
+    pipeline = _reset_to_home()
     dt = world.model.opt.timestep
     zero_twist = (np.zeros(3), np.zeros(3))
 
     for _ in range(int(SETTLE_SECONDS / dt)):
-        servo.apply_ctrl(dt, zero_twist)
+        plant = world.read_state(Twist(*zero_twist))
+        command, _ = pipeline.step(
+            frames.controller_states(plant, world.MOUNT_CALIBRATION),
+            targets.world_targets(),
+            dt,
+        )
+        world.apply_command(command)
         mujoco.mj_step(world.model, world.data)
 
     w = 2.0 * np.pi * frequency
@@ -130,10 +139,22 @@ def run_one(frequency):
         target_motion.set_target_pose(t_rel, SIDE, linear_amplitude=AMPLITUDE,
                                       linear_frequency=frequency,
                                       rotational_amplitude=np.zeros(3))
-        servo.apply_ctrl(dt, zero_twist)
+        plant = world.read_state(Twist(*zero_twist))
+        states = frames.controller_states(
+            plant, world.MOUNT_CALIBRATION)
+        world_targets = targets.world_targets()
+        command, _ = pipeline.step(
+            states, world_targets, dt)
+        world.apply_command(command)
         mujoco.mj_step(world.model, world.data)
         if t_rel >= skip_seconds:
-            e_pos, _ = servo.pose_error(SIDE)
+            measured = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                SIDE,
+                world.MOUNT_CALIBRATION,
+            )
+            e_pos, _ = reactive_pose.pose_error(
+                measured, targets.world_target(SIDE))
             log_t.append(t_rel)
             log_e.append(e_pos[AXIS])
 

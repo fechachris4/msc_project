@@ -8,7 +8,7 @@ side is "right" or "left" throughout.
 
 import numpy as np
 
-from controller.state import Pose, Twist, WorldTarget
+from controller.state import DualArmWorldTargets, Pose, Twist, WorldTarget
 from controller.transforms import rotation_from_quat
 from sim import world
 
@@ -53,4 +53,12 @@ def world_target(side):
     return WorldTarget(
         Pose(target_position(side), rotation_from_quat(target_quat(side))),
         Twist(*target_velocity(side)),
+    )
+
+
+def world_targets():
+    """Read both controller-facing targets from the simulation markers."""
+    return DualArmWorldTargets(
+        right=world_target("right"),
+        left=world_target("left"),
     )

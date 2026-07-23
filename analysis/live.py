@@ -12,12 +12,13 @@ import numpy as np
 
 from analysis import metrics, policy, provenance
 from controller import desired_pos, frames, servo
+from controller.state import Twist
 from runtime_config import (
     CONFIG,
     control_with_legacy_overrides,
     legacy_gain_dict,
 )
-from sim import motion, world
+from sim import motion, targets, world
 
 
 class ExperimentConfig(NamedTuple):
@@ -110,12 +111,18 @@ def _validate_config(config):
             raise ValueError(f"{name} must be finite and non-negative")
 
 
-def _reset_simulation():
+def _reset_simulation(control=CONFIG.reactive_pose):
     mujoco.mj_resetData(world.model, world.data)
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
-    servo.init_ctrl()
+    pipeline = servo.ReactivePositionPipeline(
+        world.read_state(Twist.zero()),
+        world.PIPELINE_SETUP,
+        control,
+    )
+    world.apply_command(pipeline.command())
     mujoco.mj_forward(world.model, world.data)
+    return pipeline
 
 
 def _joint_margin(side, q):
@@ -255,7 +262,7 @@ class _LogBuilder:
         )
 
 
-def _advance(builder, phase, eval_time, scenario, on_update, control):
+def _advance(builder, pipeline, phase, eval_time, scenario, on_update):
     sim_time = float(world.data.time)
     if phase == "evaluation":
         motion.set_torso_pose(eval_time, **scenario)
@@ -267,12 +274,14 @@ def _advance(builder, phase, eval_time, scenario, on_update, control):
         base_v = np.zeros(3)
         base_w = np.zeros(3)
         base_disp = np.zeros(3)
-    traces = servo.apply_ctrl(
+    plant = world.read_state(Twist(base_v, base_w))
+    command, traces = pipeline.step(
+        frames.controller_states(plant, world.MOUNT_CALIBRATION),
+        targets.world_targets(),
         world.model.opt.timestep,
-        (base_v, base_w),
         builder.arms,
-        control=control,
     )
+    world.apply_command(command)
     mujoco.mj_step(world.model, world.data)
     contact_time = sim_time
     pairs = _contact_pairs()
@@ -294,8 +303,8 @@ def run_experiment(config, on_update=None, gains=None):
         rotational_amplitude=np.asarray(
             config.rotational_amplitude, dtype=float).copy(),
     )
-    _reset_simulation()
     control = control_with_legacy_overrides(CONFIG.reactive_pose, gains)
+    pipeline = _reset_simulation(control)
     builder = _LogBuilder(tuple(config.arms), control)
     dt = float(world.model.opt.timestep)
     settled = False
@@ -303,7 +312,7 @@ def run_experiment(config, on_update=None, gains=None):
     settle_start = float(world.data.time)
     while world.data.time - settle_start < config.settle_timeout:
         traces = _advance(
-            builder, "settling", -1.0, {}, on_update, control)
+            builder, pipeline, "settling", -1.0, {}, on_update)
         within = all(
             np.linalg.norm(trace.e_pos) <= config.settle_pos_tol
             and np.linalg.norm(trace.e_rot) <= config.settle_rot_tol
@@ -327,7 +336,7 @@ def run_experiment(config, on_update=None, gains=None):
     evaluation_steps = max(1, int(np.ceil(config.evaluation_seconds / dt)))
     for step in range(evaluation_steps):
         _advance(
-            builder, "evaluation", step * dt, scenario, on_update, control)
+            builder, pipeline, "evaluation", step * dt, scenario, on_update)
     return builder.build(config, settled, settle_duration)
 
 

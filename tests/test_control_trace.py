@@ -7,6 +7,9 @@ import numpy as np
 from controller.state import Twist
 
 from controller.transforms import rotation_about_axis
+from controller import reactive_pose
+from controller.position_actuation import PositionIntegrator
+from tests.control_test_support import apply_cycle, reconstruct_pipeline
 
 
 HOME = np.array([
@@ -80,12 +83,12 @@ def _setup_scene():
     mujoco.mju_mat2Quat(quat, ref_rot.flatten())
     targets.set_target("right", pos + np.array([0.35, -0.22, 0.18]))
     targets.set_target_quat("right", quat)
-    servo.init_ctrl()
+    return reconstruct_pipeline()
 
 
 class ControlTraceTest(unittest.TestCase):
     def setUp(self):
-        _setup_scene()
+        self.pipeline = _setup_scene()
 
     def tearDown(self):
         from sim import world
@@ -98,7 +101,8 @@ class ControlTraceTest(unittest.TestCase):
         from sim import world
 
         dt = world.model.opt.timestep
-        traces = servo.apply_ctrl(dt, BASE_TWIST, arms=("right",))
+        traces = apply_cycle(
+            self.pipeline, dt, BASE_TWIST, arms=("right",))
         self.assertIsNotNone(traces)
         trace = traces["right"]
 
@@ -150,7 +154,12 @@ class ControlTraceTest(unittest.TestCase):
             trace.q - servo.LIMITS.position_lead_rad,
             trace.q + servo.LIMITS.position_lead_rad,
         )
-        ctrl_after = np.clip(ctrl_lead_limited, *servo._BOUNDS["right"])
+        limits = world.PIPELINE_SETUP.right.actuation_limits
+        ctrl_after = np.clip(
+            ctrl_lead_limited,
+            limits.lower_position_rad,
+            limits.upper_position_rad,
+        )
         np.testing.assert_array_equal(
             trace.speed_saturated,
             trace.qdot_raw != trace.qdot_speed_clipped,
@@ -169,8 +178,11 @@ class ControlTraceTest(unittest.TestCase):
         from controller import servo
         from sim import world
 
-        traces = servo.apply_ctrl(
-            world.model.opt.timestep, BASE_TWIST, arms=("right",)
+        traces = apply_cycle(
+            self.pipeline,
+            world.model.opt.timestep,
+            BASE_TWIST,
+            arms=("right",),
         )
         self.assertIsNotNone(traces)
         trace = traces["right"]
@@ -198,8 +210,11 @@ class ControlTraceTest(unittest.TestCase):
         from controller import servo
         from sim import world
 
-        trace = servo.apply_ctrl(
-            world.model.opt.timestep, BASE_TWIST, arms=("right",)
+        trace = apply_cycle(
+            self.pipeline,
+            world.model.opt.timestep,
+            BASE_TWIST,
+            arms=("right",),
         )["right"]
         for field in dataclasses.fields(trace):
             with self.assertRaises(ValueError, msg=field.name):
@@ -213,15 +228,19 @@ class ControlTraceTest(unittest.TestCase):
         for dt in (0.0, -0.1, np.nan, np.inf, -np.inf):
             with self.subTest(dt=dt):
                 with self.assertRaises(ValueError):
-                    servo.apply_ctrl(dt, BASE_TWIST, arms=("right",))
+                    apply_cycle(
+                        self.pipeline, dt, BASE_TWIST, arms=("right",))
                 np.testing.assert_array_equal(world.data.ctrl, ctrl_before)
 
     def test_pd_twist_terms_follow_gains(self):
         from controller import servo
         from sim import world
 
-        trace = servo.apply_ctrl(
-            world.model.opt.timestep, BASE_TWIST, arms=("right",)
+        trace = apply_cycle(
+            self.pipeline,
+            world.model.opt.timestep,
+            BASE_TWIST,
+            arms=("right",),
         )["right"]
         np.testing.assert_array_equal(
             trace.p_twist,
@@ -252,8 +271,11 @@ class ControlTraceTest(unittest.TestCase):
         from controller import servo
         from sim import world
 
-        trace = servo.apply_ctrl(
-            world.model.opt.timestep, BASE_TWIST, arms=("right",)
+        trace = apply_cycle(
+            self.pipeline,
+            world.model.opt.timestep,
+            BASE_TWIST,
+            arms=("right",),
         )["right"]
 
         qdot_task = trace.J.T @ np.linalg.solve(
@@ -261,24 +283,28 @@ class ControlTraceTest(unittest.TestCase):
             trace.task_twist,
         )
         projector = np.eye(7) - np.linalg.pinv(trace.J) @ trace.J
-        qdot_null = -servo._null_gain_vector("right") * (
-            trace.q - servo._Q_MID["right"])
+        centering = world.PIPELINE_SETUP.right.centering
+        null_gain = centering.enabled * servo.CONTROL.null_gain_s_inv
+        qdot_null = -null_gain * (
+            trace.q - centering.midpoint_rad)
         np.testing.assert_allclose(
             trace.qdot_raw, qdot_task + projector @ qdot_null,
             atol=1e-12, rtol=0.0)
 
         np.testing.assert_allclose(
             trace.qdot_raw,
-            servo.qdot_from_error(
+            reactive_pose.solve_reactive_velocity(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
-                trace.q, servo._Q_MID["right"],
-                servo._null_gain_vector("right")),
+                trace.q, centering.midpoint_rad, null_gain,
+                servo.CONTROL,
+            ).qdot_raw,
             atol=1e-12, rtol=0.0)
 
     def test_lead_clamp_mask_and_effective_rate(self):
         from controller import servo
 
-        trace = servo.apply_ctrl(1.0, BASE_TWIST, arms=("right",))["right"]
+        trace = apply_cycle(
+            self.pipeline, 1.0, BASE_TWIST, arms=("right",))["right"]
         expected_ctrl = np.array([
             0.2,
             0.06769130599765076,
@@ -306,36 +332,41 @@ class ControlTraceTest(unittest.TestCase):
             atol=1e-12, rtol=0.0)
 
     def test_actuator_range_clamp_mask_and_effective_rate(self):
-        from controller import frames, servo
+        from controller import servo
         from sim import world
 
         dt = world.model.opt.timestep
         q6 = 5
         actuator = world.ctrl_adrs["right"][q6]
         high = world.model.actuator_ctrlrange[actuator, 1]
-        world.data.qpos[world.qpos_adrs["right"][q6]] = high - 0.05
-        world.data.ctrl[actuator] = high + 0.05
-        mujoco.mj_kinematics(world.model, world.data)
-
-        trace = servo.apply_ctrl(dt, BASE_TWIST, arms=("right",))["right"]
+        limits = world.PIPELINE_SETUP.right.actuation_limits
+        seed = HOME.copy()
+        seed[q6] = high + 0.05
+        measured = HOME.copy()
+        measured[q6] = high - 0.05
+        integrator = PositionIntegrator(seed, limits)
+        actuation = integrator.step(measured, np.zeros(7), dt)
         expected_range_clamped = np.zeros(7, dtype=bool)
         expected_range_clamped[q6] = True
 
-        self.assertEqual(trace.ctrl_before[q6], high + 0.05)
-        self.assertEqual(trace.ctrl_after[q6], high)
-        self.assertAlmostEqual(trace.qdot_effective[q6], -0.05 / dt,
+        self.assertEqual(actuation.command_before_rad[q6], high + 0.05)
+        self.assertEqual(actuation.command_after_rad[q6], high)
+        self.assertAlmostEqual(actuation.qdot_effective[q6], -0.05 / dt,
                                places=12)
         np.testing.assert_array_equal(
-            trace.lead_clamped, np.zeros(7, dtype=bool))
+            actuation.lead_clamped, np.zeros(7, dtype=bool))
         np.testing.assert_array_equal(
-            trace.range_clamped, expected_range_clamped)
+            actuation.range_clamped, expected_range_clamped)
 
     def test_field_shapes_and_dtypes(self):
         from controller import servo
         from sim import world
 
-        trace = servo.apply_ctrl(
-            world.model.opt.timestep, BASE_TWIST, arms=("right",)
+        trace = apply_cycle(
+            self.pipeline,
+            world.model.opt.timestep,
+            BASE_TWIST,
+            arms=("right",),
         )["right"]
         expected_shapes = {
             "J": (6, 7),
@@ -378,19 +409,22 @@ class ComponentTogglesTest(unittest.TestCase):
         from controller import servo
         from sim import world
 
-        trace = servo.apply_ctrl(
+        pipeline = reconstruct_pipeline(self.control)
+        trace = apply_cycle(
+            pipeline,
             world.model.opt.timestep,
             BASE_TWIST,
             arms=("right",),
-            control=self.control,
         )["right"]
+        centering = world.PIPELINE_SETUP.right.centering
+        null_gain = centering.enabled * self.control.null_gain_s_inv
         np.testing.assert_allclose(
             trace.qdot_raw,
-            servo.qdot_from_error(
+            reactive_pose.solve_reactive_velocity(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
-                trace.q, servo._Q_MID["right"],
-                servo._null_gain_vector("right", self.control),
-                control=self.control),
+                trace.q, centering.midpoint_rad, null_gain,
+                self.control,
+            ).qdot_raw,
             atol=1e-12, rtol=0.0)
         return trace
 

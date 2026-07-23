@@ -116,7 +116,7 @@ def set_target_pose(t, side, linear_amplitude=_ZERO3, linear_frequency=0.0,
                     rotational_amplitude=_ZERO3, rotational_frequency=0.0):
     """Write the scripted EE-target pose into the target mocap body —
     the apply-to-sim step. The arm then follows because the closed loop
-    (servo.apply_ctrl) chases the target every step; there is no
+    reactive position pipeline chases the target every step; there is no
     separate "move the arm" command in this codebase.
 
     All-zero amplitudes (the default): no write at all — the target stays
