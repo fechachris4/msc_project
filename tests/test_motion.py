@@ -13,6 +13,7 @@ import mujoco
 import numpy as np
 
 from controller.transforms import rotation_from_rpy
+from controller.state import Twist
 
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
@@ -87,7 +88,9 @@ class TorsoPoseOracleTest(unittest.TestCase):
             motion.set_torso_pose(t, **self.SCENARIO)
             mujoco.mj_kinematics(world.model, world.data)
 
-            pos, rot = frames.torso_pose()
+            plant = world.read_state(Twist.zero())
+            pos = plant.torso_pose_world.position_m
+            rot = plant.torso_pose_world.rotation
             exp_pos, exp_rpy = motion.torso_pose_at(t, **self.SCENARIO)
             np.testing.assert_allclose(pos, exp_pos, atol=1e-12)
             np.testing.assert_allclose(
@@ -139,12 +142,18 @@ class BaseMotionRejectionTest(unittest.TestCase):
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
 
         # Feasible targets by construction: the arms' own FK poses at home.
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
@@ -201,10 +210,16 @@ class PDvsPDisturbanceTest(unittest.TestCase):
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)

@@ -12,17 +12,17 @@ import mujoco
 import numpy as np
 
 from controller import frames
+from controller.state import (
+    DualArmFramedTargets,
+    DualArmWorldTargets,
+    FramedTarget,
+    Pose,
+    TargetFrame,
+    Twist,
+)
 from controller.transforms import rotation_from_rpy
 from runtime_config import CONFIG
 from sim import targets, world
-
-
-def resolve_world(pos, rpy, torso_pose):
-    """World-frame (pos, rot) of a torso-frame reference."""
-    torso_pos, torso_rot = torso_pose
-    world_pos = torso_pos + torso_rot @ np.asarray(pos, dtype=float)
-    world_rot = torso_rot @ rotation_from_rpy(rpy)
-    return world_pos, world_rot
 
 
 def _quat_from_rotation(rot):
@@ -32,14 +32,32 @@ def _quat_from_rotation(rot):
     return quat
 
 
-def apply(config=CONFIG):
-    torso_pose = frames.torso_pose()
+def configured_targets(config=CONFIG):
+    values = {}
     for side in world.SIDES:
         target = config.target(side)
-        if target.reference_frame != "torso":
-            raise ValueError(
-                "the pre-Step-3 target boundary only supports torso targets"
-            )
-        pos, rot = resolve_world(target.position_m, target.rpy_rad, torso_pose)
-        targets.set_target(side, pos)
-        targets.set_target_quat(side, _quat_from_rotation(rot))
+        values[side] = FramedTarget(
+            TargetFrame(target.reference_frame),
+            Pose(target.position_m, rotation_from_rpy(target.rpy_rad)),
+            Twist.zero(),
+        )
+    return DualArmFramedTargets(values["right"], values["left"])
+
+
+def show_targets(world_targets):
+    if not isinstance(world_targets, DualArmWorldTargets):
+        raise TypeError("world_targets must be DualArmWorldTargets")
+    for side in world.SIDES:
+        resolved = world_targets.for_arm(side)
+        targets.set_target(side, resolved.pose_world.position_m)
+        targets.set_target_quat(
+            side, _quat_from_rotation(resolved.pose_world.rotation))
+
+
+def apply(config=CONFIG):
+    """Initialize target markers and return the retained framed targets."""
+    source_targets = configured_targets(config)
+    plant = world.read_state(Twist.zero())
+    show_targets(frames.resolve_targets_world(
+        plant, world.MOUNT_CALIBRATION, source_targets))
+    return source_targets

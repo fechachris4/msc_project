@@ -22,8 +22,8 @@ class RuntimeConfigTest(unittest.TestCase):
         self.assertEqual(CONFIG.reactive_pose.null_gain_s_inv, 1.0)
         self.assertEqual(CONFIG.reactive_pose.dls_damping, 0.05)
         self.assertEqual(len(CONFIG.limits.joint_velocity_rad_s), 7)
-        self.assertEqual(CONFIG.right_target.reference_frame, "torso")
-        self.assertEqual(CONFIG.left_target.reference_frame, "torso")
+        self.assertEqual(CONFIG.right_target.reference_frame, "world")
+        self.assertEqual(CONFIG.left_target.reference_frame, "world")
 
     def test_config_is_immutable(self):
         with self.assertRaises(AttributeError):
@@ -74,15 +74,25 @@ class RuntimeConfigTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "less than one"):
                 load_config(path)
 
-    def test_step_two_rejects_unimplemented_target_frames(self):
-        source = Path(CONFIG.source_path).read_text().replace(
-            'reference_frame = "torso"',
-            'reference_frame = "world"',
-            1,
-        )
+    def test_step_three_accepts_only_implemented_target_frames(self):
+        source = Path(CONFIG.source_path).read_text()
         with tempfile.TemporaryDirectory() as directory:
+            for frame in ("world", "base", "torso"):
+                path = Path(directory) / f"{frame}.toml"
+                path.write_text(source.replace(
+                    'reference_frame = "world"',
+                    f'reference_frame = "{frame}"',
+                    1,
+                ))
+                self.assertEqual(
+                    load_config(path).right_target.reference_frame, frame)
+
             path = Path(directory) / "invalid.toml"
-            path.write_text(source)
+            path.write_text(source.replace(
+                'reference_frame = "world"',
+                'reference_frame = "end_effector"',
+                1,
+            ))
             with self.assertRaisesRegex(ValueError, "reference_frame"):
                 load_config(path)
 

@@ -10,6 +10,14 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from controller.state import (
+    ArmJointState,
+    MountCalibration,
+    PlantState,
+    Pose,
+    Twist,
+)
+from controller.transforms import rotation_from_quat
 from runtime_config import CONFIG
 
 SCENE_PATH = Path(__file__).resolve().with_name("scene.xml")
@@ -44,6 +52,75 @@ target_body_id = {s: _named_id(mujoco.mjtObj.mjOBJ_BODY, f"{s}_target")
 ctrl_adrs = {s: [_named_id(mujoco.mjtObj.mjOBJ_ACTUATOR, f"{s}_joint_{i}")
                  for i in range(1, 8)]
              for s in SIDES}
+
+
+def _joint_addresses(field):
+    addresses = {}
+    for side in SIDES:
+        values = []
+        for index in range(1, 8):
+            joint_id = _named_id(
+                mujoco.mjtObj.mjOBJ_JOINT, f"{side}_joint_{index}"
+            )
+            values.append(int(field[joint_id]))
+        addresses[side] = values
+    return addresses
+
+
+qpos_adrs = _joint_addresses(model.jnt_qposadr)
+dof_adrs = _joint_addresses(model.jnt_dofadr)
+
+
+def _mount_pose(side):
+    body_id = arm_base_id[side]
+    return Pose(
+        model.body_pos[body_id],
+        rotation_from_quat(model.body_quat[body_id]),
+    )
+
+
+MOUNT_CALIBRATION = MountCalibration(
+    right_torso_to_base=_mount_pose("right"),
+    left_torso_to_base=_mount_pose("left"),
+)
+
+
+def read_state(torso_twist):
+    """Read one fixed-shape plant sample at the current simulation time."""
+    if not isinstance(torso_twist, Twist):
+        try:
+            torso_twist = Twist(*torso_twist)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "torso_twist must contain finite linear and angular vectors"
+            ) from error
+    torso_pose = Pose(
+        data.xpos[torso_body_id],
+        data.xmat[torso_body_id].reshape(3, 3),
+    )
+    arms = {
+        side: ArmJointState(
+            data.qpos[list(qpos_adrs[side])],
+            data.qvel[list(dof_adrs[side])],
+        )
+        for side in SIDES
+    }
+    return PlantState(
+        sample_time_s=data.time,
+        nominal_dt_s=model.opt.timestep,
+        torso_pose_world=torso_pose,
+        torso_twist_world=torso_twist,
+        right=arms["right"],
+        left=arms["left"],
+    )
+
+
+def measured_ee_pose(side):
+    """MuJoCo ground-truth EE pose; never used by controller math."""
+    return Pose(
+        data.site_xpos[ee_site_id[side]],
+        data.site_xmat[ee_site_id[side]].reshape(3, 3),
+    )
 
 
 def jnt_range(side):

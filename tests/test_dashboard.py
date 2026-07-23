@@ -92,14 +92,21 @@ class ImmutableDampingConfigTest(unittest.TestCase):
         """Reset to HOME, offset the targets, apply_ctrl once at the
         supplied damping; return {side: ctrl_after - ctrl_before}."""
         from controller import frames, servo
+        from controller.state import Twist
         from sim import targets, world
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = self.HOME
+            world.data.qpos[world.qpos_adrs[side]] = self.HOME
         mujoco.mj_forward(world.model, world.data)
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos + np.array([0.05, 0.0, 0.05]))

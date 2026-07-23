@@ -26,6 +26,7 @@ import numpy as np
 import pinocchio as pin
 
 from controller import frames, servo
+from controller.state import Twist
 from plotting.style import C_XYZ
 from sim import motion, targets, world
 
@@ -51,11 +52,17 @@ def run():
     """Closed-loop rollout under the pinned sway; return per-side logs."""
     mujoco.mj_resetData(world.model, world.data)
     for side in world.SIDES:
-        world.data.qpos[frames.qpos_adrs[side]] = HOME
+        world.data.qpos[world.qpos_adrs[side]] = HOME
     mujoco.mj_forward(world.model, world.data)
 
     for side in world.SIDES:
-        pos, rot = frames.ee_pose(side)
+        state = frames.arm_controller_state(
+            world.read_state(Twist.zero()),
+            side,
+            world.MOUNT_CALIBRATION,
+        )
+        pos = state.ee_pose_world.position_m
+        rot = state.ee_pose_world.rotation
         quat = np.zeros(4)
         mujoco.mju_mat2Quat(quat, rot.flatten())
         targets.set_target(side, pos)
@@ -91,11 +98,17 @@ def run():
         mujoco.mj_comVel(world.model, world.data)
 
         base_twist = motion.torso_twist_at(tau, **SCENARIO)
+        plant = world.read_state(Twist(*base_twist))
         for s in world.SIDES:
             L = log[s]
             L["t"][k] = tau
-            L["p"][k], L["R"][k] = frames.measured_ee_pose(s)
-            L["v"][k], L["w"][k] = frames.ee_velocity(s, base_twist)
+            measured = world.measured_ee_pose(s)
+            L["p"][k] = measured.position_m
+            L["R"][k] = measured.rotation
+            state = frames.arm_controller_state(
+                plant, s, world.MOUNT_CALIBRATION)
+            L["v"][k] = state.ee_twist_world.linear_m_s
+            L["w"][k] = state.ee_twist_world.angular_rad_s
             mujoco.mj_objectVelocity(world.model, world.data,
                                      mujoco.mjtObj.mjOBJ_SITE,
                                      world.ee_site_id[s], vel6, 0)

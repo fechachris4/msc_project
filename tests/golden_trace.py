@@ -20,6 +20,7 @@ import mujoco
 import numpy as np
 
 from controller import desired_pos, frames, servo
+from controller.state import Twist
 from runtime_config import CONFIG
 from sim import motion, target_motion, targets, world
 
@@ -88,12 +89,18 @@ def _flatten(row, prefix, value):
 
 
 def _cycle_rows(cycle, dt, base_twist, traces):
-    torso_pos, torso_rot = frames.torso_pose()
+    plant = world.read_state(Twist(*base_twist))
+    torso_pos = plant.torso_pose_world.position_m
+    torso_rot = plant.torso_pose_world.rotation
     rows = []
     for side in ARMS:
         trace = traces[side]
-        ee_pos, ee_rot = frames.ee_pose(side)
-        ee_v, ee_w = frames.ee_velocity(side, base_twist, trace.J)
+        state = frames.arm_controller_state(
+            plant, side, world.MOUNT_CALIBRATION)
+        ee_pos = state.ee_pose_world.position_m
+        ee_rot = state.ee_pose_world.rotation
+        ee_v = state.ee_twist_world.linear_m_s
+        ee_w = state.ee_twist_world.angular_rad_s
         row = {
             "cycle": cycle,
             "arm": side,

@@ -35,7 +35,12 @@ import numpy as np
 import pinocchio as pin
 
 from controller import frames
-from controller.transforms import rotation_from_quat
+from controller.state import (
+    ArmControllerState,
+    DualArmWorldTargets,
+    Twist,
+    WorldTarget,
+)
 from runtime_config import CONFIG
 from sim import targets, world
 
@@ -121,36 +126,60 @@ def init_ctrl():
     """Sync servo setpoints to the current joint angles (once, pre-loop)."""
     for side in world.SIDES:
         world.data.ctrl[world.ctrl_adrs[side]] = \
-            world.data.qpos[frames.qpos_adrs[side]]
+            world.data.qpos[world.qpos_adrs[side]]
 
 
 # --- error stage: world-frame errors vs the target ---------------------------
 
 
-def pose_error(side):
-    """(e_pos, e_rot) of one arm: target mocap vs FK EE pose.
+def pose_error_from_state(controller_state, target):
+    """World-frame pose error from explicit controller state and target."""
+    if not isinstance(controller_state, ArmControllerState):
+        raise TypeError("controller_state must be an ArmControllerState")
+    if not isinstance(target, WorldTarget):
+        raise TypeError("target must be a WorldTarget")
+    return (
+        target.pose_world.position_m
+        - controller_state.ee_pose_world.position_m,
+        pin.log3(
+            target.pose_world.rotation
+            @ controller_state.ee_pose_world.rotation.T
+        ),
+    )
 
-    e_pos = ref - actual (m); e_rot = log3(R_ref @ R_ee.T), the
-    world-frame axis-angle (rad) taking actual to reference."""
-    ee_pos, ee_rot = frames.ee_pose(side)
-    ref_pos = targets.target_position(side)
-    ref_rot = rotation_from_quat(targets.target_quat(side))
-    return ref_pos - ee_pos, pin.log3(ref_rot @ ee_rot.T)
+
+def twist_error_from_state(controller_state, target):
+    """World-frame twist error from explicit controller state and target."""
+    if not isinstance(controller_state, ArmControllerState):
+        raise TypeError("controller_state must be an ArmControllerState")
+    if not isinstance(target, WorldTarget):
+        raise TypeError("target must be a WorldTarget")
+    return (
+        target.twist_world.linear_m_s
+        - controller_state.ee_twist_world.linear_m_s,
+        target.twist_world.angular_rad_s
+        - controller_state.ee_twist_world.angular_rad_s,
+    )
+
+
+def pose_error(side):
+    """Compatibility readout; the control path uses explicit state."""
+    plant = world.read_state(Twist.zero())
+    state = frames.arm_controller_state(
+        plant, side, world.MOUNT_CALIBRATION)
+    return pose_error_from_state(state, targets.world_target(side))
 
 
 def twist_error(side, base_twist, J=None):
-    """(e_v, e_w): desired minus actual EE world twist, world frame.
-    Linear (m/s) and angular (rad/s) alike — angular velocity lives in
-    R^3, no log map.
-
-    The desired twist comes from the target trajectory
-    (targets.target_velocity — exactly zero for the static world-frame
-    hold); the actual from frames.ee_velocity. base_twist is required
-    with no default, same loud-failure convention as ee_velocity.
-    J, if given, is forwarded to ee_velocity (reuse, see there)."""
-    v_des, w_des = targets.target_velocity(side)
-    v_ee, w_ee = frames.ee_velocity(side, base_twist, J)
-    return v_des - v_ee, w_des - w_ee
+    """Compatibility twist readout; the control path uses explicit state."""
+    plant = world.read_state(Twist(*base_twist))
+    state = frames.arm_controller_state(
+        plant, side, world.MOUNT_CALIBRATION)
+    if J is not None and not np.allclose(
+        J, state.jacobian_world, rtol=0.0, atol=1e-12
+    ):
+        raise ValueError("J does not match the explicit plant state")
+    return twist_error_from_state(state, targets.world_target(side))
 
 
 # --- control law: errors -> joint rates ---------------------------------------
@@ -251,7 +280,14 @@ class ControlTrace:
 # --- main loop body ------------------------------------------------------------
 
 
-def apply_ctrl(dt, base_twist, arms=world.SIDES, control=CONTROL, limits=LIMITS):
+def apply_ctrl(
+    dt,
+    base_twist,
+    arms=world.SIDES,
+    control=CONTROL,
+    limits=LIMITS,
+    world_targets=None,
+):
     """Write the selected arms' updated servo setpoints into data.ctrl:
     read state -> pose + twist errors -> qdot (PD law + DLS) -> clip to
     the joint speed limits -> integrate the setpoints by qdot*dt ->
@@ -260,8 +296,7 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES, control=CONTROL, limits=LIMITS)
 
     base_twist = (v_T, w_T): the torso world twist, required with no
     default (motion.torso_twist_at in sim, Vicon on hardware, zeros for
-    a genuinely stationary base) — same loud-failure convention as
-    frames.ee_velocity.
+    a genuinely stationary base).
 
     The one loop-body block every front-end (viewer, plots, tests) must
     share — call it once per step, before mj_step. An unselected arm
@@ -271,18 +306,30 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES, control=CONTROL, limits=LIMITS)
     if not np.isfinite(dt) or dt <= 0.0:
         raise ValueError("dt must be finite and greater than zero")
 
+    plant = world.read_state(Twist(*base_twist))
+    if world_targets is not None and not isinstance(
+        world_targets, DualArmWorldTargets
+    ):
+        raise TypeError("world_targets must be DualArmWorldTargets")
     traces = {}
     for side in arms:
-        # Read the current state: joint angles and measured joint rates
-        # straight from the sim, plus the world-frame EE Jacobian.
-        q = world.data.qpos[frames.qpos_adrs[side]]
-        qdot_measured = world.data.qvel[frames.dof_adrs[side]]
-        J = frames.jacobian_world(side)
+        # Convert one explicit plant sample into world-aligned controller
+        # state. Frame selection and simulator access stay outside the math.
+        state = frames.arm_controller_state(
+            plant, side, world.MOUNT_CALIBRATION)
+        target = (
+            targets.world_target(side)
+            if world_targets is None
+            else world_targets.for_arm(side)
+        )
+        q = state.joints.position_rad
+        qdot_measured = state.joints.velocity_rad_s
+        J = state.jacobian_world
 
         # World-frame errors vs the target: pose (drives the P term)
         # and twist (drives the D term).
-        e_pos, e_rot = pose_error(side)
-        e_v, e_w = twist_error(side, base_twist, J)
+        e_pos, e_rot = pose_error_from_state(state, target)
+        e_v, e_w = twist_error_from_state(state, target)
 
         # PD law: errors -> commanded EE task twist, linear-first. Each
         # component (position, orientation, velocity) contributes only
