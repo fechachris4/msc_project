@@ -3,9 +3,9 @@
 Target placements come from config/control.toml: pos [x, y, z] in metres,
 rpy [roll, pitch, yaw] in radians (R = Rz(yaw) @ Ry(pitch) @ Rx(roll)).
 
-apply() resolves them against the torso pose once and writes world-frame
-poses into the target mocap bodies. The targets stay fixed in the world
-afterwards — that is the task: world-frame pose hold while the base moves.
+apply() returns retained framed targets and initializes their world-frame mocap
+markers. The Runner resolves retained targets from the latest PlantState every
+cycle; controller math receives only world-frame quantities.
 """
 
 import mujoco

@@ -3,9 +3,8 @@
 Per-step data flow (all SI: meters, radians; mm only in the printout):
   target mocap pose (world) + joint angles qpos  [sim/targets, MuJoCo]
   -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  [controller/frames]
-  -> pose + twist errors e, e_v (world)            [controller/servo]
-  -> commanded twist v = Kp*e + Kd*e_v -> qdot via DLS  [controller/servo]
-  -> integrate position-servo setpoints data.ctrl (rad)  [controller/servo]
+  -> pose + twist errors; PD + DLS qdot          [controller/reactive_pose]
+  -> integrate joint-position command (rad)      [controller/position_actuation]
   -> backend.exchange: apply command, mj_step, return next state
 
 usage: mjpython main.py [right|left|both]
