@@ -21,6 +21,7 @@ TARGET_FRAMES = ("world", "base", "torso")
 @dataclass(frozen=True)
 class RunConfig:
     nominal_dt_s: float
+    arm: str
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,7 @@ class ProjectConfig:
 
 
 _ROOT_KEYS = {"run", "controller", "limits", "targets"}
-_RUN_KEYS = {"nominal_dt_s"}
+_RUN_KEYS = {"nominal_dt_s", "arm"}
 _CONTROLLER_KEYS = {"reactive_pose"}
 _REACTIVE_KEYS = {
     "kp_position_s_inv",
@@ -117,6 +118,12 @@ def _finite_number(value, location, *, positive=False, nonnegative=False):
 def _boolean(value, location):
     if not isinstance(value, bool):
         raise ValueError(f"{location} must be true or false")
+    return value
+
+
+def _choice(value, choices, location):
+    if value not in choices:
+        raise ValueError(f"{location} must be one of {choices}")
     return value
 
 
@@ -234,7 +241,8 @@ def load_config(path=DEFAULT_CONFIG_PATH):
         run=RunConfig(
             nominal_dt_s=_finite_number(
                 run["nominal_dt_s"], "run.nominal_dt_s", positive=True
-            )
+            ),
+            arm=_choice(run["arm"], (*ARMS, "both"), "run.arm"),
         ),
         reactive_pose=_parse_reactive_pose(controller["reactive_pose"]),
         limits=LimitConfig(

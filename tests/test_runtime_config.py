@@ -15,6 +15,7 @@ from runtime_config import (
 class RuntimeConfigTest(unittest.TestCase):
     def test_committed_config_contains_complete_baseline(self):
         self.assertEqual(CONFIG.run.nominal_dt_s, 0.002)
+        self.assertEqual(CONFIG.run.arm, "both")
         self.assertEqual(CONFIG.reactive_pose.kp_position_s_inv, 2.0)
         self.assertEqual(CONFIG.reactive_pose.kp_rotation_s_inv, 2.0)
         self.assertEqual(CONFIG.reactive_pose.kd_position, 0.3)
@@ -50,6 +51,29 @@ class RuntimeConfigTest(unittest.TestCase):
             path = Path(directory) / "invalid.toml"
             path.write_text(invalid)
             with self.assertRaisesRegex(ValueError, "run keys differ"):
+                load_config(path)
+
+    def test_run_arm_accepts_only_supported_choices(self):
+        source = Path(CONFIG.source_path).read_text()
+        configured_arm = CONFIG.run.arm
+        configured_line = f'arm = "{configured_arm}"'
+        with tempfile.TemporaryDirectory() as directory:
+            for arm in ("right", "left", "both"):
+                path = Path(directory) / f"{arm}.toml"
+                path.write_text(source.replace(
+                    configured_line,
+                    f'arm = "{arm}"',
+                    1,
+                ))
+                self.assertEqual(load_config(path).run.arm, arm)
+
+            path = Path(directory) / "invalid.toml"
+            path.write_text(source.replace(
+                configured_line,
+                'arm = "upper"',
+                1,
+            ))
+            with self.assertRaisesRegex(ValueError, "run.arm"):
                 load_config(path)
 
     def test_enabled_pose_channels_require_positive_kp(self):

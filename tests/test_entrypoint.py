@@ -11,6 +11,11 @@ class EntrypointTest(unittest.TestCase):
         import main
 
         self.assertEqual(main._parse_args([]), ("right", "left"))
+        self.assertEqual(main._parse_args([], default_choice="left"), ("left",))
+        self.assertEqual(
+            main._parse_args(["right"], default_choice="left"),
+            ("right",),
+        )
         self.assertEqual(main._parse_args(["right"]), ("right",))
         with self.assertRaises(SystemExit):
             main._parse_args(["left", "tune"])

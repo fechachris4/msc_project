@@ -8,6 +8,8 @@ Per-step data flow (all SI: meters, radians; mm only in the printout):
   -> backend.exchange: apply command, mj_step, return next state
 
 usage: mjpython main.py [right|left|both]
+
+With no positional argument, the arm is read from config/control.toml.
 """
 
 import time
@@ -23,12 +25,12 @@ from sim import motion, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
-def _parse_args(argv):
+def _parse_args(argv, default_choice="both"):
     values = list(argv)
     usage = "usage: mjpython main.py [right|left|both]"
     if len(values) > 1:
         raise SystemExit(usage)
-    choice = values[0] if values else "both"
+    choice = values[0] if values else default_choice
     if choice not in ("right", "left", "both"):
         raise SystemExit(usage)
     return world.SIDES if choice == "both" else (choice,)
@@ -37,7 +39,10 @@ def _parse_args(argv):
 def main(argv=None):
     import sys
 
-    arms = _parse_args(sys.argv[1:] if argv is None else argv)
+    arms = _parse_args(
+        sys.argv[1:] if argv is None else argv,
+        default_choice=CONFIG.run.arm,
+    )
     print_effective_config(CONFIG)
     source_targets = desired_pos.apply()
     world.backend.configure_torso_driver(
