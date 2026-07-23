@@ -87,6 +87,14 @@ class ExperimentLog:
 
 
 _TRACE_FIELDS = tuple(servo.ControlTrace.__dataclass_fields__)
+_EXECUTION_CONTRACT = {
+    "runner": "ReactivePositionRunner",
+    "controller_pipeline": "ReactivePositionPipeline",
+    "backend": "MujocoBackend",
+    "cycle_operation": "exchange",
+    "timing_source": "MuJoCo data.time",
+    "command": "dual-arm joint position, rad",
+}
 
 
 def _validate_config(config):
@@ -491,6 +499,7 @@ def _metadata(log, revision, identity=None, git=None):
         "experiment_identity_sha256": identity["identity_sha256"],
         "scene_asset_sha256": _asset_hash(),
         "controller_configuration": identity["controller"],
+        "execution": dict(_EXECUTION_CONTRACT),
         "effective_control_config": identity["effective_control_config"],
         "control_config_sha256": identity["control_config_sha256"],
         "arms": list(log.arms),
@@ -558,6 +567,7 @@ def save_run(log, config, output_root, *, canonical=False, final_outputs=()):
         "environment": environment,
         "configuration": _config_json(log.config),
         "controller_configuration": identity["controller"],
+        "execution": dict(_EXECUTION_CONTRACT),
         "effective_control_config": identity["effective_control_config"],
         "control_config_sha256": identity["control_config_sha256"],
         "policy": {

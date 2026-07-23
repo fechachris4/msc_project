@@ -70,7 +70,8 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 | `plotting/style.py` | Shared Okabe-Ito colors + side→color/linestyle maps | Implemented | — | dashboard, base_vs_error, diagnose, validate_velocity, bandwidth_sweep | None (constants only) | High | Touch only if needed |
 | `analysis/metrics.py` | One metric definition: `stats`/`print_stats` (full-run) + `windowed_stats` | Implemented | numpy, world | base_vs_error, dashboard | Hand-verified: windowed_stats matches stats() on identical data | High | Touch only if needed |
 | `analysis/dashboard.py` | Live 7-panel control-loop dashboard (per-axis error, e_rot, headroom, σ_min, margins) | Implemented | frames, servo, metrics | user | `test_dashboard.py`: pure per-tick helpers + immutable-config routing | Medium-High | Touch only if needed |
-| `analysis/base_vs_error.py` | Thesis success-criterion figure: base displacement vs. per-axis EE error | Implemented | frames, servo, live_plot, metrics | user | Visual + printed table only | Medium-High | Touch only if needed |
+| `analysis/base_vs_error.py` | Thesis success-criterion live/headless trace through Runner/backend | Implemented | runner, live_plot, metrics | user | Closed-loop tests + Step 6 run | High | Monitoring path |
+| `analysis/reactive_baseline.py` | Provenance-stamped mean/RMSE/peak baseline artifact | Implemented | live, metrics, runtime config | thesis evidence | `test_reactive_baseline.py` + Step 6 preview; clean canonical run pending commit | High | Primary baseline evidence |
 | `analysis/fk_validation.py` | Live direct-vs-FK comparison | Implemented | frames, world, live_plot | user | Visual only | Medium | Touch only if needed |
 | `README.md` | Setup + pipeline + layout docs | Current (refreshed 2026-07-07) | — | — | — | High | Keep in sync |
 | `tasks/todo.md` | Historical task log | Stale (history, not current state) | — | — | — | — | Do not touch (append-only) |
@@ -118,10 +119,10 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 
 ## 5. Incomplete Components
 
-1. **Metrics + thesis plots** — no error logging, no RMSE/mean/peak, no
-   publication figure path (`LivePlot` is live-monitoring only). Smallest next
-   task: an experiment logger recording `(t, ref_pose, ee_pose)` arrays and a
-   post-run summary.
+1. **Default-scenario baseline quality** — logging and mean/RMSE/peak artifacts
+   now exist, but the current default sway exposes large left-arm error and
+   torso contact. Treat this as a controller/task-geometry result to diagnose,
+   not as a reason to widen metrics or silently retune.
 
 2. **Known residual at the left task point** — the left `desired_pos` pose
    sits at joint_6's ctrl limit; the clip leaves a ~6 mm steady-state residual
@@ -136,12 +137,15 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 ```
 sim/assets/kinova_gen3/gen3.xml (vendored, position-servo actuators)
 ├── sim/scene.xml (torso mocap + 2× <attach> + target mocap spheres)
-│   └── sim/world.py (MjModel/MjData singletons + checked ids)
+│   └── sim/world.py (MuJoCo backend + checked ids)
 │       ├── sim/targets.py
+│       ├── controller/runner.py  (backend exchange + frame boundary)
 │       ├── controller/frames.py  (pin_fk + transforms; pose + Jacobian)
 │       ├── controller/kinematics.py  (transforms; TEST REFERENCE ONLY)
 │       ├── controller/desired_pos.py  (frames + transforms + targets)
-│       ├── controller/servo.py  (frames + targets; P law + DLS inside)
+│       ├── controller/reactive_pose.py  (pure PD + DLS + null space)
+│       ├── controller/position_actuation.py  (limits + integration)
+│       ├── controller/servo.py  (explicit reactive position pipeline)
 │       │   ├── main.py  (viewer closed loop)
 │       │   ├── analysis/dashboard.py  (side from CLI arg; metrics)
 │       │   └── analysis/base_vs_error.py  (both arms; metrics + live_plot)
@@ -163,22 +167,21 @@ in the Pinocchio path and must stay independent of it.
 | Arm FK (both impls) | ✅ | ✅ (1e-9, dual-implementation cross-check) | ✅ as methodology |
 | World-frame EE pose + Jacobian | ✅ | ✅ (incl. moved torso, vs mj_jacSite) | ✅ as methodology |
 | Reference/targets | ✅ | ✅ | ✅ |
-| Reactive controller | ✅ | ✅ (closed-loop convergence + 0.1 Hz rejection) | ⚠️ needs metrics at experiment conditions |
+| Reactive controller | ✅ | ✅ (golden trace + closed-loop + Runner/backend) | ⚠️ default-scenario performance needs improvement |
 | Base motion scripting | ✅ | ✅ (`test_motion` oracle + rejection) | ✅ |
-| Error metrics + plots | ✗ | ✗ | ✗ |
+| Error metrics + plots | ✅ | ✅ (mean/RMSE/peak persistence + artifact test) | ✅ as baseline evidence |
 
-Blunt read: estimation/kinematics, the closed loop, and scripted base motion
-are done and validated; what remains for the thesis is metrics/logging at the
-experiment conditions. Measured: 50 mm sway at 0.1 Hz -> 15.5 mm peak EE error
-(first-order theory predicts 15 mm); at 0.5 Hz the sensitivity w/sqrt(w^2+Kp^2)
-is 0.84 — the reactive baseline barely rejects it, which is the thesis
-motivation for prediction.
+Blunt read: estimation/kinematics, the explicit controller, backend exchange,
+scripted base motion, and evidence pipeline are validated. The remaining
+reactive-phase work is improving or honestly bounding performance under the
+default experiment scenario, especially the left-arm contact/error, before it
+is used as the comparison baseline.
 
 ## 8. Next Work Queue
 
-1. **Experiment logger + thesis metrics** — record `(t, ref, ee)` arrays;
-   compute mean/RMSE/peak; save publication figures (offline path, not
-   `LivePlot`). This is the phase's success criterion verbatim.
+1. **Diagnose default-scenario left-arm performance** — diff against the last
+   working commit and check task geometry, frames, joint limits, and contact
+   before gain changes.
 2. **Parameter sweep hooks** — base-motion amplitude/frequency as experiment
    parameters (already exposed as `set_torso_pose(t, **scenario)` kwargs;
    each entry point owns its scenario block, see §11); same metrics
@@ -198,8 +201,8 @@ revisit only if the NMPC comparison demands torque-level authority.
 - `controller/pin_fk.py` — done and frozen.
 - `controller/frames.py` composition (`T_W_T · T_T_K · T_K_E`) and Jacobian —
   validated including moved torso; matches the hardware sensing story.
-- `controller/servo.py` control math — the P law and DLS inversion are the
-  pure functions above the MuJoCo plumbing (`qdot_from_error` and friends).
+- `controller/reactive_pose.py` is the sole PD/DLS/null-space numerical law.
+  Do not duplicate it in a backend, diagnostic, or future controller wrapper.
 - The circular-FK investigation — found, fixed, documented (2026-07-06 spec).
 - `sim/scene.xml` mount geometry and contact excludes — working.
 - `plotting/live_plot.py` — good enough for live monitoring; thesis figures are

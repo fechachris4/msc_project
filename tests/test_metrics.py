@@ -359,6 +359,8 @@ class MetricsPersistenceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = save_run(log, log.config, Path(tmp))
             stored_json = json.loads((run_dir / "metrics.json").read_text())
+            metadata = json.loads((run_dir / "metadata.json").read_text())
+            manifest = json.loads((run_dir / "manifest.json").read_text())
             with (run_dir / "metrics.csv").open(newline="") as stream:
                 rows = list(csv.DictReader(stream))
 
@@ -369,6 +371,12 @@ class MetricsPersistenceTest(unittest.TestCase):
         self.assertEqual(rows[0]["arms.right.position_error_axis_mean_m.y"], "-2.0")
         self.assertEqual(rows[0]["arms.right.rejection_pct"],
                          str((1.0 - np.sqrt(5.0) / 2.0) * 100.0))
+        self.assertEqual(metadata["execution"]["backend"], "MujocoBackend")
+        self.assertEqual(
+            metadata["execution"]["runner"], "ReactivePositionRunner")
+        self.assertIn("effective_control_config", metadata)
+        self.assertIn("control_config_sha256", metadata)
+        self.assertEqual(manifest["execution"], metadata["execution"])
 
 
 if __name__ == "__main__":
