@@ -5,10 +5,13 @@ by controller, plotting, and tests alike. Per-arm ids are dicts keyed by
 side ("right" | "left") — SIDES is the canonical tuple.
 """
 
+from pathlib import Path
+
 import mujoco
 import numpy as np
 
-model = mujoco.MjModel.from_xml_path("sim/scene.xml")
+SCENE_PATH = Path(__file__).resolve().with_name("scene.xml")
+model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
 data = mujoco.MjData(model)
 mujoco.mj_forward(model, data)
 
@@ -18,7 +21,8 @@ SIDES = ("right", "left")
 def _named_id(objtype, name):
     """Checked mj_name2id: a typo'd name must fail here, not index -1."""
     obj_id = mujoco.mj_name2id(model, objtype, name)
-    assert obj_id >= 0, f"{name!r} not in sim/scene.xml"
+    if obj_id < 0:
+        raise ValueError(f"{name!r} not in {SCENE_PATH}")
     return obj_id
 
 

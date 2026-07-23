@@ -13,7 +13,6 @@ usage: mjpython main.py [right|left|both] [tune]
   the MuJoCo viewer.
 """
 
-import sys
 import time
 
 import mujoco
@@ -25,54 +24,71 @@ from sim import motion, world
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
-choice = sys.argv[1] if len(sys.argv) > 1 else "both"
-assert choice in ("right", "left", "both"), \
-    "usage: mjpython main.py [right|left|both] [tune]"
-arms = world.SIDES if choice == "both" else (choice,)
-tune = "tune" in sys.argv[2:]
+def _parse_args(argv):
+    values = list(argv)
+    usage = "usage: mjpython main.py [right|left|both] [tune]"
+    if len(values) > 2:
+        raise SystemExit(usage)
+    choice = values[0] if values else "both"
+    if choice not in ("right", "left", "both"):
+        raise SystemExit(usage)
+    if len(values) == 2 and values[1] != "tune":
+        raise SystemExit(usage)
+    return (world.SIDES if choice == "both" else (choice,),
+            len(values) == 2)
 
-desired_pos.apply()
-servo.init_ctrl()
 
-panel = None
-if tune:
-    from plotting.gain_panel import GainPanel
-    panel = GainPanel()
+def main(argv=None):
+    import sys
 
-step = 0
-with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
-    while viewer.is_running():
-        step_start = time.time()
-        motion.set_torso_pose(world.data.time)
-        # Refresh xpos/xmat from the mocap write: without this the
-        # controller sees the torso pose of the previous step (t - dt)
-        # paired with the base twist at t.
-        mujoco.mj_kinematics(world.model, world.data)
-        # set_torso_pose (mocap write) and torso_twist_at (feedforward)
-        # must stay a matched pair — same scenario, same instant t.
-        servo.apply_ctrl(world.model.opt.timestep,
-                         motion.torso_twist_at(world.data.time), arms)
-        mujoco.mj_step(world.model, world.data)
+    arms, tune = _parse_args(sys.argv[1:] if argv is None else argv)
+    desired_pos.apply()
+    servo.init_ctrl()
 
-        if panel is not None:
-            panel.pump()
+    panel = None
+    if tune:
+        from plotting.gain_panel import GainPanel
+        panel = GainPanel()
 
-        if step % PRINT_EVERY == 0:
-            for side in world.SIDES:
-                e_pos, _ = servo.pose_error(side)
-                e_mm = e_pos * 1000.0
-                # Jacobian singular values, descending: sigma_min -> 0 means
-                # a task direction is being lost (near-singular, DLS working).
-                sigma = np.linalg.svd(frames.jacobian_world(side),
-                                      compute_uv=False)
-                print(f"t={world.data.time:6.2f}s  {side:5s} "
-                      f"|e|={np.linalg.norm(e_mm):.1f} mm  "
-                      f"e_pos=[{e_mm[0]: 7.1f} {e_mm[1]: 7.1f} {e_mm[2]: 7.1f}]  "
-                      f"sigma=[{' '.join(f'{s:.3f}' for s in sigma)}]")
-        step += 1
+    step = 0
+    with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
+        while viewer.is_running():
+            step_start = time.perf_counter()
+            motion.set_torso_pose(world.data.time)
+            # Refresh xpos/xmat from the mocap write: without this the
+            # controller sees the torso pose of the previous step (t - dt)
+            # paired with the base twist at t.
+            mujoco.mj_kinematics(world.model, world.data)
+            # set_torso_pose (mocap write) and torso_twist_at (feedforward)
+            # must stay a matched pair — same scenario, same instant t.
+            servo.apply_ctrl(world.model.opt.timestep,
+                             motion.torso_twist_at(world.data.time), arms)
+            mujoco.mj_step(world.model, world.data)
 
-        viewer.sync()
+            if panel is not None:
+                panel.pump()
 
-        time_until_next_step = world.model.opt.timestep - (time.time() - step_start)
-        if time_until_next_step > 0:
-            time.sleep(time_until_next_step)
+            if step % PRINT_EVERY == 0:
+                for side in world.SIDES:
+                    e_pos, _ = servo.pose_error(side)
+                    e_mm = e_pos * 1000.0
+                    # sigma_min -> 0 means a task direction is being lost.
+                    sigma = np.linalg.svd(frames.jacobian_world(side),
+                                          compute_uv=False)
+                    print(f"t={world.data.time:6.2f}s  {side:5s} "
+                          f"|e|={np.linalg.norm(e_mm):.1f} mm  "
+                          f"e_pos=[{e_mm[0]: 7.1f} {e_mm[1]: 7.1f} "
+                          f"{e_mm[2]: 7.1f}]  "
+                          f"sigma=[{' '.join(f'{s:.3f}' for s in sigma)}]")
+            step += 1
+
+            viewer.sync()
+
+            time_until_next_step = (
+                world.model.opt.timestep - (time.perf_counter() - step_start))
+            if time_until_next_step > 0:
+                time.sleep(time_until_next_step)
+
+
+if __name__ == "__main__":
+    main()
