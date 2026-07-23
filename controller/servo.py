@@ -65,6 +65,37 @@ class ControlTrace:
 
 
 @dataclass(frozen=True, slots=True)
+class DualArmControlTraces:
+    """Fixed dual-arm trace record; an unselected arm is ``None``."""
+
+    right: ControlTrace | None
+    left: ControlTrace | None
+
+    def __post_init__(self):
+        for side in ARMS:
+            value = getattr(self, side)
+            if value is not None and not isinstance(value, ControlTrace):
+                raise TypeError(f"{side} must be ControlTrace or None")
+
+    def __getitem__(self, side):
+        if side not in ARMS:
+            raise KeyError(side)
+        value = getattr(self, side)
+        if value is None:
+            raise KeyError(side)
+        return value
+
+    def __iter__(self):
+        return (side for side in ARMS if getattr(self, side) is not None)
+
+    def items(self):
+        return tuple((side, self[side]) for side in self)
+
+    def values(self):
+        return tuple(self[side] for side in self)
+
+
+@dataclass(frozen=True, slots=True)
 class ArmPipelineSetup:
     """Fixed kinematic/actuator facts needed by one arm pipeline."""
 
@@ -141,7 +172,7 @@ class ReactivePositionPipeline:
             if side not in ARMS:
                 raise ValueError(f"unknown arm: {side!r}")
 
-        traces = {}
+        traces = {"right": None, "left": None}
         for side in selected:
             state = states.for_arm(side)
             output = self._controllers[side].compute(
@@ -172,4 +203,4 @@ class ReactivePositionPipeline:
                 lead_clamped=actuation.lead_clamped,
                 range_clamped=actuation.range_clamped,
             )
-        return self.command(), traces
+        return self.command(), DualArmControlTraces(**traces)

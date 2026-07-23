@@ -66,3 +66,29 @@ and a numbered commit.
   - Retain `ControlTrace` field order so existing telemetry and the frozen
     golden schema remain unchanged.
 - Deviations: none.
+
+## Step 5 — explicit Runner and MuJoCo backend
+
+- Full suite: 186 tests passed
+- Golden gate: 500 rows matched at `rtol=1e-12`, `atol=1e-12`
+- Independent review: PASS after routing the experiment and thesis-metric
+  paths through the Runner
+- Boring choices:
+  - Use the three-operation common contract `takeover`, `exchange`, and
+    `release`. Initial state arrives from takeover; every later state is the
+    reply to exactly one complete command.
+  - Let MuJoCo own `data.ctrl`, `mj_step`, scripted torso refresh, and the next
+    state read inside `exchange`; the Runner never inspects a backend type.
+  - Keep simulation-only model/data inspection public for viewers, contact
+    telemetry, and ground-truth tests, but outside the controller contract.
+  - Make the current Runner explicitly reactive-pose-to-position instead of
+    adding controller-mode flags or a universal pipeline.
+  - Represent selected-arm traces as one fixed dual-arm record with optional
+    entries rather than a dict-based state contract.
+  - Schedule settle-to-evaluation torso motion in an explicit simulation
+    scenario object. The same Runner and position integrator continue across
+    the phase boundary; no reset branch was added.
+- Deviations:
+  - The first review found that `analysis.live` and `base_vs_error` still
+    stepped MuJoCo directly. Both were moved to Runner/backend exchange before
+    the Step 5 commit; the re-review passed.
