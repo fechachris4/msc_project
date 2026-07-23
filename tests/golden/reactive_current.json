@@ -1,0 +1,20 @@
+{
+  "applied_command_field": "ctrl_after",
+  "arms": [
+    "right",
+    "left"
+  ],
+  "baseline_revision": "d385173e150f438a80f1aac54871c47618b865a2",
+  "comparison": {
+    "absolute_tolerance": 1e-12,
+    "relative_tolerance": 1e-12
+  },
+  "controller_output_field": "qdot_raw",
+  "csv": "reactive_current.csv",
+  "csv_sha256": "dcabcdd68ea3953e7e41ce32b01969e4887148437343cd15cfe731a1f4baf44f",
+  "cycles": 250,
+  "dt_s": 0.002,
+  "duration_s": 0.5,
+  "rows": 500,
+  "trace_schema_version": 1
+}
