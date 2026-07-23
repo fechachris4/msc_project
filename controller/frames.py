@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import mujoco
 import numpy as np
 import pinocchio as pin
@@ -26,7 +28,8 @@ def arm_qpos_adrs(model, prefix):
         jnt_id = mujoco.mj_name2id(
             model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}joint_{i}"
         )
-        assert jnt_id >= 0, f"{prefix}joint_{i} not in model"
+        if jnt_id < 0:
+            raise ValueError(f"{prefix}joint_{i} not in model")
         adrs.append(int(model.jnt_qposadr[jnt_id]))
     return adrs
 
@@ -38,16 +41,18 @@ def arm_dof_adrs(model, prefix):
         jnt_id = mujoco.mj_name2id(
             model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}joint_{i}"
         )
-        assert jnt_id >= 0, f"{prefix}joint_{i} not in model"
+        if jnt_id < 0:
+            raise ValueError(f"{prefix}joint_{i} not in model")
         adrs.append(int(model.jnt_dofadr[jnt_id]))
     return adrs
 
 
 # One arm model serves both arms: left/right are the same MJCF, and the
 # mount difference lives in T_T_K, not in T_K_E.
+_GEN3_PATH = (Path(__file__).resolve().parents[1] / "sim" / "assets"
+              / "kinova_gen3" / "gen3.xml")
 pin_model, pin_data, ee_frame_id = build_pin_model(
-    "sim/assets/kinova_gen3/gen3.xml", "base_link", "pinch_site"
-)
+    _GEN3_PATH, "base_link", "pinch_site")
 qpos_adrs = {s: arm_qpos_adrs(world.model, f"{s}_") for s in world.SIDES}
 dof_adrs = {s: arm_dof_adrs(world.model, f"{s}_") for s in world.SIDES}
 _T_T_K = {s: mount_transform(world.model, world.arm_base_id[s])

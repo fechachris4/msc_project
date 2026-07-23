@@ -1,0 +1,28 @@
+import unittest
+
+
+class EntrypointTest(unittest.TestCase):
+    def test_import_does_not_start_the_viewer(self):
+        import main
+
+        self.assertTrue(callable(main.main))
+
+    def test_argument_contract(self):
+        import main
+
+        self.assertEqual(main._parse_args([]), (("right", "left"), False))
+        self.assertEqual(main._parse_args(["right"]), (("right",), False))
+        self.assertEqual(main._parse_args(["left", "tune"]),
+                         (("left",), True))
+        with self.assertRaises(SystemExit):
+            main._parse_args(["invalid"])
+
+    def test_scene_path_is_absolute(self):
+        from sim import world
+
+        self.assertTrue(world.SCENE_PATH.is_absolute())
+        self.assertTrue(world.SCENE_PATH.is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()
