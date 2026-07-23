@@ -96,6 +96,7 @@ and a numbered commit.
 
 ## Step 6 — provenance-stamped reactive baseline
 
+- Commit: `e0fbb74`
 - Full suite: 188 tests passed
 - Golden gate: 500 rows matched at `rtol=1e-12`, `atol=1e-12`
 - Independent review: PASS after correcting the evidence-status wording
@@ -109,6 +110,16 @@ and a numbered commit.
     `20.15%` and the left arm had negative disturbance rejection.
   - Maximum joint-limit penetration was `0.008974 rad`, inside the existing
     `0.02 rad` policy threshold.
+- Canonical validation:
+  - Clean-worktree, pinned-environment gate passed at revision `e0fbb74`.
+  - Manifest classification: `canonical`; accepted: `true`.
+  - Evaluation samples: `2000`; results matched the preview values above.
+  - Effective-config SHA-256:
+    `1f4e3ae2b34da972995d24776e134cab55a8f320304dddbcc70309ee0906d258`.
+  - Figure SHA-256:
+    `d681600a63eb29fb3636610c58eb3262dfb7e09a0d134568455f0afa932ba42f`.
+  - Session artifact:
+    `/tmp/msc-step6-canonical.hKlP0F/20260723T160926.698088Z-e0fbb74`.
 - Boring choices:
   - Validate the current default scripted motion without retuning gains or
     changing the controller.
@@ -124,7 +135,7 @@ and a numbered commit.
 - Deviations:
   - The first review found that `PROJECT_MAP.md` called the dirty-worktree
     preview a canonical run. The wording was corrected before commit; the
-    clean canonical run remains a post-commit gate.
+    clean canonical run then passed after the Step 6 commit.
   - The default scenario is not a strong final baseline: left-arm tracking and
     torso contact require diagnosis in a later behavior-changing task. Step 6
     records this result honestly rather than tuning around it.
