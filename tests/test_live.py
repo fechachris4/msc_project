@@ -1,7 +1,9 @@
 import dataclasses
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import mujoco
 import numpy as np
@@ -162,6 +164,11 @@ class ContactAndPersistenceTest(unittest.TestCase):
             run_dir = save_run(log, config, Path(tmp))
             self.assertTrue((run_dir / "run.npz").is_file())
             self.assertTrue((run_dir / "metadata.json").is_file())
+            self.assertTrue((run_dir / "manifest.json").is_file())
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(manifest["classification"], "exploratory")
+            self.assertIn("run.npz", manifest["artifacts"])
+            self.assertIn("controller_configuration", manifest)
             loaded = load_run(run_dir)
         for field in dataclasses.fields(log):
             expected = getattr(log, field.name)
@@ -198,6 +205,22 @@ class ContactAndPersistenceTest(unittest.TestCase):
         log = run_experiment(config)
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
             save_run(log, config._replace(evaluation_seconds=1.0), Path(tmp))
+
+    def test_canonical_save_rejects_dirty_worktree(self):
+        from analysis import provenance
+        from analysis.live import run_experiment, save_run
+
+        config = _config(arms=("right",))
+        log = run_experiment(config)
+        dirty = {
+            "revision": "abc", "branch": "main", "worktree_clean": False,
+            "worktree_status_sha256": "dirty",
+        }
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(provenance, "git_provenance",
+                                  return_value=dirty), \
+                self.assertRaisesRegex(RuntimeError, "clean Git worktree"):
+            save_run(log, config, Path(tmp), canonical=True)
 
     def test_update_callback_receives_exact_logged_sample_count(self):
         from analysis.live import ExperimentUpdate, run_experiment

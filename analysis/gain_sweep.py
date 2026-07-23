@@ -422,6 +422,11 @@ def _grid_fingerprint():
         "kp_rot": KP_ROT_GRID, "kd_rot": KD_ROT_GRID,
         "scale": SCALE_GRID, "kd_ceiling": KD_CEILING,
         "damping": DAMPING_GRID, "k_null": K_NULL_GRID,
+        "scenario": live._config_json(SCENARIO),
+        "experiment_identity": live.provenance.experiment_identity(
+            live._config_json(SCENARIO), BASELINE_GAINS),
+        "sat_threshold_pct": SAT_THRESHOLD_PCT,
+        "rotation_guard_factor": ROT_GUARD_FACTOR,
     }, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
 

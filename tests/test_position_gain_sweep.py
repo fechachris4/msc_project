@@ -15,7 +15,11 @@ class _FakeLog:
     arms = ("right", "left")
     settled = True
     settle_duration = 1.25
-    valid = True
+    metrics_computable = True
+    accepted = True
+    contact_observed = False
+    joint_limit_within_tolerance = True
+    limit_penetration_rad = 0.0
     warning_reasons = ()
     evaluation_mask = np.array([False, True, True])
     arm_data = {
@@ -69,7 +73,8 @@ class MetricTest(unittest.TestCase):
         log = _FakeLog()
         log.evaluation_mask = np.array([False, False, False])
         row = sweep.episode_row(log, 2, 0.2)
-        self.assertFalse(row["valid"])
+        self.assertFalse(row["metrics_computable"])
+        self.assertFalse(row["accepted"])
         self.assertIn("missing evaluation samples", row["warning_reasons"])
 
     def test_nonfinite_evaluation_metrics_are_json_safe_and_invalid(self):
@@ -88,16 +93,19 @@ class MetricTest(unittest.TestCase):
             row["arms"]["right"]["position_error_norm_rmse_mm"])
         self.assertIsNone(
             row["arms"]["left"]["peak_measured_joint_speed_rad_s"])
-        self.assertFalse(row["valid"])
+        self.assertFalse(row["metrics_computable"])
+        self.assertFalse(row["accepted"])
         self.assertIn("non-finite data", row["warning_reasons"])
         json.dumps(row, allow_nan=False)
 
     def test_contact_warning_remains_auditable_without_invalidating_metrics(self):
         log = _FakeLog()
-        log.valid = False
+        log.contact_observed = True
         log.warning_reasons = ("contact detected", "negative joint margin")
         row = sweep.episode_row(log, 2, 0.2)
-        self.assertTrue(row["valid"])
+        self.assertTrue(row["metrics_computable"])
+        self.assertTrue(row["accepted"])
+        self.assertTrue(row["contact_observed"])
         self.assertEqual(row["warning_reasons"],
                          ["contact detected", "negative joint margin"])
 
@@ -121,7 +129,11 @@ class ResumeTest(unittest.TestCase):
             "status": "completed",
             "settled": True,
             "settle_duration_s": 1.0,
-            "valid": True,
+            "metrics_computable": True,
+            "accepted": True,
+            "contact_observed": False,
+            "joint_limit_within_tolerance": True,
+            "limit_penetration_rad": 0.0,
             "warning_reasons": [],
             "evaluation_sample_count": 10,
             "arms": {
@@ -133,7 +145,7 @@ class ResumeTest(unittest.TestCase):
     def test_fingerprint_changes_for_each_required_experiment_input(self):
         baseline = sweep.fingerprint_payload()
         required = ("grid", "scenario", "settling", "evaluation_seconds",
-                    "fixed_gains", "metric_schema")
+                    "fixed_gains", "metric_schema", "experiment_identity")
         self.assertEqual(set(baseline), set(required))
         hashes = []
         for key in required:
@@ -148,7 +160,7 @@ class ResumeTest(unittest.TestCase):
         state = sweep.new_state()
         state["results"] = {
             "kp2_kd0.2": {"status": "worker_error", "error": "boom"},
-            "kp12_kd0.2": {"status": "completed", "valid": False,
+            "kp12_kd0.2": {"status": "completed", "accepted": False,
                             "warning_reasons": ["settling timeout"]},
         }
         pending = sweep.pending_jobs(state, [(2, 0.2), (12, 0.2), (22, 0.2)])
@@ -223,7 +235,7 @@ class ResumeTest(unittest.TestCase):
             "off-grid kd": lambda row: row.update(
                 kd_pos=0.3, config_id="kp2_kd0.3"),
             "settled is not boolean": lambda row: row.update(settled=1),
-            "valid is not boolean": lambda row: row.update(valid="yes"),
+            "accepted is not boolean": lambda row: row.update(accepted="yes"),
             "missing settle duration": lambda row: row.pop("settle_duration_s"),
             "invalid settle duration": lambda row: row.update(
                 settle_duration_s=float("inf")),
@@ -345,9 +357,9 @@ class SummaryTest(unittest.TestCase):
 class MatrixAndParallelTest(unittest.TestCase):
     def test_matrix_places_kp_on_columns_and_kd_on_rows(self):
         rows = [
-            {"kp_pos": 12, "kd_pos": 0.4, "status": "completed", "valid": True,
+            {"kp_pos": 12, "kd_pos": 0.4, "status": "completed", "accepted": True,
              "arms": {"right": {"position_error_norm_rmse_mm": 7}}},
-            {"kp_pos": 2, "kd_pos": 0.2, "status": "completed", "valid": False,
+            {"kp_pos": 2, "kd_pos": 0.2, "status": "completed", "accepted": False,
              "arms": {"right": {"position_error_norm_rmse_mm": 5}}},
         ]
         values, invalid = sweep.heatmap_matrix(
@@ -359,7 +371,7 @@ class MatrixAndParallelTest(unittest.TestCase):
     def test_parent_records_each_future_result_and_worker_never_writes_state(self):
         jobs = [(2, 0.2), (12, 0.4)]
         rows = [
-            {"kp_pos": kp, "kd_pos": kd, "status": "completed", "valid": True,
+            {"kp_pos": kp, "kd_pos": kd, "status": "completed", "accepted": True,
              "arms": {}} for kp, kd in jobs
         ]
 

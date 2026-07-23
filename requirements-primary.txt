@@ -1,0 +1,6 @@
+# Canonical thesis-run environment. Python itself is pinned to 3.14.4 in
+# analysis.policy and checked before a canonical artifact can be written.
+numpy==2.4.4
+mujoco==3.10.0
+pin==4.0.0
+matplotlib==3.11.0

@@ -13,6 +13,11 @@ class FakeLog:
     arms = ("right", "left")
     settled = True
     settle_duration = 1.25
+    metrics_computable = True
+    accepted = True
+    contact_observed = False
+    joint_limit_within_tolerance = True
+    limit_penetration_rad = 0.0
     warning_reasons = ()
     evaluation_mask = np.array([False, True, True])
     arm_data = {
@@ -63,12 +68,14 @@ class MetricTest(unittest.TestCase):
         log = FakeLog()
         log.evaluation_mask = np.array([False, False, False])
         row = sweep.episode_row(log, 2, 0.2)
-        self.assertFalse(row["valid"])
+        self.assertFalse(row["metrics_computable"])
+        self.assertFalse(row["accepted"])
         self.assertIn("missing evaluation samples", row["warning_reasons"])
         log = FakeLog()
         log.arm_data["right"]["e_rot"][1, 0] = np.nan
         row = sweep.episode_row(log, 2, 0.2)
-        self.assertFalse(row["valid"])
+        self.assertFalse(row["metrics_computable"])
+        self.assertFalse(row["accepted"])
         self.assertIsNone(row["arms"]["right"]["orientation_error_norm_rmse_deg"])
         json.dumps(row, allow_nan=False)
 
@@ -88,7 +95,7 @@ class ResumeTest(unittest.TestCase):
         self.assertEqual(payload["grid"], {"kp_rot": sweep.KP_ROT_GRID,
                                             "kd_rot": sweep.KD_ROT_GRID})
         for key in ("grid", "scenario", "settling", "evaluation_seconds",
-                    "fixed_gains", "metric_schema"):
+                    "fixed_gains", "metric_schema", "experiment_identity"):
             changed = json.loads(json.dumps(payload))
             changed[key] = ["changed"]
             self.assertNotEqual(sweep.resume_fingerprint(payload),
@@ -98,7 +105,7 @@ class ResumeTest(unittest.TestCase):
         state = sweep.new_state()
         state["results"] = {
             "kp2_kd0.2": {"status": "worker_error"},
-            "kp12_kd0.2": {"status": "completed", "valid": False},
+            "kp12_kd0.2": {"status": "completed", "accepted": False},
         }
         self.assertEqual(sweep.pending_jobs(state, [(2, 0.2), (12, 0.2), (22, 0.2)]),
                          [(2, 0.2), (22, 0.2)])
@@ -106,9 +113,9 @@ class ResumeTest(unittest.TestCase):
 
 class HeatmapTest(unittest.TestCase):
     def test_heatmap_matrix_uses_rotation_coordinates(self):
-        rows = [{"status": "completed", "kp_rot": 2, "kd_rot": 0.2, "valid": True,
+        rows = [{"status": "completed", "kp_rot": 2, "kd_rot": 0.2, "accepted": True,
                  "arms": {"right": {"orientation_error_norm_rmse_deg": 7.0}}},
-                {"status": "completed", "kp_rot": 12, "kd_rot": 0.4, "valid": False,
+                {"status": "completed", "kp_rot": 12, "kd_rot": 0.4, "accepted": False,
                  "arms": {"right": {"orientation_error_norm_rmse_deg": 9.0}}}]
         values, invalid = sweep.heatmap_matrix(
             rows, "right", "orientation_error_norm_rmse_deg")
