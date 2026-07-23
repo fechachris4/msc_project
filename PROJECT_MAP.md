@@ -71,7 +71,7 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 | `analysis/metrics.py` | One metric definition: `stats`/`print_stats` (full-run) + `windowed_stats` | Implemented | numpy, world | base_vs_error, dashboard | Hand-verified: windowed_stats matches stats() on identical data | High | Touch only if needed |
 | `analysis/dashboard.py` | Live 7-panel control-loop dashboard (per-axis error, e_rot, headroom, σ_min, margins) | Implemented | frames, servo, metrics | user | `test_dashboard.py`: pure per-tick helpers + immutable-config routing | Medium-High | Touch only if needed |
 | `analysis/base_vs_error.py` | Thesis success-criterion live/headless trace through Runner/backend | Implemented | runner, live_plot, metrics | user | Closed-loop tests + Step 6 run | High | Monitoring path |
-| `analysis/reactive_baseline.py` | Provenance-stamped mean/RMSE/peak baseline artifact | Implemented | live, metrics, runtime config | thesis evidence | `test_reactive_baseline.py` + Step 6 preview; clean canonical run pending commit | High | Primary baseline evidence |
+| `analysis/reactive_baseline.py` | Provenance-stamped mean/RMSE/peak baseline artifact | Implemented | live, metrics, runtime config | thesis evidence | `test_reactive_baseline.py` + Step 6 canonical run at `e0fbb74` | High | Primary baseline evidence |
 | `analysis/fk_validation.py` | Live direct-vs-FK comparison | Implemented | frames, world, live_plot | user | Visual only | Medium | Touch only if needed |
 | `README.md` | Setup + pipeline + layout docs | Current (refreshed 2026-07-07) | — | — | — | High | Keep in sync |
 | `tasks/todo.md` | Historical task log | Stale (history, not current state) | — | — | — | — | Do not touch (append-only) |
