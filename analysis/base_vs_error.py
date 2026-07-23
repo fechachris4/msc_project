@@ -9,12 +9,11 @@ apply_ctrl itself calls (servo.pose_error), nothing re-derived.
 
 Plain python (no MuJoCo viewer, no mjpython). Live mode opens a window
 with a ~30 s rolling view of base displacement vs. per-axis EE error,
-world frame, error = ref - actual, plus the shared live gain panel
-(plotting.gain_panel.GainPanel) for tuning. The sim runs until the
+world frame, error = ref - actual. The sim runs until the
 window is closed (or Ctrl-C); then a full-run RMS/peak/rejection-%
 table prints on stdout and the final window is snapshot to
 analysis/output/base_vs_error.png. --save mode settles, runs a fixed
-duration headlessly (no window, no gain panel), then does the same
+duration headlessly, then does the same
 table + save. Units are SI internally; mm on the figure and in the
 printed table.
 """
@@ -33,7 +32,6 @@ import numpy as np
 
 from analysis import metrics
 from controller import desired_pos, frames, servo
-from plotting.gain_panel import GainPanel
 from plotting.live_plot import LivePlot
 from plotting.style import C_BASE, C_RIGHT, C_LEFT
 from sim import motion, world
@@ -52,9 +50,8 @@ OUT = Path("analysis/output")
 
 def run(save_seconds=None):
     """Closed-loop rollout under sim.motion defaults with a live rolling plot.
-    save_seconds: if given, run headless for that many sim-seconds (no
-    window, no gain panel); otherwise run live (with the shared gain
-    panel) until the window is closed (or Ctrl-C). Returns (log, plot)
+    save_seconds: if given, run headless for that many sim-seconds; otherwise
+    run live until the window is closed (or Ctrl-C). Returns (log, plot)
     where log = {t, base_disp, right_e, left_e} full-run arrays
     (base_disp and *_e in meters, world frame)."""
     mujoco.mj_resetData(world.model, world.data)
@@ -87,11 +84,6 @@ def run(save_seconds=None):
                f"±[{amp_mm[0]:.0f}, {amp_mm[1]:.0f}, "
                f"{amp_mm[2]:.0f}] mm"),
     )
-
-    # Gain panel: live mode only (LivePlot's own plt.pause, inside
-    # plot.add, pumps its event loop too -- keep the reference alive for
-    # the run's duration).
-    panel = GainPanel() if save_seconds is None else None
 
     # Full-run history for the stats table — the LivePlot ring buffers
     # only keep the last WINDOW_S seconds.

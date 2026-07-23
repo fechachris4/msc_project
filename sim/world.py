@@ -10,8 +10,11 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from runtime_config import CONFIG
+
 SCENE_PATH = Path(__file__).resolve().with_name("scene.xml")
 model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+model.opt.timestep = CONFIG.run.nominal_dt_s
 data = mujoco.MjData(model)
 mujoco.mj_forward(model, data)
 

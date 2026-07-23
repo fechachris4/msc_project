@@ -8,16 +8,24 @@ import platform
 import subprocess
 import sys
 
-import numpy as np
-
 from analysis import policy
-from controller import servo
+from runtime_config import (
+    CONFIG,
+    control_with_legacy_overrides,
+    effective_config_dict,
+    legacy_gain_dict,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_SOURCE_SUFFIXES = {".py", ".xml"}
-_SOURCE_ROOTS = ("analysis", "controller", "plotting", "sim", "tests")
-_SOURCE_FILES = ("main.py", "requirements.txt", "AGENTS.md")
+_SOURCE_SUFFIXES = {".py", ".xml", ".toml"}
+_SOURCE_ROOTS = ("analysis", "config", "controller", "plotting", "sim", "tests")
+_SOURCE_FILES = (
+    "main.py",
+    "runtime_config.py",
+    "requirements.txt",
+    "AGENTS.md",
+)
 
 
 def sha256_file(path):
@@ -125,29 +133,31 @@ def primary_environment_matches(snapshot=None):
 
 
 def controller_configuration(gain_overrides=None):
-    gains = {
-        name: float(getattr(servo, name))
-        for name in ("KP_POS", "KP_ROT", "KD_POS", "KD_ROT", "K_NULL",
-                     "DAMPING")
-    }
-    if gain_overrides:
-        gains.update({name: float(value)
-                      for name, value in gain_overrides.items()})
+    control = control_with_legacy_overrides(
+        CONFIG.reactive_pose, gain_overrides)
     return {
-        "gains": gains,
+        "gains": legacy_gain_dict(control),
         "components": {
-            "position_enabled": bool(servo.POSITION_ENABLED),
-            "orientation_enabled": bool(servo.ORIENTATION_ENABLED),
-            "velocity_enabled": bool(servo.VELOCITY_ENABLED),
+            "position_enabled": control.position_enabled,
+            "orientation_enabled": control.orientation_enabled,
+            "velocity_enabled": control.velocity_enabled,
         },
-        "joint_speed_limits_rad_s": np.asarray(
-            servo.QDOT_LIMIT, dtype=float).tolist(),
-        "control_lead_limit_rad": float(servo.CTRL_LEAD),
+        "joint_speed_limits_rad_s": list(
+            CONFIG.limits.joint_velocity_rad_s),
+        "control_lead_limit_rad": CONFIG.limits.position_lead_rad,
         "command_interface": "integrated_clipped_joint_velocity_to_position",
     }
 
 
 def experiment_identity(configuration, gain_overrides=None):
+    effective = effective_config_dict(CONFIG)
+    effective["controller"]["reactive_pose"] = {
+        key: value
+        for key, value in vars(
+            control_with_legacy_overrides(
+                CONFIG.reactive_pose, gain_overrides)
+        ).items()
+    }
     value = {
         "evidence_schema_version": policy.EVIDENCE_SCHEMA_VERSION,
         "acceptance_policy_version": policy.ACCEPTANCE_POLICY_VERSION,
@@ -155,6 +165,8 @@ def experiment_identity(configuration, gain_overrides=None):
             policy.JOINT_LIMIT_MAX_PENETRATION_RAD),
         "configuration": configuration,
         "controller": controller_configuration(gain_overrides),
+        "effective_control_config": effective,
+        "control_config_sha256": CONFIG.source_sha256,
         "source_sha256": source_sha256(),
         "analysis_sha256": analysis_sha256(),
         "scene_asset_sha256": _scene_asset_sha256(),

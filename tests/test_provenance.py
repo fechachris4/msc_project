@@ -33,6 +33,21 @@ class ProvenanceContractTest(unittest.TestCase):
         snapshot["dependencies"]["numpy"] = "different"
         self.assertFalse(provenance.primary_environment_matches(snapshot))
 
+    def test_identity_stamps_effective_config_and_raw_toml_hash(self):
+        from analysis import provenance
+        from runtime_config import CONFIG
+
+        identity = provenance.experiment_identity(
+            {"scenario": "test"}, {"KD_POS": 0.8})
+        self.assertEqual(
+            identity["effective_control_config"]["controller"][
+                "reactive_pose"
+            ]["kd_position"],
+            0.8,
+        )
+        self.assertEqual(
+            identity["control_config_sha256"], CONFIG.source_sha256)
+
 
 if __name__ == "__main__":
     unittest.main()

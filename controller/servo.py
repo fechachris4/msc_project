@@ -35,51 +35,40 @@ import numpy as np
 import pinocchio as pin
 
 from controller import frames
-from controller.gain_sets import VERIFIED_BASELINE
 from controller.transforms import rotation_from_quat
+from runtime_config import CONFIG
 from sim import targets, world
 
-# --- gains and limits --------------------------------------------------------
+# --- immutable startup configuration -----------------------------------------
 
 # Two structural constraints on these gains (tests/test_servo.py,
 # GainInvariantsTest):
-# - KP_ROT > 0: the task is a world-frame POSE hold. With KP_ROT = 0 the
+# - kp_rotation_s_inv > 0: the task is a world-frame POSE hold. With it zero the
 #   6-row DLS still drives the EE angular rate to ~0, but orientation
 #   error has no feedback and drifts uncorrected (measured ~0.5 deg vs
 #   0.02 deg controlled, 50 mm sway at 0.5 Hz).
-# - KD < 1: e_v feeds back measured qdot one step delayed — a discrete
-#   loop with gain ~KD that chatters at the step frequency as KD -> 1
-#   (qddot 7.3 rad/s^2 at KD_POS = 1.0 vs 2.3 at 0.3). The D-term also
-#   lowers the effective bandwidth to KP/(1+KD) while feeding forward
-#   the fraction KD/(1+KD) of the base velocity: larger KD trades
+# - kd < 1: e_v feeds back measured qdot one step delayed — a discrete
+#   loop with gain ~kd that chatters at the step frequency as kd -> 1
+#   (qddot 7.3 rad/s^2 at kd_position = 1.0 vs 2.3 at 0.3). The D-term also
+#   lowers the effective bandwidth to kp/(1+kd) while feeding forward
+#   the fraction kd/(1+kd) of the base velocity: larger kd trades
 #   settle speed for disturbance rejection.
-KP_POS = VERIFIED_BASELINE.kp_pos    # 1/s task-space bandwidth
-KP_ROT = VERIFIED_BASELINE.kp_rot    # 1/s
-KD_POS = VERIFIED_BASELINE.kd_pos    # dimensionless
-KD_ROT = VERIFIED_BASELINE.kd_rot    # dimensionless
-K_NULL = VERIFIED_BASELINE.k_null    # 1/s null-space joint-centering
-DAMPING = VERIFIED_BASELINE.damping  # DLS lambda
+CONTROL = CONFIG.reactive_pose
+LIMITS = CONFIG.limits
 
 # Independent control components. Each flag gates one term of the
 # commanded task twist (composed in task_twist_terms, the single point
 # apply_ctrl and qdot_from_error share):
-# - POSITION_ENABLED:    linear P,  KP_POS * e_pos      (twist rows 0-2)
-# - ORIENTATION_ENABLED: angular P, KP_ROT * e_rot      (twist rows 3-5)
-# - VELOCITY_ENABLED:    D term,    KD * twist error    (all 6 rows)
+# - position_enabled:    linear P,  kp_position * e_pos (twist rows 0-2)
+# - orientation_enabled: angular P, kp_rotation * e_rot (twist rows 3-5)
+# - velocity_enabled:    D term,    kd * twist error    (all 6 rows)
 # A disabled component contributes exact zeros to the commanded twist.
 # NOTE the physics: the 6-row DLS still runs, so a P-disabled axis is
 # commanded ZERO RATE (rate-damped, error drifts uncorrected — see the
-# KP_ROT note above), not left free. Freeing an axis outright would
+# rotation-gain note above), not left free. Freeing an axis outright would
 # mean dropping Jacobian rows: a structurally different controller.
-POSITION_ENABLED = True
-ORIENTATION_ENABLED = True
-VELOCITY_ENABLED = True
-
-# Kinova Gen3 spec sheet: max joint speed, large actuators (1-4) then
-# small (5-7). The real arm saturates here, so the baseline must too.
-QDOT_LIMIT = np.radians([79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9])
-
-# Anti-windup: max setpoint lead |ctrl - qpos| per joint (rad). While a
+# LIMITS contains the Gen3 joint-speed ceiling (rad/s) and anti-windup
+# position lead (rad), loaded from config/control.toml. While a
 # joint is physically blocked (e.g. the diagnosed torso collision) the
 # integrator otherwise winds away from qpos — without bound on the
 # continuous joints, which have no ctrlrange — and the kp=2000 servo
@@ -87,7 +76,6 @@ QDOT_LIMIT = np.radians([79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9])
 # operation, (kv*qdot_max + tau_gravity)/kp ~ 0.09 rad (large
 # actuators) / 0.14 rad (small); 0.2 rad clears both without throttling
 # legitimate tracking.
-CTRL_LEAD = 0.2
 
 # --- per-arm setup, computed once at import ----------------------------------
 
@@ -105,11 +93,9 @@ _BOUNDS = {s: _ctrl_bounds(world.ctrl_adrs[s]) for s in world.SIDES}
 
 
 def _centering(side):
-    """(q_mid, k_vec) for the null-space objective: mid of jnt_range and
-    gain K_NULL on the limited joints; zero gain on the continuous ones
-    (no range to center in)."""
+    """(q_mid, limited_mask) for the null-space centering objective."""
     q_mid = np.zeros(7)
-    k_vec = np.zeros(7)
+    limited_mask = np.zeros(7, dtype=bool)
     for i in range(1, 8):
         jnt_id = mujoco.mj_name2id(
             world.model, mujoco.mjtObj.mjOBJ_JOINT, f"{side}_joint_{i}"
@@ -117,31 +103,18 @@ def _centering(side):
         if world.model.jnt_limited[jnt_id]:
             low, high = world.model.jnt_range[jnt_id]
             q_mid[i - 1] = 0.5 * (low + high)
-            k_vec[i - 1] = K_NULL
-    return q_mid, k_vec
+            limited_mask[i - 1] = True
+    return q_mid, limited_mask
 
 
 _Q_MID = {}
-_K_NULL_VEC = {}
+_K_NULL_MASK = {}
 for _s in world.SIDES:
-    _Q_MID[_s], _K_NULL_VEC[_s] = _centering(_s)
-
-# Fixed at import time from the original _centering() result: which
-# entries are the limited joints (nonzero gain) vs. the continuous ones
-# (always 0). set_k_null must consult this, not _K_NULL_VEC's *current*
-# nonzero pattern -- rescaling to 0 would otherwise erase the mask and
-# strand every later nonzero value at 0 too.
-_K_NULL_MASK = {s: _K_NULL_VEC[s] != 0.0 for s in world.SIDES}
+    _Q_MID[_s], _K_NULL_MASK[_s] = _centering(_s)
 
 
-def set_k_null(value):
-    """Update K_NULL and rescale the nonzero (limited-joint) entries of
-    _K_NULL_VEC to match; continuous joints stay at 0. The gain panel
-    calls this instead of touching _K_NULL_VEC directly."""
-    global K_NULL
-    K_NULL = value
-    for side in world.SIDES:
-        _K_NULL_VEC[side][_K_NULL_MASK[side]] = value
+def _null_gain_vector(side, control=CONTROL):
+    return _K_NULL_MASK[side] * control.null_gain_s_inv
 
 
 def init_ctrl():
@@ -183,23 +156,30 @@ def twist_error(side, base_twist, J=None):
 # --- control law: errors -> joint rates ---------------------------------------
 
 
-def task_twist_terms(e_pos, e_rot, e_v, e_w):
+def task_twist_terms(e_pos, e_rot, e_v, e_w, control=CONTROL):
     """(p_twist, d_twist): the components' contributions to the
     commanded EE task twist, linear first, world frame. The single
     composition point for the position / orientation / velocity
     components — a disabled component contributes exact zeros (see the
     component flags for what that means physically)."""
     p_twist = np.concatenate([
-        KP_POS * e_pos if POSITION_ENABLED else np.zeros(3),
-        KP_ROT * e_rot if ORIENTATION_ENABLED else np.zeros(3),
+        control.kp_position_s_inv * e_pos
+        if control.position_enabled else np.zeros(3),
+        control.kp_rotation_s_inv * e_rot
+        if control.orientation_enabled else np.zeros(3),
     ])
-    d_twist = (np.concatenate([KD_POS * e_v, KD_ROT * e_w])
-               if VELOCITY_ENABLED else np.zeros(6))
+    d_twist = (
+        np.concatenate([
+            control.kd_position * e_v,
+            control.kd_rotation * e_w,
+        ])
+        if control.velocity_enabled else np.zeros(6)
+    )
     return p_twist, d_twist
 
 
 def qdot_from_error(J, e_pos, e_rot, e_v, e_w, q, q_mid, k_null,
-                    damping=DAMPING):
+                    damping=None, control=CONTROL):
     """World-frame pose + velocity errors -> joint rates (rad/s):
 
     1. PD law:        v = [KP_POS*e_pos + KD_POS*e_v;
@@ -220,7 +200,9 @@ def qdot_from_error(J, e_pos, e_rot, e_v, e_w, q, q_mid, k_null,
     test_control_trace pins the two equal. This standalone form is for
     the analysis scripts (dashboard, diagnose), which re-derive qdot at
     other damping values."""
-    p_twist, d_twist = task_twist_terms(e_pos, e_rot, e_v, e_w)
+    damping = control.dls_damping if damping is None else damping
+    p_twist, d_twist = task_twist_terms(
+        e_pos, e_rot, e_v, e_w, control)
     task_twist = p_twist + d_twist
     qdot_task = J.T @ np.linalg.solve(
         J @ J.T + damping**2 * np.eye(6), task_twist)
@@ -269,7 +251,7 @@ class ControlTrace:
 # --- main loop body ------------------------------------------------------------
 
 
-def apply_ctrl(dt, base_twist, arms=world.SIDES):
+def apply_ctrl(dt, base_twist, arms=world.SIDES, control=CONTROL, limits=LIMITS):
     """Write the selected arms' updated servo setpoints into data.ctrl:
     read state -> pose + twist errors -> qdot (PD law + DLS) -> clip to
     the joint speed limits -> integrate the setpoints by qdot*dt ->
@@ -306,7 +288,8 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES):
         # component (position, orientation, velocity) contributes only
         # if its flag is enabled — task_twist_terms is the one
         # composition point shared with qdot_from_error.
-        p_twist, d_twist = task_twist_terms(e_pos, e_rot, e_v, e_w)
+        p_twist, d_twist = task_twist_terms(
+            e_pos, e_rot, e_v, e_w, control)
         task_twist = p_twist + d_twist
 
         # Task twist -> joint rates: DLS inversion (bounded through
@@ -314,19 +297,23 @@ def apply_ctrl(dt, base_twist, arms=world.SIDES):
         # exact-pseudoinverse projector (cannot disturb the task).
         # Same law as qdot_from_error, inlined; a test pins them equal.
         qdot_task = J.T @ np.linalg.solve(
-            J @ J.T + DAMPING**2 * np.eye(6), task_twist)
-        qdot_null = -_K_NULL_VEC[side] * (q - _Q_MID[side])
+            J @ J.T + control.dls_damping**2 * np.eye(6), task_twist)
+        qdot_null = -_null_gain_vector(side, control) * (q - _Q_MID[side])
         qdot_raw = qdot_task + (np.eye(7) - np.linalg.pinv(J) @ J) @ qdot_null
 
         # Safety limits: clip to the Gen3 joint speed limits, integrate
         # the setpoints, clamp the lead over qpos (anti-windup), clip to
         # the actuator ctrl range.
-        qdot_speed_clipped = np.clip(qdot_raw, -QDOT_LIMIT, QDOT_LIMIT)
+        qdot_limit = np.asarray(limits.joint_velocity_rad_s)
+        qdot_speed_clipped = np.clip(qdot_raw, -qdot_limit, qdot_limit)
         speed_saturated = qdot_raw != qdot_speed_clipped
         ctrl_before = world.data.ctrl[world.ctrl_adrs[side]].copy()
         ctrl_integrated = ctrl_before + qdot_speed_clipped * dt
         ctrl_lead_limited = np.clip(
-            ctrl_integrated, q - CTRL_LEAD, q + CTRL_LEAD)
+            ctrl_integrated,
+            q - limits.position_lead_rad,
+            q + limits.position_lead_rad,
+        )
         lead_clamped = ctrl_integrated != ctrl_lead_limited
         ctrl_after = np.clip(ctrl_lead_limited, *_BOUNDS[side])
         range_clamped = ctrl_lead_limited != ctrl_after

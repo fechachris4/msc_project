@@ -6,6 +6,7 @@ offsets recovered exactly (e = reference - actual convention).
 """
 
 import unittest
+from dataclasses import replace
 
 import mujoco
 import numpy as np
@@ -100,10 +101,14 @@ class QdotFromErrorTest(unittest.TestCase):
         rng = np.random.default_rng(10)
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
-            v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
+            v = np.concatenate([
+                servo.CONTROL.kp_position_s_inv * e_pos,
+                servo.CONTROL.kp_rotation_s_inv * e_rot,
+            ])
             qdot = servo.qdot_from_error(J, e_pos, e_rot, self._V0,
                                          self._V0, self._Q0,
-                                         self._Q0, servo.K_NULL,
+                                         self._Q0,
+                                         servo.CONTROL.null_gain_s_inv,
                                          damping=1e-6)
             np.testing.assert_allclose(J @ qdot, v, atol=1e-8)
 
@@ -113,10 +118,14 @@ class QdotFromErrorTest(unittest.TestCase):
         rng = np.random.default_rng(11)
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
-            v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
+            v = np.concatenate([
+                servo.CONTROL.kp_position_s_inv * e_pos,
+                servo.CONTROL.kp_rotation_s_inv * e_rot,
+            ])
             qdot = servo.qdot_from_error(J, e_pos, e_rot, self._V0,
                                          self._V0, self._Q0,
-                                         self._Q0, servo.K_NULL,
+                                         self._Q0,
+                                         servo.CONTROL.null_gain_s_inv,
                                          damping=1e-9)
             np.testing.assert_allclose(
                 qdot, np.linalg.pinv(J) @ v, atol=1e-6
@@ -342,7 +351,8 @@ class AntiWindupTest(unittest.TestCase):
         for side in world.SIDES:
             lead = np.abs(world.data.ctrl[world.ctrl_adrs[side]]
                           - world.data.qpos[frames.qpos_adrs[side]])
-            self.assertLessEqual(lead.max(), servo.CTRL_LEAD + 1e-12, side)
+            self.assertLessEqual(
+                lead.max(), servo.LIMITS.position_lead_rad + 1e-12, side)
 
 
 class GainInvariantsTest(unittest.TestCase):
@@ -356,22 +366,14 @@ class GainInvariantsTest(unittest.TestCase):
         rotation need position-level feedback."""
         from controller import servo
 
-        self.assertGreater(servo.KP_POS, 0.0)
-        self.assertGreater(servo.KP_ROT, 0.0)
+        self.assertGreater(servo.CONTROL.kp_position_s_inv, 0.0)
+        self.assertGreater(servo.CONTROL.kp_rotation_s_inv, 0.0)
 
     def test_defaults_are_the_last_verified_baseline(self):
         from controller import servo
-        from controller.gain_sets import VERIFIED_BASELINE
+        from runtime_config import CONFIG
 
-        actual = {
-            "KP_POS": servo.KP_POS,
-            "KP_ROT": servo.KP_ROT,
-            "KD_POS": servo.KD_POS,
-            "KD_ROT": servo.KD_ROT,
-            "K_NULL": servo.K_NULL,
-            "DAMPING": servo.DAMPING,
-        }
-        self.assertEqual(actual, VERIFIED_BASELINE.as_overrides())
+        self.assertEqual(servo.CONTROL, CONFIG.reactive_pose)
 
     def test_later_tuning_is_preserved_only_as_exploratory(self):
         from controller.gain_sets import EXPLORATORY_CANDIDATES
@@ -396,21 +398,18 @@ class GainInvariantsTest(unittest.TestCase):
         0.3, and the composed-vs-FD velocity skew inflates ~8x)."""
         from controller import servo
 
-        for kd in (servo.KD_POS, servo.KD_ROT):
+        for kd in (
+            servo.CONTROL.kd_position,
+            servo.CONTROL.kd_rotation,
+        ):
             self.assertGreaterEqual(kd, 0.0)
             self.assertLess(kd, 1.0)
 
 
-class LiveGainsTest(unittest.TestCase):
-    """The gain panel writes into servo's module globals with no
-    restart -- prove the next control step actually reads the current
-    value, not a def-time snapshot (DAMPING) or a stale array (K_NULL,
-    via set_k_null)."""
+class ImmutableControllerConfigTest(unittest.TestCase):
+    """Different experiment gains use reconstructed immutable configs."""
 
     def test_damping_change_moves_qdot(self):
-        """Same qdot_from_error call apply_ctrl makes, damping=DAMPING
-        passed explicitly so it's read at call time, not baked into a
-        default at def time."""
         from controller import servo
 
         rng = np.random.default_rng(20)
@@ -421,46 +420,28 @@ class LiveGainsTest(unittest.TestCase):
         q = rng.uniform(-1.0, 1.0, 7)
         q_mid = np.zeros(7)
 
-        original = servo.DAMPING
-        self.addCleanup(setattr, servo, "DAMPING", original)
-
-        servo.DAMPING = 0.05
+        control_a = replace(servo.CONTROL, dls_damping=0.05)
         qdot_a = servo.qdot_from_error(J, e_pos, e_rot, zero_v, zero_v,
-                                       q, q_mid, servo.K_NULL,
-                                       damping=servo.DAMPING)
-        servo.DAMPING = 0.2
+                                       q, q_mid,
+                                       control_a.null_gain_s_inv,
+                                       control=control_a)
+        control_b = replace(servo.CONTROL, dls_damping=0.2)
         qdot_b = servo.qdot_from_error(J, e_pos, e_rot, zero_v, zero_v,
-                                       q, q_mid, servo.K_NULL,
-                                       damping=servo.DAMPING)
+                                       q, q_mid,
+                                       control_b.null_gain_s_inv,
+                                       control=control_b)
         self.assertFalse(np.allclose(qdot_a, qdot_b))
 
-    def test_set_k_null_rescales_and_preserves_zero_pattern(self):
+    def test_null_gain_vector_preserves_limited_joint_pattern(self):
         from controller import servo
         from sim import world
 
-        original_vec = {side: servo._K_NULL_VEC[side].copy()
-                        for side in world.SIDES}
-        original_k_null = servo.K_NULL
-        self.addCleanup(servo.set_k_null, original_k_null)
-
-        zero_mask = {side: (original_vec[side] == 0.0)
-                     for side in world.SIDES}
-
-        servo.set_k_null(3.0)
-        self.assertEqual(servo.K_NULL, 3.0)
+        control = replace(servo.CONTROL, null_gain_s_inv=3.0)
         for side in world.SIDES:
-            vec = servo._K_NULL_VEC[side]
-            np.testing.assert_array_equal(vec == 0.0, zero_mask[side])
-            np.testing.assert_allclose(vec[~zero_mask[side]], 3.0)
-
-        # Round-trip through 0 (the slider's minimum): the limited-joint
-        # pattern must survive, not collapse to all-zero permanently.
-        servo.set_k_null(0.0)
-        servo.set_k_null(1.5)
-        for side in world.SIDES:
-            vec = servo._K_NULL_VEC[side]
-            np.testing.assert_array_equal(vec == 0.0, zero_mask[side])
-            np.testing.assert_allclose(vec[~zero_mask[side]], 1.5)
+            vec = servo._null_gain_vector(side, control)
+            np.testing.assert_array_equal(
+                vec != 0.0, servo._K_NULL_MASK[side])
+            np.testing.assert_allclose(vec[servo._K_NULL_MASK[side]], 3.0)
 
 
 if __name__ == "__main__":

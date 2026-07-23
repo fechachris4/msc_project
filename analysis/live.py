@@ -12,6 +12,11 @@ import numpy as np
 
 from analysis import metrics, policy, provenance
 from controller import desired_pos, frames, servo
+from runtime_config import (
+    CONFIG,
+    control_with_legacy_overrides,
+    legacy_gain_dict,
+)
 from sim import motion, world
 
 
@@ -80,37 +85,7 @@ class ExperimentLog:
         return self.accepted
 
 
-_GAIN_NAMES = ("KP_POS", "KP_ROT", "KD_POS", "KD_ROT", "K_NULL", "DAMPING")
-_INITIAL_GAINS = {name: float(getattr(servo, name)) for name in _GAIN_NAMES}
 _TRACE_FIELDS = tuple(servo.ControlTrace.__dataclass_fields__)
-def _gain_snapshot():
-    return {name: float(getattr(servo, name)) for name in _GAIN_NAMES}
-
-
-def _restore_initial_gains():
-    for name, value in _INITIAL_GAINS.items():
-        if name == "K_NULL":
-            servo.set_k_null(value)
-        else:
-            setattr(servo, name, value)
-
-
-def _apply_gain_overrides(gains):
-    """Override servo module gains for one run. K_NULL is routed through
-    servo.set_k_null() (required -- it rescales _K_NULL_VEC; a plain
-    setattr would silently not apply); the rest are plain setattr, same
-    as _restore_initial_gains above."""
-    for name, value in gains.items():
-        if name not in _GAIN_NAMES:
-            raise ValueError(f"unknown gain override: {name!r}")
-        value = float(value)
-        if not np.isfinite(value) or value < 0.0:
-            raise ValueError(
-                f"gain override {name} must be finite and non-negative")
-        if name == "K_NULL":
-            servo.set_k_null(value)
-        else:
-            setattr(servo, name, value)
 
 
 def _validate_config(config):
@@ -136,7 +111,6 @@ def _validate_config(config):
 
 
 def _reset_simulation():
-    _restore_initial_gains()
     mujoco.mj_resetData(world.model, world.data)
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
@@ -181,7 +155,7 @@ def _torso_contact_from_pairs(pairs, arms):
 
 
 class _LogBuilder:
-    def __init__(self, arms):
+    def __init__(self, arms, control):
         self.arms = arms
         self.sim_time = []
         self.contact_time = []
@@ -198,14 +172,11 @@ class _LogBuilder:
         self.contact_count = []
         self.torso_contact = {side: [] for side in arms}
         self.contact_pairs = []
-        self.gain_snapshots = [_gain_snapshot()]
+        self.gain_snapshots = [legacy_gain_dict(control)]
 
     def append(self, phase, sim_time, contact_time, eval_time, base_disp,
                base_v, base_w, traces, pairs, on_update):
-        snapshot = _gain_snapshot()
-        if snapshot != self.gain_snapshots[-1]:
-            self.gain_snapshots.append(snapshot)
-        segment = len(self.gain_snapshots) - 1
+        segment = 0
         margins = {}
         for side in self.arms:
             trace = traces[side]
@@ -284,7 +255,7 @@ class _LogBuilder:
         )
 
 
-def _advance(builder, phase, eval_time, scenario, on_update):
+def _advance(builder, phase, eval_time, scenario, on_update, control):
     sim_time = float(world.data.time)
     if phase == "evaluation":
         motion.set_torso_pose(eval_time, **scenario)
@@ -297,7 +268,11 @@ def _advance(builder, phase, eval_time, scenario, on_update):
         base_w = np.zeros(3)
         base_disp = np.zeros(3)
     traces = servo.apply_ctrl(
-        world.model.opt.timestep, (base_v, base_w), builder.arms)
+        world.model.opt.timestep,
+        (base_v, base_w),
+        builder.arms,
+        control=control,
+    )
     mujoco.mj_step(world.model, world.data)
     contact_time = sim_time
     pairs = _contact_pairs()
@@ -307,11 +282,9 @@ def _advance(builder, phase, eval_time, scenario, on_update):
 
 
 def run_experiment(config, on_update=None, gains=None):
-    """Run one settle+evaluation experiment. gains, if given, overrides
-    servo module gains (see _apply_gain_overrides) after _reset_simulation
-    restores the initial gains and before the log builder takes its first
-    gain snapshot, so the override self-documents in the saved run's
-    metadata rather than looking like a mid-run gain change. Not an
+    """Run one settle+evaluation experiment. gains, if given, reconstructs
+    an immutable controller configuration for this run before the log builder
+    takes its first gain snapshot. Not an
     ExperimentConfig field: the config's exact fields are contract-tested
     (tests/test_live.py) and serialized whole in every run's
     metadata.json; gains are already persisted via gain snapshots."""
@@ -322,15 +295,15 @@ def run_experiment(config, on_update=None, gains=None):
             config.rotational_amplitude, dtype=float).copy(),
     )
     _reset_simulation()
-    if gains is not None:
-        _apply_gain_overrides(gains)
-    builder = _LogBuilder(tuple(config.arms))
+    control = control_with_legacy_overrides(CONFIG.reactive_pose, gains)
+    builder = _LogBuilder(tuple(config.arms), control)
     dt = float(world.model.opt.timestep)
     settled = False
     dwell_start = None
     settle_start = float(world.data.time)
     while world.data.time - settle_start < config.settle_timeout:
-        traces = _advance(builder, "settling", -1.0, {}, on_update)
+        traces = _advance(
+            builder, "settling", -1.0, {}, on_update, control)
         within = all(
             np.linalg.norm(trace.e_pos) <= config.settle_pos_tol
             and np.linalg.norm(trace.e_rot) <= config.settle_rot_tol
@@ -353,7 +326,8 @@ def run_experiment(config, on_update=None, gains=None):
     }
     evaluation_steps = max(1, int(np.ceil(config.evaluation_seconds / dt)))
     for step in range(evaluation_steps):
-        _advance(builder, "evaluation", step * dt, scenario, on_update)
+        _advance(
+            builder, "evaluation", step * dt, scenario, on_update, control)
     return builder.build(config, settled, settle_duration)
 
 
@@ -443,6 +417,8 @@ def _metadata(log, revision, identity=None, git=None):
         "experiment_identity_sha256": identity["identity_sha256"],
         "scene_asset_sha256": _asset_hash(),
         "controller_configuration": identity["controller"],
+        "effective_control_config": identity["effective_control_config"],
+        "control_config_sha256": identity["control_config_sha256"],
         "arms": list(log.arms),
     }
 
@@ -508,6 +484,8 @@ def save_run(log, config, output_root, *, canonical=False, final_outputs=()):
         "environment": environment,
         "configuration": _config_json(log.config),
         "controller_configuration": identity["controller"],
+        "effective_control_config": identity["effective_control_config"],
+        "control_config_sha256": identity["control_config_sha256"],
         "policy": {
             "acceptance_policy_version": policy.ACCEPTANCE_POLICY_VERSION,
             "joint_limit_max_penetration_rad": (

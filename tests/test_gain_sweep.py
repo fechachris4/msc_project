@@ -253,8 +253,9 @@ class HeadroomTest(unittest.TestCase):
         from controller import servo
 
         qdot = np.zeros((3, 7))
-        qdot[0, 2] = 0.4 * servo.QDOT_LIMIT[2]
-        qdot[1, 5] = 1.2 * servo.QDOT_LIMIT[5]
+        limits = np.asarray(servo.LIMITS.joint_velocity_rad_s)
+        qdot[0, 2] = 0.4 * limits[2]
+        qdot[1, 5] = 1.2 * limits[5]
         # row 2 stays all-zero
 
         series = gain_sweep._headroom_series(qdot)
@@ -402,6 +403,8 @@ class StateRoundTripTest(unittest.TestCase):
 
             reloaded = gain_sweep.load_or_init_state(args)
             self.assertEqual(reloaded["fingerprint"], state["fingerprint"])
+            self.assertIn("effective_control_config", reloaded)
+            self.assertIn("control_config_sha256", reloaded)
             self.assertIn("1", reloaded["stages"])
             self.assertEqual(
                 reloaded["stages"]["1"]["winner_config_id"], "s1_kp1_kd0")

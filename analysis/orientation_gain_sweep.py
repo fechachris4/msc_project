@@ -18,14 +18,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from analysis import live, provenance
-from controller import servo
+from runtime_config import CONFIG, legacy_gain_dict
 
 
 OUT = Path("analysis/output/orientation_gain_sweep")
 KP_ROT_GRID = [2, 12, 22, 32, 42, 52, 62, 72, 80]
 KD_ROT_GRID = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0]
 FIXED_GAIN_NAMES = ("KP_POS", "KD_POS", "K_NULL", "DAMPING")
-FIXED_GAINS = {name: float(getattr(servo, name)) for name in FIXED_GAIN_NAMES}
+_STARTUP_GAINS = legacy_gain_dict(CONFIG.reactive_pose)
+FIXED_GAINS = {name: _STARTUP_GAINS[name] for name in FIXED_GAIN_NAMES}
 SCENARIO = live.ExperimentConfig(
     arms=("right", "left"),
     linear_amplitude=np.array([0.18, 0.04, 0.05]),

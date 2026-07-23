@@ -108,7 +108,10 @@ def run_one(frequency):
     # EE's own tracking velocity rather than assisting it — see
     # tests/test_target_motion.py's TargetTrackingBandwidthTest
     # docstring for the full derivation.
-    kp_eff = servo.KP_POS / (1.0 + servo.KD_POS)
+    kp_eff = (
+        servo.CONTROL.kp_position_s_inv
+        / (1.0 + servo.CONTROL.kd_position)
+    )
     skip_seconds = max(N_SETTLE_PERIODS_MIN / kp_eff, 1.0 / frequency)
     fit_seconds = N_FIT_PERIODS / frequency
 
@@ -142,7 +145,10 @@ def predicted(frequency):
     H(s) = KP_eff/(s+KP_eff). Error = ref - actual has magnitude
     |A|*w/sqrt(w^2+KP_eff^2); the actual tracked motion lags the
     reference by atan(w/KP_eff)."""
-    kp_eff = servo.KP_POS / (1.0 + servo.KD_POS)
+    kp_eff = (
+        servo.CONTROL.kp_position_s_inv
+        / (1.0 + servo.CONTROL.kd_position)
+    )
     w = 2.0 * np.pi * frequency
     error_amp = AMPLITUDE[AXIS] * w / np.sqrt(w**2 + kp_eff**2)
     phase_lag = np.arctan2(w, kp_eff)
@@ -164,7 +170,10 @@ def sweep():
 
 def make_figures(meas_amp, meas_phase, pred_amp, pred_phase):
     OUT.mkdir(parents=True, exist_ok=True)
-    kp_eff = servo.KP_POS / (1.0 + servo.KD_POS)
+    kp_eff = (
+        servo.CONTROL.kp_position_s_inv
+        / (1.0 + servo.CONTROL.kd_position)
+    )
     bandwidth_hz = kp_eff / (2.0 * np.pi)
 
     fig, ax = plt.subplots(figsize=(7, 5), layout="constrained")
@@ -199,8 +208,12 @@ def make_figures(meas_amp, meas_phase, pred_amp, pred_phase):
 
 
 def print_summary(meas_amp, meas_phase, pred_amp, pred_phase):
-    kp_eff = servo.KP_POS / (1.0 + servo.KD_POS)
-    print(f"KP_POS={servo.KP_POS:.2f}  KD_POS={servo.KD_POS:.2f}  "
+    kp_eff = (
+        servo.CONTROL.kp_position_s_inv
+        / (1.0 + servo.CONTROL.kd_position)
+    )
+    print(f"KP_POS={servo.CONTROL.kp_position_s_inv:.2f}  "
+          f"KD_POS={servo.CONTROL.kd_position:.2f}  "
          f"KP_eff={kp_eff:.2f} rad/s  ({kp_eff / (2 * np.pi):.3f} Hz)")
     print(f"{'f [Hz]':>8}  {'err meas [mm]':>14}  {'err pred [mm]':>14}  "
          f"{'lag meas [deg]':>15}  {'lag pred [deg]':>15}")

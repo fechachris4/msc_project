@@ -152,7 +152,10 @@ class TargetTrackingBandwidthTest(unittest.TestCase):
         target_motion.init_home()
         servo.init_ctrl()
 
-        kp_eff = servo.KP_POS / (1.0 + servo.KD_POS)
+        kp_eff = (
+            servo.CONTROL.kp_position_s_inv
+            / (1.0 + servo.CONTROL.kd_position)
+        )
         frequency = self.BANDWIDTH_FRACTION * kp_eff / (2.0 * np.pi)
         w = 2.0 * np.pi * frequency
         predicted_ratio = w / np.sqrt(w**2 + kp_eff**2)

@@ -110,7 +110,11 @@ class ControlTraceTest(unittest.TestCase):
                                    atol=1e-12, rtol=0.0)
         np.testing.assert_allclose(
             trace.qdot_speed_clipped,
-            np.clip(EXPECTED_QDOT_RAW, -servo.QDOT_LIMIT, servo.QDOT_LIMIT),
+            np.clip(
+                EXPECTED_QDOT_RAW,
+                -np.asarray(servo.LIMITS.joint_velocity_rad_s),
+                np.asarray(servo.LIMITS.joint_velocity_rad_s),
+            ),
             atol=1e-12,
             rtol=0.0,
         )
@@ -134,8 +138,10 @@ class ControlTraceTest(unittest.TestCase):
 
         ctrl_integrated = trace.ctrl_before + trace.qdot_speed_clipped * dt
         ctrl_lead_limited = np.clip(
-            ctrl_integrated, trace.q - servo.CTRL_LEAD,
-            trace.q + servo.CTRL_LEAD)
+            ctrl_integrated,
+            trace.q - servo.LIMITS.position_lead_rad,
+            trace.q + servo.LIMITS.position_lead_rad,
+        )
         ctrl_after = np.clip(ctrl_lead_limited, *servo._BOUNDS["right"])
         np.testing.assert_array_equal(
             trace.speed_saturated,
@@ -212,12 +218,20 @@ class ControlTraceTest(unittest.TestCase):
         np.testing.assert_array_equal(
             trace.p_twist,
             np.concatenate(
-                [servo.KP_POS * trace.e_pos, servo.KP_ROT * trace.e_rot]),
+                [
+                    servo.CONTROL.kp_position_s_inv * trace.e_pos,
+                    servo.CONTROL.kp_rotation_s_inv * trace.e_rot,
+                ]
+            ),
         )
         np.testing.assert_array_equal(
             trace.d_twist,
             np.concatenate(
-                [servo.KD_POS * trace.e_v, servo.KD_ROT * trace.e_w]),
+                [
+                    servo.CONTROL.kd_position * trace.e_v,
+                    servo.CONTROL.kd_rotation * trace.e_w,
+                ]
+            ),
         )
         np.testing.assert_array_equal(
             trace.task_twist, trace.p_twist + trace.d_twist)
@@ -235,11 +249,11 @@ class ControlTraceTest(unittest.TestCase):
         )["right"]
 
         qdot_task = trace.J.T @ np.linalg.solve(
-            trace.J @ trace.J.T + servo.DAMPING**2 * np.eye(6),
+            trace.J @ trace.J.T + servo.CONTROL.dls_damping**2 * np.eye(6),
             trace.task_twist,
         )
         projector = np.eye(7) - np.linalg.pinv(trace.J) @ trace.J
-        qdot_null = -servo._K_NULL_VEC["right"] * (
+        qdot_null = -servo._null_gain_vector("right") * (
             trace.q - servo._Q_MID["right"])
         np.testing.assert_allclose(
             trace.qdot_raw, qdot_task + projector @ qdot_null,
@@ -249,8 +263,8 @@ class ControlTraceTest(unittest.TestCase):
             trace.qdot_raw,
             servo.qdot_from_error(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
-                trace.q, servo._Q_MID["right"], servo._K_NULL_VEC["right"],
-                damping=servo.DAMPING),
+                trace.q, servo._Q_MID["right"],
+                servo._null_gain_vector("right")),
             atol=1e-12, rtol=0.0)
 
     def test_lead_clamp_mask_and_effective_rate(self):
@@ -342,12 +356,9 @@ class ComponentTogglesTest(unittest.TestCase):
     apply_ctrl's law still matches the standalone qdot_from_error."""
 
     def setUp(self):
-        from controller import servo
-
         _setup_scene()
-        for flag in ("POSITION_ENABLED", "ORIENTATION_ENABLED",
-                     "VELOCITY_ENABLED"):
-            self.addCleanup(setattr, servo, flag, getattr(servo, flag))
+        from controller import servo
+        self.control = servo.CONTROL
 
     def tearDown(self):
         from sim import world
@@ -360,57 +371,76 @@ class ComponentTogglesTest(unittest.TestCase):
         from sim import world
 
         trace = servo.apply_ctrl(
-            world.model.opt.timestep, BASE_TWIST, arms=("right",)
+            world.model.opt.timestep,
+            BASE_TWIST,
+            arms=("right",),
+            control=self.control,
         )["right"]
         np.testing.assert_allclose(
             trace.qdot_raw,
             servo.qdot_from_error(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
-                trace.q, servo._Q_MID["right"], servo._K_NULL_VEC["right"],
-                damping=servo.DAMPING),
+                trace.q, servo._Q_MID["right"],
+                servo._null_gain_vector("right", self.control),
+                control=self.control),
             atol=1e-12, rtol=0.0)
         return trace
 
     def test_flags_default_enabled(self):
         from controller import servo
 
-        self.assertTrue(servo.POSITION_ENABLED)
-        self.assertTrue(servo.ORIENTATION_ENABLED)
-        self.assertTrue(servo.VELOCITY_ENABLED)
+        self.assertTrue(servo.CONTROL.position_enabled)
+        self.assertTrue(servo.CONTROL.orientation_enabled)
+        self.assertTrue(servo.CONTROL.velocity_enabled)
 
     def test_position_only(self):
         from controller import servo
 
-        servo.ORIENTATION_ENABLED = False
-        servo.VELOCITY_ENABLED = False
+        self.control = dataclasses.replace(
+            servo.CONTROL,
+            orientation_enabled=False,
+            velocity_enabled=False,
+        )
         trace = self._trace_matching_standalone_law()
         np.testing.assert_array_equal(
-            trace.p_twist[:3], servo.KP_POS * trace.e_pos)
+            trace.p_twist[:3],
+            servo.CONTROL.kp_position_s_inv * trace.e_pos)
         np.testing.assert_array_equal(trace.p_twist[3:], np.zeros(3))
         np.testing.assert_array_equal(trace.d_twist, np.zeros(6))
 
     def test_orientation_only(self):
         from controller import servo
 
-        servo.POSITION_ENABLED = False
-        servo.VELOCITY_ENABLED = False
+        self.control = dataclasses.replace(
+            servo.CONTROL,
+            position_enabled=False,
+            velocity_enabled=False,
+        )
         trace = self._trace_matching_standalone_law()
         np.testing.assert_array_equal(trace.p_twist[:3], np.zeros(3))
         np.testing.assert_array_equal(
-            trace.p_twist[3:], servo.KP_ROT * trace.e_rot)
+            trace.p_twist[3:],
+            servo.CONTROL.kp_rotation_s_inv * trace.e_rot)
         np.testing.assert_array_equal(trace.d_twist, np.zeros(6))
 
     def test_velocity_only(self):
         from controller import servo
 
-        servo.POSITION_ENABLED = False
-        servo.ORIENTATION_ENABLED = False
+        self.control = dataclasses.replace(
+            servo.CONTROL,
+            position_enabled=False,
+            orientation_enabled=False,
+        )
         trace = self._trace_matching_standalone_law()
         np.testing.assert_array_equal(trace.p_twist, np.zeros(6))
         np.testing.assert_array_equal(
             trace.d_twist,
             np.concatenate(
-                [servo.KD_POS * trace.e_v, servo.KD_ROT * trace.e_w]))
+                [
+                    servo.CONTROL.kd_position * trace.e_v,
+                    servo.CONTROL.kd_rotation * trace.e_w,
+                ]
+            ))
 
 
 if __name__ == "__main__":
