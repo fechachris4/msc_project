@@ -129,6 +129,28 @@ def _world_reference_frame(plant, side, calibration, frame):
     raise ValueError(f"unsupported target frame: {frame!r}")
 
 
+def express_pose_in_target_frame(
+    plant, side, calibration, frame, pose_world
+):
+    """Express a world pose in one declared target reference frame."""
+    if not isinstance(plant, PlantState):
+        raise TypeError("plant must be a PlantState")
+    if not isinstance(calibration, MountCalibration):
+        raise TypeError("calibration must be MountCalibration")
+    if not isinstance(pose_world, Pose):
+        raise TypeError("pose_world must be a Pose")
+    reference_frame = TargetFrame(frame)
+    frame_pose_world, _ = _world_reference_frame(
+        plant, side, calibration, reference_frame
+    )
+    rotation_frame_world = frame_pose_world.rotation.T
+    return Pose(
+        rotation_frame_world
+        @ (pose_world.position_m - frame_pose_world.position_m),
+        rotation_frame_world @ pose_world.rotation,
+    )
+
+
 def resolve_target_world(plant, side, calibration, target):
     """Convert a world/base/torso target once at the frame boundary.
 

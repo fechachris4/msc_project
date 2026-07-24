@@ -139,6 +139,35 @@ class ResetAndRunTest(unittest.TestCase):
                     first.arm_data[side][name], second.arm_data[side][name],
                     atol=1e-12, rtol=0.0)
 
+    def test_cartesian_target_and_measurement_share_controller_input_state(self):
+        from analysis.live import run_experiment
+        from runtime_config import CONFIG
+
+        log = run_experiment(_config())
+        for side in log.arms:
+            fields = log.arm_data[side]
+            desired = fields["target_position_world_m"]
+            measured = fields["ee_position_world_m"]
+            np.testing.assert_allclose(
+                desired - measured,
+                fields["e_pos"],
+                atol=1e-12,
+                rtol=0.0,
+            )
+            self.assertEqual(desired.shape, (len(log.sim_time), 3))
+            self.assertEqual(
+                fields["target_rotation_world"].shape,
+                (len(log.sim_time), 3, 3),
+            )
+            self.assertEqual(
+                fields["ee_rotation_world"].shape,
+                (len(log.sim_time), 3, 3),
+            )
+            self.assertEqual(
+                log.target_reference_frames[side],
+                CONFIG.target(side).reference_frame,
+            )
+
 
 class ContactAndPersistenceTest(unittest.TestCase):
     def test_pair_specific_torso_classification(self):

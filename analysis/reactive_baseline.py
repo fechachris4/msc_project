@@ -13,7 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from analysis import live, metrics
+from analysis import cartesian_path, live, metrics
 from plotting.style import C_BASE, C_LEFT, C_RIGHT
 from runtime_config import CONFIG, print_effective_config
 from sim import motion
@@ -114,14 +114,18 @@ def run_validation(output_root=DEFAULT_OUTPUT, canonical=False):
     run_metrics = metrics.experiment_metrics(log)
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
-    figure = make_figure(
+    tracking_figure = make_figure(
         log, run_metrics, output_root / "reactive_baseline_tracking.png")
+    path_figure = cartesian_path.make_cartesian_path_figure(
+        log,
+        output_root / "reactive_baseline_cartesian_path.png",
+    )
     run_dir = live.save_run(
         log,
         SCENARIO,
         output_root,
         canonical=canonical,
-        final_outputs=(figure,),
+        final_outputs=(tracking_figure, path_figure),
     )
 
     print(
@@ -136,8 +140,9 @@ def run_validation(output_root=DEFAULT_OUTPUT, canonical=False):
             f"mm  peak={arm['position_error_norm_peak_m'] * 1000:.1f} mm"
         )
     print(f"run: {run_dir}")
-    print(f"figure: {figure}")
-    return log, run_metrics, run_dir, figure
+    print(f"tracking figure: {tracking_figure}")
+    print(f"Cartesian path figure: {path_figure}")
+    return log, run_metrics, run_dir, tracking_figure
 
 
 def main(argv=None):

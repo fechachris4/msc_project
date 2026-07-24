@@ -10,11 +10,16 @@ from controller.servo import (
     ReactivePositionPipeline,
 )
 from controller.state import (
+    DualArmControllerStates,
     DualArmFramedTargets,
     DualArmWorldTargets,
     JointPositionCommand,
     MountCalibration,
     PlantState,
+)
+from controller.trajectory import (
+    as_dual_arm_target_source,
+    sample_dual_arm_target_source,
 )
 from runtime_config import CONFIG, ReactivePoseConfig
 
@@ -24,7 +29,10 @@ class RunnerCycle:
     """One completed exchange, retaining both sides of the boundary."""
 
     input_state: PlantState
+    target_elapsed_time_s: float
+    sampled_targets: DualArmFramedTargets
     resolved_targets: DualArmWorldTargets
+    controller_states: DualArmControllerStates
     command: JointPositionCommand
     traces: DualArmControlTraces
     next_state: PlantState
@@ -48,8 +56,6 @@ class ReactivePositionRunner:
             raise TypeError("calibration must be MountCalibration")
         if not isinstance(pipeline_setup, DualArmPipelineSetup):
             raise TypeError("pipeline_setup must be DualArmPipelineSetup")
-        if not isinstance(source_targets, DualArmFramedTargets):
-            raise TypeError("source_targets must be DualArmFramedTargets")
         if not isinstance(controller_config, ReactivePoseConfig):
             raise TypeError("controller_config must be ReactivePoseConfig")
         selected = tuple(arms)
@@ -63,11 +69,12 @@ class ReactivePositionRunner:
         self._backend = backend
         self._calibration = calibration
         self._pipeline_setup = pipeline_setup
-        self._source_targets = source_targets
+        self._target_source = as_dual_arm_target_source(source_targets)
         self._arms = selected
         self._controller_config = controller_config
         self._plant_state = None
         self._pipeline = None
+        self._target_time_origin_s = None
 
     @property
     def current_state(self):
@@ -89,19 +96,26 @@ class ReactivePositionRunner:
             self._backend.release()
             raise
         self._plant_state = plant_state
+        self._target_time_origin_s = plant_state.sample_time_s
         return plant_state
 
     def cycle(self, source_targets=None):
         if self._plant_state is None or self._pipeline is None:
             raise RuntimeError("runner must be started before cycling")
-        if source_targets is None:
-            source_targets = self._source_targets
-        if not isinstance(source_targets, DualArmFramedTargets):
-            raise TypeError("source_targets must be DualArmFramedTargets")
-
         input_state = self._plant_state
+        target_elapsed = (
+            input_state.sample_time_s - self._target_time_origin_s
+        )
+        target_source = (
+            self._target_source
+            if source_targets is None
+            else as_dual_arm_target_source(source_targets)
+        )
+        sampled_targets = sample_dual_arm_target_source(
+            target_source, target_elapsed
+        )
         resolved = frames.resolve_targets_world(
-            input_state, self._calibration, source_targets)
+            input_state, self._calibration, sampled_targets)
         controller_states = frames.controller_states(
             input_state, self._calibration)
         command, traces = self._pipeline.step(
@@ -114,7 +128,10 @@ class ReactivePositionRunner:
         self._plant_state = next_state
         return RunnerCycle(
             input_state=input_state,
+            target_elapsed_time_s=target_elapsed,
+            sampled_targets=sampled_targets,
             resolved_targets=resolved,
+            controller_states=controller_states,
             command=command,
             traces=traces,
             next_state=next_state,
@@ -128,3 +145,4 @@ class ReactivePositionRunner:
         finally:
             self._plant_state = None
             self._pipeline = None
+            self._target_time_origin_s = None
