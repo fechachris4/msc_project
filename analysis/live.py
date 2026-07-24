@@ -1,6 +1,6 @@
 """Reproducible settling and evaluation runs for controller diagnostics."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import csv
 import json
@@ -75,6 +75,7 @@ class ExperimentLog:
     joint_limit_within_tolerance: bool
     limit_penetration_rad: float
     warning_reasons: tuple[str, ...]
+    target_reference_frames: dict[str, str] = field(default_factory=dict)
 
     @property
     def evaluation_mask(self):
@@ -87,6 +88,16 @@ class ExperimentLog:
 
 
 _TRACE_FIELDS = tuple(servo.ControlTrace.__dataclass_fields__)
+_CARTESIAN_TRACE_FIELDS = (
+    "target_position_world_m",
+    "target_rotation_world",
+    "target_linear_velocity_world_m_s",
+    "target_angular_velocity_world_rad_s",
+    "ee_position_world_m",
+    "ee_rotation_world",
+    "ee_linear_velocity_world_m_s",
+    "ee_angular_velocity_world_rad_s",
+)
 _EXECUTION_CONTRACT = {
     "runner": "ReactivePositionRunner",
     "controller_pipeline": "ReactivePositionPipeline",
@@ -203,22 +214,62 @@ class _LogBuilder:
         self.base_linear_velocity = []
         self.base_angular_velocity = []
         self.arm_data = {
-            side: {name: [] for name in (*_TRACE_FIELDS, "joint_margin")}
+            side: {
+                name: []
+                for name in (
+                    *_TRACE_FIELDS,
+                    *_CARTESIAN_TRACE_FIELDS,
+                    "joint_margin",
+                )
+            }
             for side in arms
         }
+        self.target_reference_frames = {side: None for side in arms}
         self.contact_count = []
         self.torso_contact = {side: [] for side in arms}
         self.contact_pairs = []
         self.gain_snapshots = [legacy_gain_dict(control)]
 
     def append(self, phase, sim_time, contact_time, eval_time, base_disp,
-               base_v, base_w, traces, pairs, on_update):
+               base_v, base_w, cycle, pairs, on_update):
+        traces = cycle.traces
         segment = 0
         margins = {}
         for side in self.arms:
             trace = traces[side]
             for name in _TRACE_FIELDS:
                 self.arm_data[side][name].append(np.asarray(getattr(trace, name)))
+            sampled = cycle.sampled_targets.for_arm(side)
+            frame = sampled.reference_frame.value
+            previous_frame = self.target_reference_frames[side]
+            if previous_frame is not None and previous_frame != frame:
+                raise ValueError(
+                    f"{side} target source changed frame from "
+                    f"{previous_frame!r} to {frame!r} within one run"
+                )
+            self.target_reference_frames[side] = frame
+            target = cycle.resolved_targets.for_arm(side)
+            state = cycle.controller_states.for_arm(side)
+            cartesian = {
+                "target_position_world_m": target.pose_world.position_m,
+                "target_rotation_world": target.pose_world.rotation,
+                "target_linear_velocity_world_m_s": (
+                    target.twist_world.linear_m_s
+                ),
+                "target_angular_velocity_world_rad_s": (
+                    target.twist_world.angular_rad_s
+                ),
+                "ee_position_world_m": state.ee_pose_world.position_m,
+                "ee_rotation_world": state.ee_pose_world.rotation,
+                "ee_linear_velocity_world_m_s": (
+                    state.ee_twist_world.linear_m_s
+                ),
+                "ee_angular_velocity_world_rad_s": (
+                    state.ee_twist_world.angular_rad_s
+                ),
+            }
+            for name, value in cartesian.items():
+                self.arm_data[side][name].append(np.asarray(value))
             margins[side] = _joint_margin(side, trace.q)
             self.arm_data[side]["joint_margin"].append(margins[side])
         torso = _torso_contact_from_pairs(pairs, self.arms)
@@ -288,6 +339,11 @@ class _LogBuilder:
                 status.joint_limit_within_tolerance),
             limit_penetration_rad=status.limit_penetration_rad,
             warning_reasons=status.warning_reasons,
+            target_reference_frames={
+                side: frame for side, frame
+                in self.target_reference_frames.items()
+                if frame is not None
+            },
             **arrays,
         )
 
@@ -306,7 +362,7 @@ def _advance(builder, runner, phase, eval_time, on_update):
     contact_time = sim_time
     pairs = _contact_pairs()
     builder.append(phase, sim_time, contact_time, eval_time, base_disp,
-                   base_v, base_w, cycle.traces, pairs, on_update)
+                   base_v, base_w, cycle, pairs, on_update)
     return cycle
 
 
@@ -503,6 +559,7 @@ def _metadata(log, revision, identity=None, git=None):
         "effective_control_config": identity["effective_control_config"],
         "control_config_sha256": identity["control_config_sha256"],
         "arms": list(log.arms),
+        "target_reference_frames": dict(log.target_reference_frames),
     }
 
 
@@ -629,4 +686,7 @@ def load_run(run_dir):
             limit_penetration_rad=float(metadata.get(
                 "limit_penetration_rad", 0.0)),
             warning_reasons=tuple(metadata["warning_reasons"]),
+            target_reference_frames=dict(
+                metadata.get("target_reference_frames", {})
+            ),
         )

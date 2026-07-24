@@ -22,6 +22,29 @@ class EntrypointTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             main._parse_args(["invalid"])
 
+    def test_optional_live_trajectory_plot_flag(self):
+        import main
+
+        self.assertEqual(
+            main._parse_options(["--trajectory-plot"]),
+            (("right", "left"), True),
+        )
+        self.assertEqual(
+            main._parse_options(
+                ["left", "--trajectory-plot"],
+                default_choice="right",
+            ),
+            (("left",), True),
+        )
+        self.assertEqual(
+            main._parse_options([], default_choice="right"),
+            (("right",), False),
+        )
+        with self.assertRaises(SystemExit):
+            main._parse_options(
+                ["--trajectory-plot", "--trajectory-plot"]
+            )
+
     def test_scene_path_is_absolute(self):
         from sim import world
 
