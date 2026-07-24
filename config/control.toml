@@ -25,6 +25,25 @@ joint_velocity_rad_s = [
 ]
 position_lead_rad = 0.2
 
+# Optional vertical cylinder around the human/occupied area, expressed in each
+# ARM BASE frame (the same frame as targets.reference_frame = "base"), so each
+# arm routes around its own copy. When enabled, direct end-effector paths that
+# cross the inflated cylinder automatically take the shortest clockwise,
+# counter-clockwise or over-the-top waypoint route. Targets inside are moved
+# just outside; they are not refused. Key names match the hardware controller's
+# config/control.toml one-to-one. Metres.
+#
+# END-EFFECTOR routing only — NOT whole-arm/link collision avoidance.
+[cylinder_keepout]
+cylinder_keepout_enabled = false
+cylinder_keepout_center_x_m = 0.0
+cylinder_keepout_center_y_m = 0.0
+cylinder_keepout_radius_m = 0.25
+cylinder_keepout_z_min_m = 0.0
+cylinder_keepout_z_max_m = 1.8
+cylinder_keepout_clearance_m = 0.10
+cylinder_waypoint_tolerance_m = 0.01
+
 [targets.right]
 reference_frame = "world"
 position_m = [0.45, -0.20, 1.20]
