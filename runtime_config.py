@@ -46,6 +46,25 @@ class LimitConfig:
 
 
 @dataclass(frozen=True)
+class CylinderKeepoutConfig:
+    """End-effector keep-out cylinder, one-to-one with the C++ EffectiveConfig.
+
+    Field names match ``basic_control/src/app/Options.h`` exactly so the two
+    schemas stay comparable. Lengths are metres in the arm base frame; the
+    cylinder axis is that frame's +z.
+    """
+
+    cylinder_keepout_enabled: bool
+    cylinder_keepout_center_x_m: float
+    cylinder_keepout_center_y_m: float
+    cylinder_keepout_radius_m: float
+    cylinder_keepout_z_min_m: float
+    cylinder_keepout_z_max_m: float
+    cylinder_keepout_clearance_m: float
+    cylinder_waypoint_tolerance_m: float
+
+
+@dataclass(frozen=True)
 class TrajectoryConstraintsConfig:
     max_linear_speed_m_s: float | None
     max_linear_acceleration_m_s2: float | None
@@ -107,6 +126,7 @@ class ProjectConfig:
     run: RunConfig
     reactive_pose: ReactivePoseConfig
     limits: LimitConfig
+    cylinder_keepout: CylinderKeepoutConfig
     right_target: TargetConfig
     left_target: TargetConfig
     simulation: SimulationConfig
@@ -121,7 +141,14 @@ class ProjectConfig:
         raise ValueError(f"unknown arm: {side!r}")
 
 
-_ROOT_KEYS = {"run", "controller", "limits", "targets", "simulation"}
+_ROOT_KEYS = {
+    "run",
+    "controller",
+    "limits",
+    "cylinder_keepout",
+    "targets",
+    "simulation",
+}
 _RUN_KEYS = {"nominal_dt_s", "arm"}
 _CONTROLLER_KEYS = {"reactive_pose"}
 _REACTIVE_KEYS = {
@@ -136,6 +163,16 @@ _REACTIVE_KEYS = {
     "velocity_enabled",
 }
 _LIMIT_KEYS = {"joint_velocity_rad_s", "position_lead_rad"}
+_CYLINDER_KEEPOUT_KEYS = {
+    "cylinder_keepout_enabled",
+    "cylinder_keepout_center_x_m",
+    "cylinder_keepout_center_y_m",
+    "cylinder_keepout_radius_m",
+    "cylinder_keepout_z_min_m",
+    "cylinder_keepout_z_max_m",
+    "cylinder_keepout_clearance_m",
+    "cylinder_waypoint_tolerance_m",
+}
 _TARGET_KEYS = {"reference_frame", "position_m", "rpy_rad"}
 _TRAJECTORY_REQUIRED_KEYS = {
     "reference_frame",
@@ -303,6 +340,64 @@ def _parse_reactive_pose(table):
         raise ValueError(
             "controller.reactive_pose Kd gains must be less than one "
             "when velocity feedback is enabled"
+        )
+    return config
+
+
+def _parse_cylinder_keepout(table):
+    """Mirror the C++ Options.cpp cylinder validation (lines 268-284).
+
+    The bounds are checked whether or not the keep-out is enabled, exactly as
+    the hardware controller does, so a disabled-but-wrong config still fails
+    loudly instead of waiting until someone flips ``enabled``.
+    """
+    location = "cylinder_keepout"
+    table = _require_table(table, location)
+    _require_exact_keys(table, _CYLINDER_KEEPOUT_KEYS, location)
+    config = CylinderKeepoutConfig(
+        cylinder_keepout_enabled=_boolean(
+            table["cylinder_keepout_enabled"],
+            f"{location}.cylinder_keepout_enabled",
+        ),
+        cylinder_keepout_center_x_m=_finite_number(
+            table["cylinder_keepout_center_x_m"],
+            f"{location}.cylinder_keepout_center_x_m",
+        ),
+        cylinder_keepout_center_y_m=_finite_number(
+            table["cylinder_keepout_center_y_m"],
+            f"{location}.cylinder_keepout_center_y_m",
+        ),
+        cylinder_keepout_radius_m=_finite_number(
+            table["cylinder_keepout_radius_m"],
+            f"{location}.cylinder_keepout_radius_m",
+            positive=True,
+        ),
+        cylinder_keepout_z_min_m=_finite_number(
+            table["cylinder_keepout_z_min_m"],
+            f"{location}.cylinder_keepout_z_min_m",
+        ),
+        cylinder_keepout_z_max_m=_finite_number(
+            table["cylinder_keepout_z_max_m"],
+            f"{location}.cylinder_keepout_z_max_m",
+        ),
+        cylinder_keepout_clearance_m=_finite_number(
+            table["cylinder_keepout_clearance_m"],
+            f"{location}.cylinder_keepout_clearance_m",
+            nonnegative=True,
+        ),
+        cylinder_waypoint_tolerance_m=_finite_number(
+            table["cylinder_waypoint_tolerance_m"],
+            f"{location}.cylinder_waypoint_tolerance_m",
+            positive=True,
+        ),
+    )
+    if (
+        config.cylinder_keepout_z_max_m
+        <= config.cylinder_keepout_z_min_m
+    ):
+        raise ValueError(
+            f"{location}.cylinder_keepout_z_max_m must be greater than "
+            "cylinder_keepout_z_min_m"
         )
     return config
 
@@ -695,6 +790,8 @@ def load_config(path=DEFAULT_CONFIG_PATH):
     limits = _require_table(parsed["limits"], "limits")
     _require_exact_keys(limits, _LIMIT_KEYS, "limits")
 
+    cylinder_keepout = _parse_cylinder_keepout(parsed["cylinder_keepout"])
+
     targets = _require_table(parsed["targets"], "targets")
     _require_exact_keys(targets, set(ARMS), "targets")
 
@@ -719,6 +816,7 @@ def load_config(path=DEFAULT_CONFIG_PATH):
                 positive=True,
             ),
         ),
+        cylinder_keepout=cylinder_keepout,
         right_target=_parse_target(targets["right"], "right"),
         left_target=_parse_target(targets["left"], "left"),
         simulation=_parse_simulation(parsed["simulation"]),
@@ -772,6 +870,7 @@ def effective_config_dict(config):
             "reactive_pose": asdict(config.reactive_pose),
         },
         "limits": asdict(config.limits),
+        "cylinder_keepout": asdict(config.cylinder_keepout),
         "targets": {
             "right": asdict(config.right_target),
             "left": asdict(config.left_target),
