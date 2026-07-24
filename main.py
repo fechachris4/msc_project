@@ -27,7 +27,7 @@ from plotting.live_cartesian_path import (
     LiveCartesianPathPublisher,
 )
 from runtime_config import CONFIG, print_effective_config
-from sim import motion, world
+from sim import cylinder_view, motion, world
 from sim.target_trajectory import (
     prepare_target_trajectory,
     print_target_trajectory_setup,
@@ -119,6 +119,8 @@ def main(argv=None):
         arms,
     )
     runner.start()
+    keepout = runner.cylinder_keepout
+    print(cylinder_view.describe(keepout, arms))
     path_publisher = None
     path_publication_enabled = False
     if show_trajectory:
@@ -141,6 +143,14 @@ def main(argv=None):
                 step_start = time.perf_counter()
                 cycle = runner.cycle()
                 desired_pos.show_targets(cycle.resolved_targets)
+                # Visualization only: user_scn geometry never contacts the
+                # arms. Rebuilt each frame so it tracks the moving arm bases.
+                viewer.user_scn.ngeom = 0
+                base_poses = cylinder_view.base_poses_world(
+                    cycle.input_state, world.MOUNT_CALIBRATION, arms)
+                cylinder_view.draw(
+                    viewer.user_scn, keepout, base_poses,
+                    cycle.cylinder_routes)
                 if path_publication_enabled:
                     try:
                         path_publisher.append(cycle)
@@ -166,6 +176,20 @@ def main(argv=None):
                             f"{e_mm[2]: 7.1f}]  "
                             f"sigma=[{' '.join(f'{s:.3f}' for s in sigma)}]"
                         )
+                    for side, status in cycle.cylinder_routes.items():
+                        print(
+                            f"        {side:5s} route={status.kind:17s} "
+                            f"waypoint {status.waypoint_index + 1}"
+                            f"/{status.waypoint_count}  "
+                            f"final={status.at_final_waypoint}  "
+                            f"target_adjusted={status.target_adjusted}"
+                        )
+                    diagnostic = cylinder_view.format_link_intersections(
+                        cylinder_view.link_intersections(
+                            world.model, world.data, keepout, base_poses)
+                    )
+                    if diagnostic is not None:
+                        print(f"        {diagnostic}")
                 step += 1
 
                 viewer.sync()
