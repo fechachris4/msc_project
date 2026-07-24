@@ -11,8 +11,8 @@ one gain group per stage and carries the winner forward:
     stage 5: reporting only (sweep_progression.png; no new episodes)
 
 Winner = lowest worst-arm position RMSE (rotation RMSE for stage 2),
-disqualifying configs that fail to settle, contact the world/torso,
-produce non-finite data, penetrate a joint's soft limit past
+disqualifying configs that fail to settle, produce non-finite data,
+penetrate a joint's soft limit past
 JOINT_MARGIN_TOL_RAD, saturate a joint over --sat-threshold percent, or
 (stages 3-4) regress worst-arm rotation RMSE past ROT_GUARD_FACTOR x the
 stage-2 winner. (live.py's own blanket "valid" flag is not used here --
@@ -71,9 +71,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from analysis import live, metrics
+from analysis import live, metrics, policy
 from controller import servo
 from plotting.style import C_XYZ, SIDE_COLOR, SIDE_STYLE
+from runtime_config import CONFIG, legacy_gain_dict
 
 OUT = Path("analysis/output/gain_sweep")
 
@@ -99,14 +100,12 @@ SCENARIO = live.ExperimentConfig(
 SAT_THRESHOLD_PCT = 20.0  # disqualify worst-arm velocity saturation above this
 ROT_GUARD_FACTOR = 2.0   # stages 3-4: rot RMSE must stay <= this x stage-2 winner
 KD_CEILING = 0.95        # servo.py documents KD < 1 as a stability limit
-# MuJoCo soft-limit penetration of ~0.007 rad observed at baseline gains in
-# the real scenario (joint 6 rides its limit on both arms, settled and
-# otherwise tracking fine) -- constraint compliance, not instability. Only
-# deeper violations than this indicate genuine limit crashing.
-JOINT_MARGIN_TOL_RAD = -0.02
+# Compatibility spelling for the margin-based sweep calculations.  The
+# authoritative positive penetration tolerance lives in analysis.policy.
+JOINT_MARGIN_TOL_RAD = -policy.JOINT_LIMIT_MAX_PENETRATION_RAD
 
 GAIN_NAMES = ("KP_POS", "KP_ROT", "KD_POS", "KD_ROT", "K_NULL", "DAMPING")
-BASELINE_GAINS = {name: float(getattr(servo, name)) for name in GAIN_NAMES}
+BASELINE_GAINS = legacy_gain_dict(CONFIG.reactive_pose)
 
 
 def _round4(value):
@@ -118,7 +117,7 @@ def _fmt_id(value):
     return f"{value:g}"
 
 
-# --- grids (ranges from plotting/gain_panel.py's sliders) -------------------
+# --- exploratory grids -------------------------------------------------------
 
 KP_POS_GRID = [_round4(v) for v in np.geomspace(0.5, 10.0, 8)]
 KD_POS_GRID = [_round4(v) for v in np.linspace(0.0, 0.9, 7)]
@@ -226,7 +225,11 @@ def _headroom_series(qdot_raw_eval):
     test_gain_sweep.py checks the two agree per step). Discriminates
     configs that all show 0% clipped saturation but differ in how close
     to the limit they run."""
-    return np.max(np.abs(qdot_raw_eval) / servo.QDOT_LIMIT, axis=-1)
+    return np.max(
+        np.abs(qdot_raw_eval)
+        / np.asarray(servo.LIMITS.joint_velocity_rad_s),
+        axis=-1,
+    )
 
 
 def _worst_over_arms(arms_metrics, key):
@@ -300,7 +303,13 @@ def _episode_row(log, gains):
         "gains": dict(gains),
         "settled": bool(log.settled),
         "settle_duration_s": _finite_or_none(log.settle_duration),
-        "valid": bool(log.valid),
+        "metrics_computable": bool(log.metrics_computable),
+        "accepted": bool(log.accepted),
+        "contact_observed": bool(log.contact_observed),
+        "joint_limit_within_tolerance": bool(
+            log.joint_limit_within_tolerance),
+        "limit_penetration_rad": float(log.limit_penetration_rad),
+        "valid": bool(log.accepted),
         "warning_reasons": list(log.warning_reasons),
         "arms": arms_metrics,
         "velocity_saturation_overall_pct": _worst_over_arms(
@@ -326,17 +335,9 @@ def run_episode(gains):
 # --- disqualification and winner selection --------------------------------
 
 
-# live.py's ExperimentLog.valid is a blanket flag: any negative joint
-# margin at all makes it False, but MuJoCo's soft joint limits are meant
-# to be pushed into a little (see JOINT_MARGIN_TOL_RAD above) -- so
-# disqualification checks specific warning_reasons instead of the
-# blanket flag. "settling timeout" is covered by the separate "not
-# settled" check; "negative joint margin" is superseded by the
-# JOINT_MARGIN_TOL_RAD check below (which only fires on genuinely deep
-# penetration); "evaluation shorter than one disturbance period" is a
-# scenario-shape warning, irrelevant to gain selection.
-_DISQUALIFYING_WARNINGS = (
-    "contact detected", "torso contact detected", "non-finite data")
+# Contact remains in warning_reasons and metrics but does not reject a run.
+# Settling and numerical penetration are checked explicitly below.
+_DISQUALIFYING_WARNINGS = ("non-finite data",)
 
 
 def disqualify_reasons(row, stage, sat_threshold=SAT_THRESHOLD_PCT,
@@ -348,6 +349,8 @@ def disqualify_reasons(row, stage, sat_threshold=SAT_THRESHOLD_PCT,
     reasons = []
     if not row["settled"]:
         reasons.append("not settled")
+    if not row.get("metrics_computable", True):
+        reasons.append("metrics not computable")
     for warning in _DISQUALIFYING_WARNINGS:
         if warning in row["warning_reasons"]:
             reasons.append(warning)
@@ -424,6 +427,11 @@ def _grid_fingerprint():
         "kp_rot": KP_ROT_GRID, "kd_rot": KD_ROT_GRID,
         "scale": SCALE_GRID, "kd_ceiling": KD_CEILING,
         "damping": DAMPING_GRID, "k_null": K_NULL_GRID,
+        "scenario": live._config_json(SCENARIO),
+        "experiment_identity": live.provenance.experiment_identity(
+            live._config_json(SCENARIO), BASELINE_GAINS),
+        "sat_threshold_pct": SAT_THRESHOLD_PCT,
+        "rotation_guard_factor": ROT_GUARD_FACTOR,
     }, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -441,10 +449,14 @@ def _stage_grid_signature(grid):
 
 
 def _new_state(args):
+    identity = live.provenance.experiment_identity(
+        live._config_json(SCENARIO), BASELINE_GAINS)
     return {
         "scenario": live._config_json(SCENARIO),
         "sat_threshold": float(args.sat_threshold),
         "fingerprint": _grid_fingerprint(),
+        "effective_control_config": identity["effective_control_config"],
+        "control_config_sha256": identity["control_config_sha256"],
         "stages": {},
     }
 

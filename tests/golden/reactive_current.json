@@ -1,0 +1,85 @@
+{
+  "applied_command_field": "ctrl_after",
+  "arms": [
+    "right",
+    "left"
+  ],
+  "baseline_revision": "d385173e150f438a80f1aac54871c47618b865a2",
+  "comparison": {
+    "absolute_tolerance": 1e-12,
+    "relative_tolerance": 1e-12
+  },
+  "controller": {
+    "components": {
+      "orientation_enabled": true,
+      "position_enabled": true,
+      "velocity_enabled": true
+    },
+    "gains": {
+      "dls_damping": 0.05,
+      "k_null_s_inv": 1.0,
+      "kd_pos": 0.3,
+      "kd_rot": 0.3,
+      "kp_pos_s_inv": 2.0,
+      "kp_rot_s_inv": 2.0
+    },
+    "joint_velocity_limit_rad_s": [
+      1.3892820845874863,
+      1.3892820845874863,
+      1.3892820845874863,
+      1.3892820845874863,
+      1.2199851471440364,
+      1.2199851471440364,
+      1.2199851471440364
+    ],
+    "position_lead_limit_rad": 0.2
+  },
+  "controller_output_field": "qdot_raw",
+  "csv": "reactive_current.csv",
+  "csv_sha256": "7e45db973b3df310177120305eb54da2480531c45e5f9e884e39c793a6921de5",
+  "cycles": 250,
+  "dt_s": 0.002,
+  "duration_s": 0.5,
+  "rows": 500,
+  "scenario": {
+    "base_linear_amplitude_m": [
+      0.18,
+      0.04,
+      0.05
+    ],
+    "base_linear_frequency_hz": 0.5,
+    "base_rotational_amplitude_rad": [
+      0.0,
+      0.0,
+      -0.2
+    ],
+    "base_rotational_frequency_hz": 0.5,
+    "target_linear_amplitude_m": {
+      "left": [
+        -0.009,
+        0.011,
+        -0.004
+      ],
+      "right": [
+        0.012,
+        -0.008,
+        0.005
+      ]
+    },
+    "target_linear_frequency_hz": 0.7,
+    "target_rotational_amplitude_rad": {
+      "left": [
+        -0.012,
+        0.007,
+        -0.009
+      ],
+      "right": [
+        0.015,
+        -0.01,
+        0.008
+      ]
+    },
+    "target_rotational_frequency_hz": 0.4
+  },
+  "trace_schema_version": 1
+}

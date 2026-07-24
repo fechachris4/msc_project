@@ -1,32 +1,28 @@
 """Desired end-effector poses — the reference the controller will track.
 
-POSES holds torso-frame initial placements per side: pos [x, y, z] in
-meters, rpy [roll, pitch, yaw] in radians (R = Rz(yaw) @ Ry(pitch) @ Rx(roll)).
+Target placements come from config/control.toml: pos [x, y, z] in metres,
+rpy [roll, pitch, yaw] in radians (R = Rz(yaw) @ Ry(pitch) @ Rx(roll)).
 
-apply() resolves them against the torso pose once and writes world-frame
-poses into the target mocap bodies. The targets stay fixed in the world
-afterwards — that is the task: world-frame pose hold while the base moves.
+apply() returns retained framed targets and initializes their world-frame mocap
+markers. The Runner resolves retained targets from the latest PlantState every
+cycle; controller math receives only world-frame quantities.
 """
 
 import mujoco
 import numpy as np
 
 from controller import frames
+from controller.state import (
+    DualArmFramedTargets,
+    DualArmWorldTargets,
+    FramedTarget,
+    Pose,
+    TargetFrame,
+    Twist,
+)
 from controller.transforms import rotation_from_rpy
+from runtime_config import CONFIG
 from sim import targets, world
-
-POSES = {
-    "right": {"pos": [0.45, -.20, 0.10], "rpy": [0.0, 1.6, 0.8]},
-    "left": {"pos": [0.45, 0.30, 0.10], "rpy": [0.0, 0.0, 0.0]},
-}
-
-
-def resolve_world(pos, rpy, torso_pose):
-    """World-frame (pos, rot) of a torso-frame reference."""
-    torso_pos, torso_rot = torso_pose
-    world_pos = torso_pos + torso_rot @ np.asarray(pos, dtype=float)
-    world_rot = torso_rot @ rotation_from_rpy(rpy)
-    return world_pos, world_rot
 
 
 def _quat_from_rotation(rot):
@@ -36,10 +32,32 @@ def _quat_from_rotation(rot):
     return quat
 
 
-def apply():
-    torso_pose = frames.torso_pose()
+def configured_targets(config=CONFIG):
+    values = {}
     for side in world.SIDES:
-        pose = POSES[side]
-        pos, rot = resolve_world(pose["pos"], pose["rpy"], torso_pose)
-        targets.set_target(side, pos)
-        targets.set_target_quat(side, _quat_from_rotation(rot))
+        target = config.target(side)
+        values[side] = FramedTarget(
+            TargetFrame(target.reference_frame),
+            Pose(target.position_m, rotation_from_rpy(target.rpy_rad)),
+            Twist.zero(),
+        )
+    return DualArmFramedTargets(values["right"], values["left"])
+
+
+def show_targets(world_targets):
+    if not isinstance(world_targets, DualArmWorldTargets):
+        raise TypeError("world_targets must be DualArmWorldTargets")
+    for side in world.SIDES:
+        resolved = world_targets.for_arm(side)
+        targets.set_target(side, resolved.pose_world.position_m)
+        targets.set_target_quat(
+            side, _quat_from_rotation(resolved.pose_world.rotation))
+
+
+def apply(config=CONFIG):
+    """Initialize target markers and return the retained framed targets."""
+    source_targets = configured_targets(config)
+    plant = world.read_state(Twist.zero())
+    show_targets(frames.resolve_targets_world(
+        plant, world.MOUNT_CALIBRATION, source_targets))
+    return source_targets

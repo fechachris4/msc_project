@@ -1,20 +1,62 @@
-"""Pose error in controller.servo.
+"""Reactive pose-controller and integrated-position pipeline checks.
 
-Pure math: zero at coincidence, known injected offsets recovered exactly.
-Wrapper integration: drive the real pipeline (target mocap -> servo wrappers
--> frames FK) at randomized arm configurations.
+Drives the real pipeline (target mocap -> explicit state -> pure controller)
+at randomized arm configurations: zero at coincidence, known injected
+offsets recovered exactly (e = reference - actual convention).
 """
 
 import unittest
+from dataclasses import replace
 
 import mujoco
 import numpy as np
 
-from controller.transforms import rotation_about_axis, rotation_from_rpy
+from controller import reactive_controller
+from controller.transforms import rotation_about_axis
+from tests.control_test_support import (
+    apply_cycle,
+    pose_error,
+    reconstruct_pipeline,
+)
 
 N_SAMPLES = 20
-PURE_TOL = 1e-12
 WRAP_TOL = 1e-9
+
+
+def _solve_qdot(
+    J,
+    e_pos,
+    e_rot,
+    e_v,
+    e_w,
+    q,
+    q_mid,
+    null_gain,
+    control,
+    damping=None,
+):
+    return reactive_controller.solve_reactive_velocity(
+        J,
+        e_pos,
+        e_rot,
+        e_v,
+        e_w,
+        q,
+        q_mid,
+        null_gain,
+        control,
+        damping=damping,
+    ).qdot_raw
+
+
+def _arm_state(side, base_twist=None):
+    from controller import frames
+    from controller.state import Twist
+    from sim import world
+
+    twist = Twist.zero() if base_twist is None else Twist(*base_twist)
+    return frames.arm_controller_state(
+        world.read_state(twist), side, world.MOUNT_CALIBRATION)
 
 
 def random_axis_angle(rng):
@@ -22,42 +64,6 @@ def random_axis_angle(rng):
     axis /= np.linalg.norm(axis)
     angle = rng.uniform(-0.95 * np.pi, 0.95 * np.pi)
     return axis, angle
-
-
-class PoseErrorPureTest(unittest.TestCase):
-    def test_zero_at_coincidence(self):
-        from controller import servo
-
-        rng = np.random.default_rng(7)
-        for _ in range(N_SAMPLES):
-            pos = rng.uniform(-1.0, 1.0, 3)
-            rot = rotation_from_rpy(rng.uniform(-np.pi, np.pi, 3))
-            np.testing.assert_allclose(
-                servo.position_error(pos, pos), np.zeros(3), atol=PURE_TOL
-            )
-            np.testing.assert_allclose(
-                servo.rotation_error(rot, rot), np.zeros(3), atol=PURE_TOL
-            )
-
-    def test_known_offset_recovered(self):
-        from controller import servo
-
-        rng = np.random.default_rng(8)
-        for _ in range(N_SAMPLES):
-            ee_pos = rng.uniform(-1.0, 1.0, 3)
-            ee_rot = rotation_from_rpy(rng.uniform(-np.pi, np.pi, 3))
-            delta_pos = rng.uniform(-0.5, 0.5, 3)
-            axis, angle = random_axis_angle(rng)
-
-            ref_pos = ee_pos + delta_pos
-            ref_rot = rotation_about_axis(axis, angle) @ ee_rot
-
-            np.testing.assert_allclose(
-                servo.position_error(ref_pos, ee_pos), delta_pos, atol=PURE_TOL
-            )
-            np.testing.assert_allclose(
-                servo.rotation_error(ref_rot, ee_rot), axis * angle, atol=PURE_TOL
-            )
 
 
 class PoseErrorWrapperTest(unittest.TestCase):
@@ -77,17 +83,20 @@ class PoseErrorWrapperTest(unittest.TestCase):
             )
 
     def _check_arm(self, rng, side):
-        from controller import frames, servo
+        from controller import reactive_controller
         from sim import targets
 
-        ee_pos, ee_rot = frames.ee_pose(side)
+        state = _arm_state(side)
+        ee_pos = state.ee_pose_world.position_m
+        ee_rot = state.ee_pose_world.rotation
 
         # Target at the FK pose -> zero error.
         quat = np.zeros(4)
         mujoco.mju_mat2Quat(quat, ee_rot.flatten())
         targets.set_target(side, ee_pos)
         targets.set_target_quat(side, quat)
-        e_pos, e_rot = servo.pose_error(side)
+        e_pos, e_rot = reactive_controller.pose_error(
+            state, targets.world_target(side))
         np.testing.assert_allclose(e_pos, np.zeros(3), atol=WRAP_TOL)
         np.testing.assert_allclose(e_rot, np.zeros(3), atol=WRAP_TOL)
 
@@ -99,7 +108,8 @@ class PoseErrorWrapperTest(unittest.TestCase):
         )
         targets.set_target(side, ee_pos + delta_pos)
         targets.set_target_quat(side, quat)
-        e_pos, e_rot = servo.pose_error(side)
+        e_pos, e_rot = reactive_controller.pose_error(
+            state, targets.world_target(side))
         np.testing.assert_allclose(e_pos, delta_pos, atol=WRAP_TOL)
         np.testing.assert_allclose(e_rot, axis * angle, atol=WRAP_TOL)
 
@@ -137,11 +147,17 @@ class QdotFromErrorTest(unittest.TestCase):
         rng = np.random.default_rng(10)
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
-            v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
-            qdot = servo.qdot_from_error(J, e_pos, e_rot, self._V0,
-                                         self._V0, self._Q0,
-                                         self._Q0, servo.K_NULL,
-                                         damping=1e-6)
+            v = np.concatenate([
+                servo.CONTROL.kp_position_s_inv * e_pos,
+                servo.CONTROL.kp_rotation_s_inv * e_rot,
+            ])
+            qdot = _solve_qdot(
+                J, e_pos, e_rot, self._V0, self._V0,
+                self._Q0, self._Q0,
+                servo.CONTROL.null_gain_s_inv,
+                servo.CONTROL,
+                damping=1e-6,
+            )
             np.testing.assert_allclose(J @ qdot, v, atol=1e-8)
 
     def test_matches_pinv_as_damping_vanishes(self):
@@ -150,11 +166,17 @@ class QdotFromErrorTest(unittest.TestCase):
         rng = np.random.default_rng(11)
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
-            v = np.concatenate([servo.KP_POS * e_pos, servo.KP_ROT * e_rot])
-            qdot = servo.qdot_from_error(J, e_pos, e_rot, self._V0,
-                                         self._V0, self._Q0,
-                                         self._Q0, servo.K_NULL,
-                                         damping=1e-9)
+            v = np.concatenate([
+                servo.CONTROL.kp_position_s_inv * e_pos,
+                servo.CONTROL.kp_rotation_s_inv * e_rot,
+            ])
+            qdot = _solve_qdot(
+                J, e_pos, e_rot, self._V0, self._V0,
+                self._Q0, self._Q0,
+                servo.CONTROL.null_gain_s_inv,
+                servo.CONTROL,
+                damping=1e-9,
+            )
             np.testing.assert_allclose(
                 qdot, np.linalg.pinv(J) @ v, atol=1e-6
             )
@@ -172,12 +194,12 @@ class QdotFromErrorTest(unittest.TestCase):
             q_mid = rng.uniform(-1.0, 1.0, 7)
 
             zero_v = np.zeros(3)
-            qdot_plain = servo.qdot_from_error(J, e_pos, e_rot, zero_v,
-                                               zero_v, q_mid, q_mid,
-                                               k_vec, damping=1e-6)
-            qdot_cent = servo.qdot_from_error(J, e_pos, e_rot, zero_v,
-                                              zero_v, q, q_mid,
-                                              k_vec, damping=1e-6)
+            qdot_plain = _solve_qdot(
+                J, e_pos, e_rot, zero_v, zero_v, q_mid, q_mid,
+                k_vec, servo.CONTROL, damping=1e-6)
+            qdot_cent = _solve_qdot(
+                J, e_pos, e_rot, zero_v, zero_v, q, q_mid,
+                k_vec, servo.CONTROL, damping=1e-6)
             null_part = qdot_cent - qdot_plain
 
             # (a) null motion produces no task velocity
@@ -188,28 +210,12 @@ class QdotFromErrorTest(unittest.TestCase):
             self.assertLess(float(drive @ null_part), 0.0)
 
 
-class VelocityErrorTest(unittest.TestCase):
-    def test_pure_convention(self):
-        """Zero at equality; injected offset recovered: e = ref - actual."""
-        from controller import servo
-
-        rng = np.random.default_rng(14)
-        for _ in range(N_SAMPLES):
-            vel = rng.uniform(-1.0, 1.0, 3)
-            np.testing.assert_array_equal(
-                servo.velocity_error(vel, vel), np.zeros(3)
-            )
-            delta = rng.uniform(-1.0, 1.0, 3)
-            np.testing.assert_allclose(
-                servo.velocity_error(vel + delta, vel), delta, atol=PURE_TOL
-            )
-
+class TwistErrorTest(unittest.TestCase):
     def test_twist_error_is_negated_ee_velocity(self):
         """Static targets => v_des = w_des = 0, so twist_error must equal
         the negated (already 3-leg-validated) frames.ee_velocity at any
         joint state, joint velocity, and base twist."""
-        from controller import frames, servo
-        from sim import world
+        from sim import targets, world
 
         def reset():
             mujoco.mj_resetData(world.model, world.data)
@@ -220,24 +226,26 @@ class VelocityErrorTest(unittest.TestCase):
         rng = np.random.default_rng(15)
         for _ in range(5):
             for side in world.SIDES:
-                world.data.qpos[frames.qpos_adrs[side]] = \
+                world.data.qpos[world.qpos_adrs[side]] = \
                     rng.uniform(-1.0, 1.0, 7)
-                world.data.qvel[frames.dof_adrs[side]] = \
+                world.data.qvel[world.dof_adrs[side]] = \
                     rng.uniform(-1.0, 1.0, 7)
             mujoco.mj_kinematics(world.model, world.data)
             base_twist = (rng.uniform(-0.5, 0.5, 3),
                           rng.uniform(-0.5, 0.5, 3))
 
             for side in world.SIDES:
-                e_v, e_w = servo.twist_error(side, base_twist)
-                v_ee, w_ee = frames.ee_velocity(side, base_twist)
+                state = _arm_state(side, base_twist)
+                e_v, e_w = reactive_controller.twist_error(
+                    state, targets.world_target(side))
+                v_ee = state.ee_twist_world.linear_m_s
+                w_ee = state.ee_twist_world.angular_rad_s
                 np.testing.assert_allclose(e_v, -v_ee, atol=1e-12)
                 np.testing.assert_allclose(e_w, -w_ee, atol=1e-12)
 
     def test_zero_at_rest(self):
         """Zero joint velocity + zero base twist -> both errors zero."""
-        from controller import servo
-        from sim import world
+        from sim import targets, world
 
         def reset():
             mujoco.mj_resetData(world.model, world.data)
@@ -249,7 +257,9 @@ class VelocityErrorTest(unittest.TestCase):
         mujoco.mj_forward(world.model, world.data)
         zero_twist = (np.zeros(3), np.zeros(3))
         for side in world.SIDES:
-            e_v, e_w = servo.twist_error(side, zero_twist)
+            state = _arm_state(side, zero_twist)
+            e_v, e_w = reactive_controller.twist_error(
+                state, targets.world_target(side))
             np.testing.assert_array_equal(e_v, np.zeros(3))
             np.testing.assert_array_equal(e_w, np.zeros(3))
 
@@ -273,15 +283,19 @@ class ArmSelectionTest(unittest.TestCase):
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
         desired_pos.apply()
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline()
 
         before = {side: world.data.ctrl[world.ctrl_adrs[side]].copy()
                   for side in world.SIDES}
-        servo.apply_ctrl(world.model.opt.timestep,
-                         (np.zeros(3), np.zeros(3)), arms=("right",))
+        apply_cycle(
+            pipeline,
+            world.model.opt.timestep,
+            (np.zeros(3), np.zeros(3)),
+            arms=("right",),
+        )
 
         np.testing.assert_array_equal(
             world.data.ctrl[world.ctrl_adrs["left"]], before["left"]
@@ -306,7 +320,7 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
     ROT_TOL = 0.05   # rad
 
     def test_converges_static_base(self):
-        from controller import frames, servo
+        from controller import servo
         from sim import targets, world
 
         def reset():
@@ -320,31 +334,33 @@ class ClosedLoopConvergenceTest(unittest.TestCase):
         home = np.array(HOME)
 
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = \
+            world.data.qpos[world.qpos_adrs[side]] = \
                 home + rng.uniform(-0.3, 0.3, 7)
             mujoco.mj_kinematics(world.model, world.data)
-            pos, rot = frames.ee_pose(side)
+            state = _arm_state(side)
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
 
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = home
+            world.data.qpos[world.qpos_adrs[side]] = home
         mujoco.mj_forward(world.model, world.data)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline()
 
-        e0 = {side: np.linalg.norm(servo.pose_error(side)[0])
+        e0 = {side: np.linalg.norm(pose_error(side)[0])
               for side in world.SIDES}
 
         dt = world.model.opt.timestep
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SIM_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            apply_cycle(pipeline, dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
 
         for side in world.SIDES:
-            e_pos, e_rot = servo.pose_error(side)
+            e_pos, e_rot = pose_error(side)
             e_norm = np.linalg.norm(e_pos)
             self.assertLess(e_norm, self.POS_TOL, side)
             self.assertLess(e_norm, e0[side] / 10.0, side)
@@ -361,7 +377,7 @@ class AntiWindupTest(unittest.TestCase):
     BLOCKED_SECONDS = 5.0
 
     def test_ctrl_lead_bounded_while_blocked(self):
-        from controller import frames, servo
+        from controller import servo
         from sim import targets, world
 
         def reset():
@@ -372,13 +388,15 @@ class AntiWindupTest(unittest.TestCase):
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline()
 
         # Unreachable-while-blocked target: 0.5 m above the current EE.
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = _arm_state(side)
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos + np.array([0.0, 0.0, 0.5]))
@@ -389,12 +407,13 @@ class AntiWindupTest(unittest.TestCase):
         dt = world.model.opt.timestep
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.BLOCKED_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            apply_cycle(pipeline, dt, zero_twist)
 
         for side in world.SIDES:
             lead = np.abs(world.data.ctrl[world.ctrl_adrs[side]]
-                          - world.data.qpos[frames.qpos_adrs[side]])
-            self.assertLessEqual(lead.max(), servo.CTRL_LEAD + 1e-12, side)
+                          - world.data.qpos[world.qpos_adrs[side]])
+            self.assertLessEqual(
+                lead.max(), servo.LIMITS.position_lead_rad + 1e-12, side)
 
 
 class GainInvariantsTest(unittest.TestCase):
@@ -408,8 +427,30 @@ class GainInvariantsTest(unittest.TestCase):
         rotation need position-level feedback."""
         from controller import servo
 
-        self.assertGreater(servo.KP_POS, 0.0)
-        self.assertGreater(servo.KP_ROT, 0.0)
+        self.assertGreater(servo.CONTROL.kp_position_s_inv, 0.0)
+        self.assertGreater(servo.CONTROL.kp_rotation_s_inv, 0.0)
+
+    def test_defaults_are_the_last_verified_baseline(self):
+        from controller import servo
+        from runtime_config import CONFIG
+
+        self.assertEqual(servo.CONTROL, CONFIG.reactive_pose)
+
+    def test_later_tuning_is_preserved_only_as_exploratory(self):
+        from controller.gain_sets import EXPLORATORY_CANDIDATES
+
+        self.assertEqual(
+            EXPLORATORY_CANDIDATES["committed_20_0.9"].as_overrides(),
+            {"KP_POS": 20.0, "KP_ROT": 20.0,
+             "KD_POS": 0.9, "KD_ROT": 0.9,
+             "K_NULL": 0.5, "DAMPING": 0.05},
+        )
+        self.assertEqual(
+            EXPLORATORY_CANDIDATES["working_tree_32_2"].as_overrides(),
+            {"KP_POS": 32.0, "KP_ROT": 32.0,
+             "KD_POS": 2.0, "KD_ROT": 2.0,
+             "K_NULL": 0.5, "DAMPING": 0.05},
+        )
 
     def test_kd_below_discrete_stability_boundary(self):
         """e_v feeds back measured qdot one step delayed — a discrete
@@ -418,21 +459,18 @@ class GainInvariantsTest(unittest.TestCase):
         0.3, and the composed-vs-FD velocity skew inflates ~8x)."""
         from controller import servo
 
-        for kd in (servo.KD_POS, servo.KD_ROT):
+        for kd in (
+            servo.CONTROL.kd_position,
+            servo.CONTROL.kd_rotation,
+        ):
             self.assertGreaterEqual(kd, 0.0)
             self.assertLess(kd, 1.0)
 
 
-class LiveGainsTest(unittest.TestCase):
-    """The gain panel writes into servo's module globals with no
-    restart -- prove the next control step actually reads the current
-    value, not a def-time snapshot (DAMPING) or a stale array (K_NULL,
-    via set_k_null)."""
+class ImmutableControllerConfigTest(unittest.TestCase):
+    """Different experiment gains use reconstructed immutable configs."""
 
     def test_damping_change_moves_qdot(self):
-        """Same qdot_from_error call apply_ctrl makes, damping=DAMPING
-        passed explicitly so it's read at call time, not baked into a
-        default at def time."""
         from controller import servo
 
         rng = np.random.default_rng(20)
@@ -443,46 +481,27 @@ class LiveGainsTest(unittest.TestCase):
         q = rng.uniform(-1.0, 1.0, 7)
         q_mid = np.zeros(7)
 
-        original = servo.DAMPING
-        self.addCleanup(setattr, servo, "DAMPING", original)
-
-        servo.DAMPING = 0.05
-        qdot_a = servo.qdot_from_error(J, e_pos, e_rot, zero_v, zero_v,
-                                       q, q_mid, servo.K_NULL,
-                                       damping=servo.DAMPING)
-        servo.DAMPING = 0.2
-        qdot_b = servo.qdot_from_error(J, e_pos, e_rot, zero_v, zero_v,
-                                       q, q_mid, servo.K_NULL,
-                                       damping=servo.DAMPING)
+        control_a = replace(servo.CONTROL, dls_damping=0.05)
+        qdot_a = _solve_qdot(
+            J, e_pos, e_rot, zero_v, zero_v, q, q_mid,
+            control_a.null_gain_s_inv, control_a)
+        control_b = replace(servo.CONTROL, dls_damping=0.2)
+        qdot_b = _solve_qdot(
+            J, e_pos, e_rot, zero_v, zero_v, q, q_mid,
+            control_b.null_gain_s_inv, control_b)
         self.assertFalse(np.allclose(qdot_a, qdot_b))
 
-    def test_set_k_null_rescales_and_preserves_zero_pattern(self):
+    def test_null_gain_vector_preserves_limited_joint_pattern(self):
         from controller import servo
         from sim import world
 
-        original_vec = {side: servo._K_NULL_VEC[side].copy()
-                        for side in world.SIDES}
-        original_k_null = servo.K_NULL
-        self.addCleanup(servo.set_k_null, original_k_null)
-
-        zero_mask = {side: (original_vec[side] == 0.0)
-                     for side in world.SIDES}
-
-        servo.set_k_null(3.0)
-        self.assertEqual(servo.K_NULL, 3.0)
+        control = replace(servo.CONTROL, null_gain_s_inv=3.0)
         for side in world.SIDES:
-            vec = servo._K_NULL_VEC[side]
-            np.testing.assert_array_equal(vec == 0.0, zero_mask[side])
-            np.testing.assert_allclose(vec[~zero_mask[side]], 3.0)
-
-        # Round-trip through 0 (the slider's minimum): the limited-joint
-        # pattern must survive, not collapse to all-zero permanently.
-        servo.set_k_null(0.0)
-        servo.set_k_null(1.5)
-        for side in world.SIDES:
-            vec = servo._K_NULL_VEC[side]
-            np.testing.assert_array_equal(vec == 0.0, zero_mask[side])
-            np.testing.assert_allclose(vec[~zero_mask[side]], 1.5)
+            mask = world.PIPELINE_SETUP.for_arm(side).centering.enabled
+            vec = mask * control.null_gain_s_inv
+            np.testing.assert_array_equal(
+                vec != 0.0, mask)
+            np.testing.assert_allclose(vec[mask], 3.0)
 
 
 if __name__ == "__main__":

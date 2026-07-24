@@ -17,7 +17,14 @@ import unittest
 import mujoco
 import numpy as np
 
+from controller.state import Twist
+
 from controller.transforms import rotation_from_quat, rotation_from_rpy
+from tests.control_test_support import (
+    apply_cycle,
+    pose_error,
+    reconstruct_pipeline,
+)
 
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
@@ -139,20 +146,29 @@ class TargetTrackingBandwidthTest(unittest.TestCase):
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
 
         # Feasible targets by construction: the arms' own FK poses at home.
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
         target_motion.init_home()
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline()
 
-        kp_eff = servo.KP_POS / (1.0 + servo.KD_POS)
+        kp_eff = (
+            servo.CONTROL.kp_position_s_inv
+            / (1.0 + servo.CONTROL.kd_position)
+        )
         frequency = self.BANDWIDTH_FRACTION * kp_eff / (2.0 * np.pi)
         w = 2.0 * np.pi * frequency
         predicted_ratio = w / np.sqrt(w**2 + kp_eff**2)
@@ -164,7 +180,7 @@ class TargetTrackingBandwidthTest(unittest.TestCase):
         dt = world.model.opt.timestep
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            apply_cycle(pipeline, dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
 
         t_start = world.data.time  # phase 0 at motion start: no teleport
@@ -176,9 +192,9 @@ class TargetTrackingBandwidthTest(unittest.TestCase):
                 t_rel, side, linear_amplitude=self.TEST_AMPLITUDE,
                 linear_frequency=frequency,
                 rotational_amplitude=np.zeros(3))
-            servo.apply_ctrl(dt, zero_twist)
+            apply_cycle(pipeline, dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
-            e_pos, _ = servo.pose_error(side)
+            e_pos, _ = pose_error(side)
             peak = max(peak, np.linalg.norm(e_pos))
 
         self.assertLess(peak, peak_tol,

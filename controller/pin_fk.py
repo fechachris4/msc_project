@@ -23,7 +23,12 @@ def build_pin_model(mjcf_path, base_body_name, ee_site_name):
     model = pin.buildModelFromMJCF(str(mjcf_path))
     # base_body_name must be the fixed root of this MJCF (pose = identity),
     # otherwise oMf below is not expressed in the base frame.
-    assert model.frames[model.getFrameId(base_body_name)].placement.isIdentity()
+    if not model.existFrame(base_body_name):
+        raise ValueError(f"base frame {base_body_name!r} not found in {mjcf_path}")
+    if not model.frames[model.getFrameId(
+            base_body_name)].placement.isIdentity():
+        raise ValueError(
+            f"base frame {base_body_name!r} is not fixed at identity")
     if not model.existFrame(ee_site_name):
         raise ValueError(
             f"MJCF site {ee_site_name!r} did not map to a Pinocchio frame "

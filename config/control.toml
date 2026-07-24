@@ -1,0 +1,64 @@
+[run]
+nominal_dt_s = 0.002
+arm = "both"
+
+[controller.reactive_pose]
+kp_position_s_inv = 2.0
+kp_rotation_s_inv = 2.0
+kd_position = 0.3
+kd_rotation = 0.3
+null_gain_s_inv = 1.0
+dls_damping = 0.05
+position_enabled = true
+orientation_enabled = true
+velocity_enabled = true
+
+[limits]
+joint_velocity_rad_s = [
+  1.3892820845874863,
+  1.3892820845874863,
+  1.3892820845874863,
+  1.3892820845874863,
+  1.2199851471440364,
+  1.2199851471440364,
+  1.2199851471440364,
+]
+position_lead_rad = 0.2
+
+[targets.right]
+reference_frame = "world"
+position_m = [0.45, -0.20, 1.20]
+rpy_rad = [0.0, 1.6, 0.8]
+
+[targets.left]
+reference_frame = "world"
+position_m = [0.45, 0.30, 1.20]
+rpy_rad = [0.0, 0.0, 0.0]
+
+[targets.left.trajectory]
+reference_frame = "world"
+start = "measured"
+loop = true
+open_live_path_plot = true
+
+[[targets.left.trajectory.segments]]
+type = "line"
+displacement_m = [0.40, 0.0, 0.0]
+duration_s = 10.0
+
+[[targets.left.trajectory.segments]]
+type = "line"
+displacement_m = [-0.40, 0.0, 0.0]
+duration_s = 10.0
+
+[simulation.initial_joint_position_rad]
+# Simulation initialization is separate from generic target semantics.
+left = [
+  0.22356,
+  0.73366,
+  -0.39854,
+  1.71674,
+  -0.53462,
+  0.91219,
+  0.62194,
+]

@@ -1,7 +1,9 @@
 import dataclasses
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import mujoco
 import numpy as np
@@ -63,9 +65,10 @@ class ResetAndRunTest(unittest.TestCase):
 
         _reset_simulation()
 
-    def test_complete_reset_restores_state_and_mutable_gains(self):
-        from analysis.live import _INITIAL_GAINS, _reset_simulation
+    def test_complete_reset_restores_plant_state(self):
+        from analysis.live import _reset_simulation
         from controller import frames, servo
+        from runtime_config import CONFIG
         from sim import world
 
         world.data.qpos[:] = 1.0
@@ -74,20 +77,17 @@ class ResetAndRunTest(unittest.TestCase):
         world.data.mocap_pos[:] = 4.0
         world.data.mocap_quat[:] = np.array([0.0, 1.0, 0.0, 0.0])
         world.data.time = 9.0
-        servo.KP_POS = 9.0
-        servo.set_k_null(4.0)
 
         _reset_simulation()
 
         np.testing.assert_array_equal(world.data.qpos, world.model.qpos0)
         np.testing.assert_array_equal(world.data.qvel, np.zeros(world.model.nv))
         self.assertEqual(world.data.time, 0.0)
-        self.assertEqual(servo.KP_POS, _INITIAL_GAINS["KP_POS"])
-        self.assertEqual(servo.K_NULL, _INITIAL_GAINS["K_NULL"])
+        self.assertIs(servo.CONTROL, CONFIG.reactive_pose)
         for side in world.SIDES:
             np.testing.assert_array_equal(
                 world.data.ctrl[world.ctrl_adrs[side]],
-                world.data.qpos[frames.qpos_adrs[side]],
+                world.data.qpos[world.qpos_adrs[side]],
             )
         self.assertTrue(np.all(np.isfinite(world.data.mocap_pos)))
         self.assertTrue(np.all(np.isfinite(world.data.mocap_quat)))
@@ -139,6 +139,35 @@ class ResetAndRunTest(unittest.TestCase):
                     first.arm_data[side][name], second.arm_data[side][name],
                     atol=1e-12, rtol=0.0)
 
+    def test_cartesian_target_and_measurement_share_controller_input_state(self):
+        from analysis.live import run_experiment
+        from runtime_config import CONFIG
+
+        log = run_experiment(_config())
+        for side in log.arms:
+            fields = log.arm_data[side]
+            desired = fields["target_position_world_m"]
+            measured = fields["ee_position_world_m"]
+            np.testing.assert_allclose(
+                desired - measured,
+                fields["e_pos"],
+                atol=1e-12,
+                rtol=0.0,
+            )
+            self.assertEqual(desired.shape, (len(log.sim_time), 3))
+            self.assertEqual(
+                fields["target_rotation_world"].shape,
+                (len(log.sim_time), 3, 3),
+            )
+            self.assertEqual(
+                fields["ee_rotation_world"].shape,
+                (len(log.sim_time), 3, 3),
+            )
+            self.assertEqual(
+                log.target_reference_frames[side],
+                CONFIG.target(side).reference_frame,
+            )
+
 
 class ContactAndPersistenceTest(unittest.TestCase):
     def test_pair_specific_torso_classification(self):
@@ -155,6 +184,7 @@ class ContactAndPersistenceTest(unittest.TestCase):
 
     def test_npz_json_round_trip(self):
         from analysis.live import load_run, run_experiment, save_run
+        from runtime_config import CONFIG
 
         config = _config(arms=("right",))
         log = run_experiment(config)
@@ -162,6 +192,21 @@ class ContactAndPersistenceTest(unittest.TestCase):
             run_dir = save_run(log, config, Path(tmp))
             self.assertTrue((run_dir / "run.npz").is_file())
             self.assertTrue((run_dir / "metadata.json").is_file())
+            self.assertTrue((run_dir / "manifest.json").is_file())
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(manifest["classification"], "exploratory")
+            self.assertIn("run.npz", manifest["artifacts"])
+            self.assertIn("controller_configuration", manifest)
+            self.assertIn("effective_control_config", manifest)
+            self.assertIn("control_config_sha256", manifest)
+            self.assertEqual(
+                manifest["effective_control_config"]["controller"][
+                    "reactive_pose"
+                ]["kd_position"],
+                CONFIG.reactive_pose.kd_position,
+            )
+            self.assertEqual(
+                manifest["control_config_sha256"], CONFIG.source_sha256)
             loaded = load_run(run_dir)
         for field in dataclasses.fields(log):
             expected = getattr(log, field.name)
@@ -198,6 +243,22 @@ class ContactAndPersistenceTest(unittest.TestCase):
         log = run_experiment(config)
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
             save_run(log, config._replace(evaluation_seconds=1.0), Path(tmp))
+
+    def test_canonical_save_rejects_dirty_worktree(self):
+        from analysis import provenance
+        from analysis.live import run_experiment, save_run
+
+        config = _config(arms=("right",))
+        log = run_experiment(config)
+        dirty = {
+            "revision": "abc", "branch": "main", "worktree_clean": False,
+            "worktree_status_sha256": "dirty",
+        }
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(provenance, "git_provenance",
+                                  return_value=dirty), \
+                self.assertRaisesRegex(RuntimeError, "clean Git worktree"):
+            save_run(log, config, Path(tmp), canonical=True)
 
     def test_update_callback_receives_exact_logged_sample_count(self):
         from analysis.live import ExperimentUpdate, run_experiment
@@ -238,23 +299,30 @@ class GainOverrideTest(unittest.TestCase):
         self.assertEqual(log.gain_snapshots[0]["KP_POS"], 5.0)
         self.assertEqual(log.gain_snapshots[0]["K_NULL"], 2.0)
 
-    def test_k_null_routed_through_set_k_null(self):
+    def test_override_is_run_local_and_does_not_mutate_startup_config(self):
         from analysis.live import run_experiment
         from controller import servo
+        from runtime_config import CONFIG
 
-        run_experiment(_config(arms=("right",)), gains={"K_NULL": 3.5})
-        self.assertTrue(np.all(
-            servo._K_NULL_VEC["right"][servo._K_NULL_MASK["right"]] == 3.5))
+        log = run_experiment(
+            _config(arms=("right",)), gains={"K_NULL": 3.5})
+        self.assertEqual(log.gain_snapshots[0]["K_NULL"], 3.5)
+        self.assertIs(servo.CONTROL, CONFIG.reactive_pose)
+        self.assertEqual(CONFIG.reactive_pose.null_gain_s_inv, 1.0)
 
-    def test_gains_restored_after_next_reset(self):
-        from analysis.live import _INITIAL_GAINS, run_experiment
+    def test_next_run_reconstructs_from_startup_config(self):
+        from analysis.live import run_experiment
         from controller import servo
+        from runtime_config import CONFIG
 
-        run_experiment(_config(), gains={"KP_POS": 9.0})
-        self.assertEqual(servo.KP_POS, 9.0)
-
-        run_experiment(_config())
-        self.assertEqual(servo.KP_POS, _INITIAL_GAINS["KP_POS"])
+        changed = run_experiment(_config(), gains={"KP_POS": 9.0})
+        default = run_experiment(_config())
+        self.assertEqual(changed.gain_snapshots[0]["KP_POS"], 9.0)
+        self.assertEqual(
+            default.gain_snapshots[0]["KP_POS"],
+            CONFIG.reactive_pose.kp_position_s_inv,
+        )
+        self.assertIs(servo.CONTROL, CONFIG.reactive_pose)
 
     def test_bogus_gain_name_raises(self):
         from analysis.live import run_experiment

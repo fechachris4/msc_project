@@ -1,6 +1,6 @@
 """Live 7-panel control-loop dashboard: per-axis tracking, orientation,
 saturation headroom, Jacobian conditioning, and joint/servo margins, for
-one or both arms, with the shared live gain panel for tuning.
+one or both arms.
 
     python -m analysis.dashboard right
     python -m analysis.dashboard left
@@ -8,11 +8,9 @@ one or both arms, with the shared live gain panel for tuning.
     python -m analysis.dashboard both --save 10   # headless, 10 sim-seconds
 
 Base motion follows the public research levers in sim.motion. Every
-per-tick quantity is
-recomputed from the same public functions apply_ctrl itself calls
-(servo.pose_error, servo.twist_error, servo.qdot_from_error,
-frames.jacobian_world) — the analysis/diagnose.py convention: the
-dashboard shows exactly what the controller saw, nothing re-derived.
+per-tick quantity comes from the explicit controller state and immutable
+ControlTrace produced by the real pipeline — the analysis/diagnose.py
+convention: the dashboard shows exactly what the controller saw.
 
 Panels (top to bottom), sharing the time axis:
   1-3. world x, y, z: signed per-axis error (mm, e = ref - actual) —
@@ -25,8 +23,8 @@ Panels (top to bottom), sharing the time axis:
      this repo (only printed in diagnose.py's summary).
   5. Saturation headroom: 100 * max_i|qdot_raw_i|/QDOT_LIMIT_i per side,
      pre-clip, red 100% line (the one physical-limit line on this figure).
-  6. sigma_min(J) per side, semilogy, grey lines at DAMPING=0.05 ("DLS
-     active"), 0.01, 0.001 (diagnose.py's SV_THRESHOLDS).
+  6. sigma_min(J) per side, semilogy, grey lines at the configured DLS
+     damping, 0.01, and 0.001.
   7. Margins (deg): min distance to jnt_range over the limited joints
      (solid) + max|ctrl-q| setpoint lead (dashed), per side; grey line at
      degrees(CTRL_LEAD) (a soft anti-windup bound, not hardware).
@@ -38,11 +36,6 @@ panel 7, where solid/dashed instead distinguishes margin from lead
 The figure title and legend are static (no-jump rule): the suptitle
 never rewrites itself mid-run, and y-axes only ever expand, never
 shrink, so the picture doesn't visually jump while you watch it live.
-
-Gain panel (live mode only): the shared plotting.gain_panel.GainPanel
-(KP_POS, KP_ROT, KD_POS, KD_ROT, K_NULL, DAMPING) opens alongside the
-dashboard. Every change flushes the ring buffers so a gain step doesn't
-leave stale pre-change data in the rolling window.
 
 A full-run log (every step, not just the rolling window) is kept
 alongside the ring buffers; on exit (window closed) or after --save
@@ -66,14 +59,18 @@ import mujoco
 import numpy as np
 
 from analysis import metrics
-from controller import desired_pos, frames, servo
-from plotting.gain_panel import GainPanel
+from controller import desired_pos, frames, reactive_controller, servo
+from controller.state import Twist
 from plotting.style import C_BASE, SIDE_COLOR, SIDE_STYLE
-from sim import motion, world
+from sim import motion, targets, world
 
 WINDOW_S = 15.0        # rolling window kept on screen, seconds
 REDRAW_EVERY = 25      # sim steps between redraws (LivePlot's convention)
-SV_THRESHOLDS = (0.05, 0.01, 0.001)  # diagnose.py's DLS-activity markers
+SV_THRESHOLDS = (
+    servo.CONTROL.dls_damping,
+    0.01,
+    0.001,
+)
 SETTLE_SECONDS = 2.0   # --save only; base_vs_error.py's SETTLE pattern
 AXIS_LABELS = ("x", "y", "z")
 
@@ -87,7 +84,9 @@ def headroom_frac(qdot_raw):
     """max_i |qdot_raw_i| / QDOT_LIMIT_i — the pre-clip demand as a
     fraction of each joint's speed limit (can exceed 1: qdot_raw is
     unclipped, this is what apply_ctrl is about to clip away)."""
-    return float(np.max(np.abs(qdot_raw) / servo.QDOT_LIMIT))
+    return float(np.max(
+        np.abs(qdot_raw) / np.asarray(servo.LIMITS.joint_velocity_rad_s)
+    ))
 
 
 def limit_margin_deg(q, q_low, q_high, limited):
@@ -106,7 +105,7 @@ def ctrl_lead_deg(ctrl, q):
 
 def sigma_min(J):
     """Smallest singular value of the Jacobian — DLS is materially active
-    once this falls near DAMPING (servo.qdot_from_error's lambda)."""
+    once this falls near the controller's DLS damping."""
     return float(np.linalg.svd(J, compute_uv=False).min())
 
 
@@ -114,17 +113,18 @@ def sigma_min(J):
 
 
 def run(arms, save_seconds=None):
-    """Run the dashboard. arms: subset of world.SIDES to drive (via
-    servo.apply_ctrl) and plot — an unselected arm holds posture and is
+    """Run the dashboard. arms: subset of world.SIDES to drive and plot
+    — an unselected arm holds posture and is
     not shown on the live panels (same selection semantics as main.py),
     though its pose_error is still logged for the final table. Both
     sides are always driven+plotted+logged when arms == world.SIDES
     (the default, "both"). save_seconds: if given, run headless for
     that many sim-seconds and save analysis/output/dashboard.png;
-    otherwise run live with the gain panel until the figure window is
-    closed."""
+    otherwise run live until the figure window is closed."""
     desired_pos.apply()
-    servo.init_ctrl()
+    pipeline = servo.ReactivePositionPipeline(
+        world.read_state(Twist.zero()), world.PIPELINE_SETUP)
+    world.apply_command(pipeline.command())
 
     dt = world.model.opt.timestep
 
@@ -136,7 +136,15 @@ def run(arms, save_seconds=None):
         # buffer ages the transient out on its own.
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            plant = world.read_state(Twist(*zero_twist))
+            command, _ = pipeline.step(
+                frames.controller_states(
+                    plant, world.MOUNT_CALIBRATION),
+                targets.world_targets(),
+                dt,
+                arms,
+            )
+            world.apply_command(command)
             mujoco.mj_step(world.model, world.data)
     t_start = world.data.time  # phase 0 at motion start: no teleport
 
@@ -214,29 +222,18 @@ def run(arms, save_seconds=None):
                   color="0.4", va="bottom")
     ax_sv.set_ylabel("σ_min(J)")
 
-    ax_marg.axhline(np.degrees(servo.CTRL_LEAD), color="0.6", linewidth=0.6)
+    ax_marg.axhline(
+        np.degrees(servo.LIMITS.position_lead_rad),
+        color="0.6",
+        linewidth=0.6,
+    )
     ax_marg.set_ylabel("margin [deg]")
     ax_marg.set_xlabel("sim time (s)")
 
     # Static suptitle (no-jump rule) — never rewritten mid-run.
     fig.suptitle("World-frame pose hold under base sway (e = ref − actual)")
 
-    panel = None  # keep the GainPanel reference alive for the run's duration
-    if save_seconds is None:
-        def _flush():
-            t_buf.clear()
-            base_disp_buf.clear()
-            for s in arms:
-                e_pos_buf[s].clear()
-                e_rot_buf[s].clear()
-                headroom_buf[s].clear()
-                sigma_buf[s].clear()
-                margin_buf[s].clear()
-                lead_buf[s].clear()
-        panel = GainPanel(on_change=_flush)
-        fig.tight_layout()
-    else:
-        fig.tight_layout()
+    fig.tight_layout()
 
     # Expand-only y-autoscale (no-jump rule): per-axes min/max only ever
     # grow. Same trade-off as plotting.live_plot.LivePlot: a boot
@@ -289,7 +286,7 @@ def run(arms, save_seconds=None):
         for ax in axes:
             _apply_expand_only_ylim(ax)
         if save_seconds is None:
-            plt.pause(0.001)  # also pumps the GainPanel's event loop
+            plt.pause(0.001)
 
     # --- main loop (mirrors analysis/diagnose.py's ordering) -------------
     step = 0
@@ -309,28 +306,28 @@ def run(arms, save_seconds=None):
         # must stay a matched pair — same scenario, same instant t.
         base_twist = motion.torso_twist_at(t)
 
-        base_pos, _ = frames.torso_pose()
+        plant = world.read_state(Twist(*base_twist))
+        states = frames.controller_states(
+            plant, world.MOUNT_CALIBRATION)
+        world_targets = targets.world_targets()
+        base_pos = plant.torso_pose_world.position_m
         base_disp = base_pos - motion.HOME_POS  # (3,) m, signed
 
-        # Pre-control state: exactly what apply_ctrl is about to use.
-        # damping=servo.DAMPING is passed explicitly (unlike diagnose.py,
-        # which pins its gains) so the DAMPING slider is reflected here
-        # too — qdot_from_error's own damping default binds at def time,
-        # same reason apply_ctrl now passes it explicitly (servo.py fix).
+        command, traces = pipeline.step(
+            states, world_targets, dt, arms)
+
+        # Pre-control state and pure controller output for this cycle.
         tick = {}
         for s in arms:
-            J = frames.jacobian_world(s)
-            e_pos, e_rot = servo.pose_error(s)
-            e_v, e_w = servo.twist_error(s, base_twist, J)
-            q = world.data.qpos[frames.qpos_adrs[s]].copy()
-            qdot_raw = servo.qdot_from_error(
-                J, e_pos, e_rot, e_v, e_w, q,
-                servo._Q_MID[s], servo._K_NULL_VEC[s],
-                damping=servo.DAMPING)
+            trace = traces[s]
+            J = trace.J
+            e_pos, e_rot = trace.e_pos, trace.e_rot
+            q = trace.q
+            qdot_raw = trace.qdot_raw
             tick[s] = dict(J=J, e_pos=e_pos, e_rot=e_rot, q=q,
                            qdot_raw=qdot_raw)
 
-        servo.apply_ctrl(dt, base_twist, arms)
+        world.apply_command(command)
 
         # Post-control: the setpoints the servos will now chase.
         for s in arms:
@@ -349,7 +346,8 @@ def run(arms, save_seconds=None):
             if side in tick:
                 e_pos_full = tick[side]["e_pos"]
             else:
-                e_pos_full, _ = servo.pose_error(side)
+                e_pos_full, _ = reactive_controller.pose_error(
+                    states.for_arm(side), world_targets.for_arm(side))
             full_log[f"{side}_e"].append(e_pos_full.copy())
 
         t_buf.append(t)
