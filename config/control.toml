@@ -36,17 +36,20 @@ position_m = [0.45, 0.30, 1.20]
 rpy_rad = [0.0, 0.0, 0.0]
 
 [targets.left.trajectory]
-# Current portable shape: read this arm's measured EE pose after
-# applying initial_joint_position_rad, then add displacement_m in
-# this trajectory's reference_frame. Future explicit waypoint lists can be
-# added as another named shape without changing the controller/runner boundary.
-shape = "measured_start_displacement"
 reference_frame = "world"
-displacement_m = [0.40, 0.0, 0.0]
-leg_duration_s = 10.0
-repeat_out_and_back = true
-orientation_policy = "hold_initial"
+start = "measured"
+loop = true
 open_live_path_plot = true
+
+[[targets.left.trajectory.segments]]
+type = "line"
+displacement_m = [0.40, 0.0, 0.0]
+duration_s = 10.0
+
+[[targets.left.trajectory.segments]]
+type = "line"
+displacement_m = [-0.40, 0.0, 0.0]
+duration_s = 10.0
 
 [simulation.initial_joint_position_rad]
 # Simulation initialization is separate from generic target semantics.
