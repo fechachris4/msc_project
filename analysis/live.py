@@ -1,20 +1,23 @@
 """Reproducible settling and evaluation runs for controller diagnostics."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import csv
-import hashlib
-import importlib.metadata
 import json
 from pathlib import Path
-import subprocess
 from typing import NamedTuple
 
 import mujoco
 import numpy as np
 
-from analysis import metrics
-from controller import desired_pos, frames, servo
+from analysis import metrics, policy, provenance
+from controller import desired_pos, frames, reactive_controller, servo
+from controller.runner import ReactivePositionRunner
+from runtime_config import (
+    CONFIG,
+    control_with_legacy_overrides,
+    legacy_gain_dict,
+)
 from sim import motion, world
 
 
@@ -41,7 +44,7 @@ class ExperimentUpdate:
     base_displacement: np.ndarray
     base_linear_velocity: np.ndarray
     base_angular_velocity: np.ndarray
-    traces: dict[str, servo.ControlTrace]
+    traces: servo.DualArmControlTraces
     joint_margin: dict[str, np.ndarray]
     contact_count: int
     torso_contact: dict[str, bool]
@@ -66,48 +69,43 @@ class ExperimentLog:
     gain_snapshots: tuple[dict[str, float], ...]
     settled: bool
     settle_duration: float
-    valid: bool
+    metrics_computable: bool
+    accepted: bool
+    contact_observed: bool
+    joint_limit_within_tolerance: bool
+    limit_penetration_rad: float
     warning_reasons: tuple[str, ...]
+    target_reference_frames: dict[str, str] = field(default_factory=dict)
 
     @property
     def evaluation_mask(self):
         return self.phase == "evaluation"
 
+    @property
+    def valid(self):
+        """Compatibility alias. New code must use ``accepted`` explicitly."""
+        return self.accepted
 
-_GAIN_NAMES = ("KP_POS", "KP_ROT", "KD_POS", "KD_ROT", "K_NULL", "DAMPING")
-_INITIAL_GAINS = {name: float(getattr(servo, name)) for name in _GAIN_NAMES}
+
 _TRACE_FIELDS = tuple(servo.ControlTrace.__dataclass_fields__)
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _gain_snapshot():
-    return {name: float(getattr(servo, name)) for name in _GAIN_NAMES}
-
-
-def _restore_initial_gains():
-    for name, value in _INITIAL_GAINS.items():
-        if name == "K_NULL":
-            servo.set_k_null(value)
-        else:
-            setattr(servo, name, value)
-
-
-def _apply_gain_overrides(gains):
-    """Override servo module gains for one run. K_NULL is routed through
-    servo.set_k_null() (required -- it rescales _K_NULL_VEC; a plain
-    setattr would silently not apply); the rest are plain setattr, same
-    as _restore_initial_gains above."""
-    for name, value in gains.items():
-        if name not in _GAIN_NAMES:
-            raise ValueError(f"unknown gain override: {name!r}")
-        value = float(value)
-        if not np.isfinite(value) or value < 0.0:
-            raise ValueError(
-                f"gain override {name} must be finite and non-negative")
-        if name == "K_NULL":
-            servo.set_k_null(value)
-        else:
-            setattr(servo, name, value)
+_CARTESIAN_TRACE_FIELDS = (
+    "target_position_world_m",
+    "target_rotation_world",
+    "target_linear_velocity_world_m_s",
+    "target_angular_velocity_world_rad_s",
+    "ee_position_world_m",
+    "ee_rotation_world",
+    "ee_linear_velocity_world_m_s",
+    "ee_angular_velocity_world_rad_s",
+)
+_EXECUTION_CONTRACT = {
+    "runner": "ReactivePositionRunner",
+    "controller_pipeline": "ReactivePositionPipeline",
+    "backend": "MujocoBackend",
+    "cycle_operation": "exchange",
+    "timing_source": "MuJoCo data.time",
+    "command": "dual-arm joint position, rad",
+}
 
 
 def _validate_config(config):
@@ -133,12 +131,39 @@ def _validate_config(config):
 
 
 def _reset_simulation():
-    _restore_initial_gains()
-    mujoco.mj_resetData(world.model, world.data)
-    mujoco.mj_forward(world.model, world.data)
-    desired_pos.apply()
-    servo.init_ctrl()
-    mujoco.mj_forward(world.model, world.data)
+    world.backend.release()
+    world.backend.configure_torso_driver(None, None)
+    world.backend.reset()
+    return desired_pos.apply()
+
+
+class _ExperimentTorsoDriver:
+    """Explicit scenario phase; MuJoCo still owns all writes and stepping."""
+
+    def __init__(self, scenario):
+        self._scenario = scenario
+        self._evaluation_start_s = None
+
+    def start_evaluation(self, sample_time_s):
+        if self._evaluation_start_s is not None:
+            raise RuntimeError("evaluation has already started")
+        self._evaluation_start_s = float(sample_time_s)
+
+    def pose_at(self, sample_time_s):
+        if self._evaluation_start_s is None:
+            return motion.HOME_POS.copy(), motion.HOME_RPY.copy()
+        return motion.torso_pose_at(
+            sample_time_s - self._evaluation_start_s,
+            **self._scenario,
+        )
+
+    def twist_at(self, sample_time_s):
+        if self._evaluation_start_s is None:
+            return np.zeros(3), np.zeros(3)
+        return motion.torso_twist_at(
+            sample_time_s - self._evaluation_start_s,
+            **self._scenario,
+        )
 
 
 def _joint_margin(side, q):
@@ -178,7 +203,7 @@ def _torso_contact_from_pairs(pairs, arms):
 
 
 class _LogBuilder:
-    def __init__(self, arms):
+    def __init__(self, arms, control):
         self.arms = arms
         self.sim_time = []
         self.contact_time = []
@@ -189,25 +214,62 @@ class _LogBuilder:
         self.base_linear_velocity = []
         self.base_angular_velocity = []
         self.arm_data = {
-            side: {name: [] for name in (*_TRACE_FIELDS, "joint_margin")}
+            side: {
+                name: []
+                for name in (
+                    *_TRACE_FIELDS,
+                    *_CARTESIAN_TRACE_FIELDS,
+                    "joint_margin",
+                )
+            }
             for side in arms
         }
+        self.target_reference_frames = {side: None for side in arms}
         self.contact_count = []
         self.torso_contact = {side: [] for side in arms}
         self.contact_pairs = []
-        self.gain_snapshots = [_gain_snapshot()]
+        self.gain_snapshots = [legacy_gain_dict(control)]
 
     def append(self, phase, sim_time, contact_time, eval_time, base_disp,
-               base_v, base_w, traces, pairs, on_update):
-        snapshot = _gain_snapshot()
-        if snapshot != self.gain_snapshots[-1]:
-            self.gain_snapshots.append(snapshot)
-        segment = len(self.gain_snapshots) - 1
+               base_v, base_w, cycle, pairs, on_update):
+        traces = cycle.traces
+        segment = 0
         margins = {}
         for side in self.arms:
             trace = traces[side]
             for name in _TRACE_FIELDS:
                 self.arm_data[side][name].append(np.asarray(getattr(trace, name)))
+            sampled = cycle.sampled_targets.for_arm(side)
+            frame = sampled.reference_frame.value
+            previous_frame = self.target_reference_frames[side]
+            if previous_frame is not None and previous_frame != frame:
+                raise ValueError(
+                    f"{side} target source changed frame from "
+                    f"{previous_frame!r} to {frame!r} within one run"
+                )
+            self.target_reference_frames[side] = frame
+            target = cycle.resolved_targets.for_arm(side)
+            state = cycle.controller_states.for_arm(side)
+            cartesian = {
+                "target_position_world_m": target.pose_world.position_m,
+                "target_rotation_world": target.pose_world.rotation,
+                "target_linear_velocity_world_m_s": (
+                    target.twist_world.linear_m_s
+                ),
+                "target_angular_velocity_world_rad_s": (
+                    target.twist_world.angular_rad_s
+                ),
+                "ee_position_world_m": state.ee_pose_world.position_m,
+                "ee_rotation_world": state.ee_pose_world.rotation,
+                "ee_linear_velocity_world_m_s": (
+                    state.ee_twist_world.linear_m_s
+                ),
+                "ee_angular_velocity_world_rad_s": (
+                    state.ee_twist_world.angular_rad_s
+                ),
+            }
+            for name, value in cartesian.items():
+                self.arm_data[side][name].append(np.asarray(value))
             margins[side] = _joint_margin(side, trace.q)
             self.arm_data[side]["joint_margin"].append(margins[side])
         torso = _torso_contact_from_pairs(pairs, self.arms)
@@ -259,7 +321,7 @@ class _LogBuilder:
             side: np.asarray(values, dtype=bool)
             for side, values in self.torso_contact.items()
         }
-        reasons = _validity_reasons(
+        status = policy.assess_run(
             config, arrays, arm_data, torso_contact, settled)
         return ExperimentLog(
             arms=self.arms,
@@ -270,71 +332,61 @@ class _LogBuilder:
             gain_snapshots=tuple(self.gain_snapshots),
             settled=settled,
             settle_duration=float(settle_duration),
-            valid=not reasons,
-            warning_reasons=tuple(reasons),
+            metrics_computable=status.metrics_computable,
+            accepted=status.accepted,
+            contact_observed=status.contact_observed,
+            joint_limit_within_tolerance=(
+                status.joint_limit_within_tolerance),
+            limit_penetration_rad=status.limit_penetration_rad,
+            warning_reasons=status.warning_reasons,
+            target_reference_frames={
+                side: frame for side, frame
+                in self.target_reference_frames.items()
+                if frame is not None
+            },
             **arrays,
         )
 
 
-def _validity_reasons(config, arrays, arm_data, torso_contact, settled):
-    reasons = []
-    if not settled:
-        reasons.append("settling timeout")
-    if np.any(arrays["contact_count"] > 0):
-        reasons.append("contact detected")
-    if any(np.any(values) for values in torso_contact.values()):
-        reasons.append("torso contact detected")
-    if any(np.any(fields["joint_margin"] < 0.0) for fields in arm_data.values()):
-        reasons.append("negative joint margin")
-    numeric = [arrays["sim_time"], arrays["contact_time"],
-               arrays["eval_time"], arrays["base_displacement"],
-               arrays["base_linear_velocity"],
-               arrays["base_angular_velocity"]]
-    for fields in arm_data.values():
-        numeric.extend(value for name, value in fields.items()
-                       if name != "joint_margin")
-        margins = fields["joint_margin"]
-        numeric.append(margins[np.isfinite(margins)])
-    if any(not np.all(np.isfinite(value)) for value in numeric):
-        reasons.append("non-finite data")
-    periods = []
-    if np.any(config.linear_amplitude) and config.linear_frequency > 0.0:
-        periods.append(1.0 / config.linear_frequency)
-    if np.any(config.rotational_amplitude) and config.rotational_frequency > 0.0:
-        periods.append(1.0 / config.rotational_frequency)
-    if periods and config.evaluation_seconds < max(periods):
-        reasons.append("evaluation shorter than one disturbance period")
-    return reasons
-
-
-def _advance(builder, phase, eval_time, scenario, on_update):
-    sim_time = float(world.data.time)
-    if phase == "evaluation":
-        motion.set_torso_pose(eval_time, **scenario)
-        mujoco.mj_kinematics(world.model, world.data)
-        base_v, base_w = motion.torso_twist_at(eval_time, **scenario)
-        base_pos, _ = motion.torso_pose_at(eval_time, **scenario)
-        base_disp = base_pos - motion.HOME_POS
-    else:
-        base_v = np.zeros(3)
-        base_w = np.zeros(3)
-        base_disp = np.zeros(3)
-    traces = servo.apply_ctrl(
-        world.model.opt.timestep, (base_v, base_w), builder.arms)
-    mujoco.mj_step(world.model, world.data)
+def _advance(builder, runner, phase, eval_time, on_update):
+    cycle = runner.cycle()
+    plant = cycle.input_state
+    sim_time = plant.sample_time_s
+    base_v = plant.torso_twist_world.linear_m_s
+    base_w = plant.torso_twist_world.angular_rad_s
+    base_disp = (
+        plant.torso_pose_world.position_m - motion.HOME_POS
+        if phase == "evaluation"
+        else np.zeros(3)
+    )
     contact_time = sim_time
     pairs = _contact_pairs()
     builder.append(phase, sim_time, contact_time, eval_time, base_disp,
-                   base_v, base_w, traces, pairs, on_update)
-    return traces
+                   base_v, base_w, cycle, pairs, on_update)
+    return cycle
+
+
+def _current_pose_within(runner, source_targets, config):
+    plant = runner.current_state
+    resolved = frames.resolve_targets_world(
+        plant, world.MOUNT_CALIBRATION, source_targets)
+    states = frames.controller_states(
+        plant, world.MOUNT_CALIBRATION)
+    for side in config.arms:
+        e_pos, e_rot = reactive_controller.pose_error(
+            states.for_arm(side), resolved.for_arm(side))
+        if (
+            np.linalg.norm(e_pos) > config.settle_pos_tol
+            or np.linalg.norm(e_rot) > config.settle_rot_tol
+        ):
+            return False
+    return True
 
 
 def run_experiment(config, on_update=None, gains=None):
-    """Run one settle+evaluation experiment. gains, if given, overrides
-    servo module gains (see _apply_gain_overrides) after _reset_simulation
-    restores the initial gains and before the log builder takes its first
-    gain snapshot, so the override self-documents in the saved run's
-    metadata rather than looking like a mid-run gain change. Not an
+    """Run one settle+evaluation experiment. gains, if given, reconstructs
+    an immutable controller configuration for this run before the log builder
+    takes its first gain snapshot. Not an
     ExperimentConfig field: the config's exact fields are contract-tested
     (tests/test_live.py) and serialized whole in every run's
     metadata.json; gains are already persisted via gain snapshots."""
@@ -344,60 +396,85 @@ def run_experiment(config, on_update=None, gains=None):
         rotational_amplitude=np.asarray(
             config.rotational_amplitude, dtype=float).copy(),
     )
-    _reset_simulation()
-    if gains is not None:
-        _apply_gain_overrides(gains)
-    builder = _LogBuilder(tuple(config.arms))
-    dt = float(world.model.opt.timestep)
-    settled = False
-    dwell_start = None
-    settle_start = float(world.data.time)
-    while world.data.time - settle_start < config.settle_timeout:
-        traces = _advance(builder, "settling", -1.0, {}, on_update)
-        within = all(
-            np.linalg.norm(trace.e_pos) <= config.settle_pos_tol
-            and np.linalg.norm(trace.e_rot) <= config.settle_rot_tol
-            for trace in traces.values()
-        )
-        if within:
-            if dwell_start is None:
-                dwell_start = float(world.data.time)
-            if world.data.time - dwell_start >= config.settle_dwell:
-                settled = True
-                break
-        else:
-            dwell_start = None
-    settle_duration = float(world.data.time - settle_start)
     scenario = {
         "linear_amplitude": config.linear_amplitude,
         "linear_frequency": config.linear_frequency,
         "rotational_amplitude": config.rotational_amplitude,
         "rotational_frequency": config.rotational_frequency,
     }
-    evaluation_steps = max(1, int(np.ceil(config.evaluation_seconds / dt)))
-    for step in range(evaluation_steps):
-        _advance(builder, "evaluation", step * dt, scenario, on_update)
-    return builder.build(config, settled, settle_duration)
+    control = control_with_legacy_overrides(CONFIG.reactive_pose, gains)
+    source_targets = _reset_simulation()
+    driver = _ExperimentTorsoDriver(scenario)
+    world.backend.configure_torso_driver(driver.pose_at, driver.twist_at)
+    runner = ReactivePositionRunner(
+        world.backend,
+        world.MOUNT_CALIBRATION,
+        world.PIPELINE_SETUP,
+        source_targets,
+        config.arms,
+        control,
+    )
+    runner.start()
+    try:
+        builder = _LogBuilder(tuple(config.arms), control)
+        dt = runner.current_state.nominal_dt_s
+        settled = False
+        dwell_start = None
+        settle_start = runner.current_state.sample_time_s
+        while (
+            runner.current_state.sample_time_s - settle_start
+            < config.settle_timeout
+        ):
+            within = _current_pose_within(
+                runner, source_targets, config)
+            next_time = (
+                runner.current_state.sample_time_s + dt)
+            if within:
+                next_dwell_start = (
+                    next_time if dwell_start is None else dwell_start)
+                will_settle = (
+                    next_time - next_dwell_start
+                    >= config.settle_dwell
+                )
+            else:
+                next_dwell_start = None
+                will_settle = False
+            will_timeout = (
+                next_time - settle_start >= config.settle_timeout)
+            if will_settle or will_timeout:
+                driver.start_evaluation(next_time)
+
+            _advance(
+                builder, runner, "settling", -1.0, on_update)
+            dwell_start = next_dwell_start
+            if will_settle:
+                settled = True
+                break
+
+        settle_duration = (
+            runner.current_state.sample_time_s - settle_start)
+        evaluation_steps = max(
+            1, int(np.ceil(config.evaluation_seconds / dt)))
+        for step in range(evaluation_steps):
+            _advance(
+                builder,
+                runner,
+                "evaluation",
+                step * dt,
+                on_update,
+            )
+        return builder.build(config, settled, settle_duration)
+    finally:
+        runner.close()
+        world.backend.configure_torso_driver(None, None)
 
 
 def _git_revision():
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=_PROJECT_ROOT,
-            check=True, capture_output=True, text=True).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
+    return provenance.git_provenance()["revision"]
 
 
 def _asset_hash():
-    digest = hashlib.sha256()
-    paths = [_PROJECT_ROOT / "sim" / "scene.xml"]
-    paths.extend(sorted((_PROJECT_ROOT / "sim" / "assets").rglob("*")))
-    for path in paths:
-        if path.is_file():
-            digest.update(path.relative_to(_PROJECT_ROOT).as_posix().encode())
-            digest.update(path.read_bytes())
-    return digest.hexdigest()
+    return provenance._scene_asset_sha256()
 
 
 def _config_json(config):
@@ -440,13 +517,11 @@ def _configs_equal(left, right):
     )
 
 
-def _metadata(log, revision):
-    versions = {}
-    for package in ("numpy", "matplotlib", "mujoco", "pin"):
-        try:
-            versions[package] = importlib.metadata.version(package)
-        except importlib.metadata.PackageNotFoundError:
-            versions[package] = "unknown"
+def _metadata(log, revision, identity=None, git=None):
+    identity = (provenance.experiment_identity(
+        _config_json(log.config), log.gain_snapshots[0])
+        if identity is None else identity)
+    git = provenance.git_provenance() if git is None else git
     return {
         "configuration": _config_json(log.config),
         "gains": log.gain_snapshots[0],
@@ -460,16 +535,35 @@ def _metadata(log, revision):
         "settled": log.settled,
         "settle_duration": log.settle_duration,
         "evaluation_mask": log.evaluation_mask.tolist(),
-        "valid": log.valid,
+        "metrics_computable": log.metrics_computable,
+        "accepted": log.accepted,
+        "contact_observed": log.contact_observed,
+        "joint_limit_within_tolerance": log.joint_limit_within_tolerance,
+        "limit_penetration_rad": log.limit_penetration_rad,
+        "valid": log.accepted,
         "warning_reasons": list(log.warning_reasons),
-        "dependency_versions": versions,
+        "acceptance_policy_version": policy.ACCEPTANCE_POLICY_VERSION,
+        "evidence_schema_version": policy.EVIDENCE_SCHEMA_VERSION,
+        "joint_limit_max_penetration_rad": (
+            policy.JOINT_LIMIT_MAX_PENETRATION_RAD),
+        "dependency_versions": identity["environment"]["dependencies"],
+        "environment": identity["environment"],
         "git_revision": revision,
+        "git": git,
+        "source_sha256": identity["source_sha256"],
+        "analysis_sha256": identity["analysis_sha256"],
+        "experiment_identity_sha256": identity["identity_sha256"],
         "scene_asset_sha256": _asset_hash(),
+        "controller_configuration": identity["controller"],
+        "execution": dict(_EXECUTION_CONTRACT),
+        "effective_control_config": identity["effective_control_config"],
+        "control_config_sha256": identity["control_config_sha256"],
         "arms": list(log.arms),
+        "target_reference_frames": dict(log.target_reference_frames),
     }
 
 
-def save_run(log, config, output_root):
+def save_run(log, config, output_root, *, canonical=False, final_outputs=()):
     output_root = Path(output_root)
     _validate_config(config)
     normalized_config = config._replace(
@@ -478,9 +572,15 @@ def save_run(log, config, output_root):
     )
     if not _configs_equal(log.config, normalized_config):
         raise ValueError("config does not match the configuration used for log")
+    git = provenance.git_provenance()
+    environment = provenance.environment_snapshot()
+    if canonical:
+        provenance.require_canonical_preconditions(log, git, environment)
     run_metrics = metrics.experiment_metrics(log)
     flat_metrics = metrics.flatten_metrics(run_metrics)
-    revision = _git_revision()
+    revision = git["revision"]
+    identity = provenance.experiment_identity(
+        _config_json(log.config), log.gain_snapshots[0])
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     run_dir = output_root / f"{stamp}-{revision[:7]}"
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -503,13 +603,40 @@ def save_run(log, config, output_root):
             arrays[f"arm__{side}__{name}"] = value
     np.savez_compressed(run_dir / "run.npz", **arrays)
     (run_dir / "metadata.json").write_text(
-        json.dumps(_metadata(log, revision), indent=2) + "\n")
+        json.dumps(_metadata(log, revision, identity, git), indent=2) + "\n")
     (run_dir / "metrics.json").write_text(
         json.dumps(run_metrics, indent=2, allow_nan=False) + "\n")
     with (run_dir / "metrics.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=flat_metrics)
         writer.writeheader()
         writer.writerow(flat_metrics)
+    artifact_digests, output_digests = provenance.artifact_hashes(
+        run_dir, final_outputs)
+    manifest = {
+        "evidence_schema_version": policy.EVIDENCE_SCHEMA_VERSION,
+        "classification": "canonical" if canonical else "exploratory",
+        "accepted": log.accepted,
+        "experiment_identity_sha256": identity["identity_sha256"],
+        "source_sha256": identity["source_sha256"],
+        "analysis_sha256": identity["analysis_sha256"],
+        "scene_asset_sha256": identity["scene_asset_sha256"],
+        "git": git,
+        "environment": environment,
+        "configuration": _config_json(log.config),
+        "controller_configuration": identity["controller"],
+        "execution": dict(_EXECUTION_CONTRACT),
+        "effective_control_config": identity["effective_control_config"],
+        "control_config_sha256": identity["control_config_sha256"],
+        "policy": {
+            "acceptance_policy_version": policy.ACCEPTANCE_POLICY_VERSION,
+            "joint_limit_max_penetration_rad": (
+                policy.JOINT_LIMIT_MAX_PENETRATION_RAD),
+        },
+        "artifacts": artifact_digests,
+        "final_outputs": output_digests,
+    }
+    (run_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, allow_nan=False) + "\n")
     return run_dir
 
 
@@ -550,6 +677,16 @@ def load_run(run_dir):
                                  for values in metadata["gain_segments"]),
             settled=bool(metadata["settled"]),
             settle_duration=float(metadata["settle_duration"]),
-            valid=bool(metadata["valid"]),
+            metrics_computable=bool(metadata.get(
+                "metrics_computable", metadata["valid"])),
+            accepted=bool(metadata.get("accepted", metadata["valid"])),
+            contact_observed=bool(metadata.get("contact_observed", False)),
+            joint_limit_within_tolerance=bool(metadata.get(
+                "joint_limit_within_tolerance", metadata["valid"])),
+            limit_penetration_rad=float(metadata.get(
+                "limit_penetration_rad", 0.0)),
             warning_reasons=tuple(metadata["warning_reasons"]),
+            target_reference_frames=dict(
+                metadata.get("target_reference_frames", {})
+            ),
         )

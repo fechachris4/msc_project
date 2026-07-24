@@ -129,15 +129,14 @@ class DisqualifyReasonsTest(unittest.TestCase):
         row = _row("c", 1, settled=False)
         self.assertIn("not settled", gain_sweep.disqualify_reasons(row, 1))
 
-    def test_contact_detected_flagged(self):
+    def test_contact_detected_is_a_warning_not_disqualification(self):
         row = _row("c", 1, valid=False, warning_reasons=("contact detected",))
-        self.assertIn("contact detected", gain_sweep.disqualify_reasons(row, 1))
+        self.assertEqual(gain_sweep.disqualify_reasons(row, 1), [])
 
-    def test_torso_contact_detected_flagged(self):
+    def test_torso_contact_is_a_warning_not_disqualification(self):
         row = _row("c", 1, valid=False,
                    warning_reasons=("torso contact detected",))
-        self.assertIn("torso contact detected",
-                      gain_sweep.disqualify_reasons(row, 1))
+        self.assertEqual(gain_sweep.disqualify_reasons(row, 1), [])
 
     def test_non_finite_data_flagged(self):
         row = _row("c", 1, valid=False, warning_reasons=("non-finite data",))
@@ -254,8 +253,9 @@ class HeadroomTest(unittest.TestCase):
         from controller import servo
 
         qdot = np.zeros((3, 7))
-        qdot[0, 2] = 0.4 * servo.QDOT_LIMIT[2]
-        qdot[1, 5] = 1.2 * servo.QDOT_LIMIT[5]
+        limits = np.asarray(servo.LIMITS.joint_velocity_rad_s)
+        qdot[0, 2] = 0.4 * limits[2]
+        qdot[1, 5] = 1.2 * limits[5]
         # row 2 stays all-zero
 
         series = gain_sweep._headroom_series(qdot)
@@ -308,7 +308,11 @@ class NonFiniteHeadroomTest(unittest.TestCase):
             gain_snapshots=({"KP_POS": 2.0},),
             settled=True,
             settle_duration=0.0,
-            valid=True,
+            metrics_computable=False,
+            accepted=False,
+            contact_observed=False,
+            joint_limit_within_tolerance=True,
+            limit_penetration_rad=0.0,
             warning_reasons=(),
         )
 
@@ -399,6 +403,8 @@ class StateRoundTripTest(unittest.TestCase):
 
             reloaded = gain_sweep.load_or_init_state(args)
             self.assertEqual(reloaded["fingerprint"], state["fingerprint"])
+            self.assertIn("effective_control_config", reloaded)
+            self.assertIn("control_config_sha256", reloaded)
             self.assertIn("1", reloaded["stages"])
             self.assertEqual(
                 reloaded["stages"]["1"]["winner_config_id"], "s1_kp1_kd0")

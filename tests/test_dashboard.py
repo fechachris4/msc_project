@@ -1,5 +1,4 @@
-"""Pure per-tick helpers in analysis.dashboard, and a guard on the
-servo.py DAMPING fix the dashboard's gain panel depends on.
+"""Pure per-tick helpers in analysis.dashboard, and immutable-control checks.
 
 Hand-computation checks (per project rule: every computed quantity
 checkable against ground truth) for headroom_frac, limit_margin_deg,
@@ -7,6 +6,7 @@ ctrl_lead_deg, sigma_min; matplotlib.use("Agg") before importing
 analysis.dashboard so the module never needs a display.
 """
 
+from dataclasses import replace
 import unittest
 
 import matplotlib
@@ -17,6 +17,7 @@ import mujoco
 import numpy as np
 
 from analysis import dashboard
+from tests.control_test_support import apply_cycle, reconstruct_pipeline
 
 
 class HeadroomFracTest(unittest.TestCase):
@@ -26,14 +27,16 @@ class HeadroomFracTest(unittest.TestCase):
         from controller import servo
 
         qdot = np.zeros(7)
-        qdot[3] = 0.5 * servo.QDOT_LIMIT[3]
+        limits = np.asarray(servo.LIMITS.joint_velocity_rad_s)
+        qdot[3] = 0.5 * limits[3]
         self.assertAlmostEqual(dashboard.headroom_frac(qdot), 0.5, places=12)
 
     def test_unclipped_can_exceed_one(self):
         from controller import servo
 
         qdot = np.zeros(7)
-        qdot[0] = 1.5 * servo.QDOT_LIMIT[0]
+        limits = np.asarray(servo.LIMITS.joint_velocity_rad_s)
+        qdot[0] = 1.5 * limits[0]
         self.assertAlmostEqual(dashboard.headroom_frac(qdot), 1.5, places=12)
 
 
@@ -80,41 +83,48 @@ class SigmaMinTest(unittest.TestCase):
                                    places=10)
 
 
-class RuntimeDampingTest(unittest.TestCase):
-    """Guards the servo.py one-line fix: apply_ctrl must read servo.DAMPING
-    at call time, not a def-time-bound default (before the fix, a live
-    DAMPING mutation -- e.g. from the dashboard's slider -- would
-    silently do nothing)."""
+class ImmutableDampingConfigTest(unittest.TestCase):
+    """apply_ctrl must use the explicitly supplied immutable configuration."""
 
     HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0,
             0.95993109, 1.57079633]
 
-    def _ctrl_step(self):
+    def _ctrl_step(self, control):
         """Reset to HOME, offset the targets, apply_ctrl once at the
-        current servo.DAMPING; return {side: ctrl_after - ctrl_before}."""
+        supplied damping; return {side: ctrl_after - ctrl_before}."""
         from controller import frames, servo
+        from controller.state import Twist
         from sim import targets, world
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = self.HOME
+            world.data.qpos[world.qpos_adrs[side]] = self.HOME
         mujoco.mj_forward(world.model, world.data)
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos + np.array([0.05, 0.0, 0.05]))
             targets.set_target_quat(side, quat)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline(control)
 
         before = {side: world.data.ctrl[world.ctrl_adrs[side]].copy()
                   for side in world.SIDES}
-        servo.apply_ctrl(world.model.opt.timestep,
-                         (np.zeros(3), np.zeros(3)))
+        apply_cycle(
+            pipeline,
+            world.model.opt.timestep,
+            (np.zeros(3), np.zeros(3)),
+        )
         return {side: world.data.ctrl[world.ctrl_adrs[side]] - before[side]
                 for side in world.SIDES}
 
-    def test_apply_ctrl_honors_runtime_damping(self):
+    def test_apply_ctrl_honors_supplied_immutable_damping(self):
         from controller import servo
         from sim import world
 
@@ -124,14 +134,9 @@ class RuntimeDampingTest(unittest.TestCase):
 
         self.addCleanup(reset)
 
-        step_default = self._ctrl_step()
-
-        original_damping = servo.DAMPING
-        servo.DAMPING = 10.0
-        try:
-            step_huge = self._ctrl_step()
-        finally:
-            servo.DAMPING = original_damping
+        step_default = self._ctrl_step(servo.CONTROL)
+        step_huge = self._ctrl_step(
+            replace(servo.CONTROL, dls_damping=10.0))
 
         for side in world.SIDES:
             self.assertGreater(np.linalg.norm(step_default[side]), 1e-6,
@@ -139,7 +144,7 @@ class RuntimeDampingTest(unittest.TestCase):
             # Huge damping suppresses the DLS solve towards zero
             # (qdot_task = J^T(JJ^T + damping^2 I)^-1 v -> 0 as
             # damping -> inf), so the setpoint step must shrink markedly
-            # if apply_ctrl actually reads DAMPING at call time.
+            # if apply_ctrl actually uses the supplied configuration.
             self.assertLess(
                 np.linalg.norm(step_huge[side]),
                 0.5 * np.linalg.norm(step_default[side]), side,

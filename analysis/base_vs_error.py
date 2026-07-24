@@ -1,20 +1,19 @@
 """Base motion vs. end-effector error, live: the thesis success criterion
 made visible while the sim runs. Read-only, same pattern as
 analysis/diagnose.py and analysis/validate_velocity.py: the controller
-runs unmodified, every logged quantity comes from the public functions
-apply_ctrl itself calls (servo.pose_error), nothing re-derived.
+runs unmodified, and logged errors come from the same explicit state and
+pure world-frame error function used by the controller.
 
     python -m analysis.base_vs_error               # live, both arms
     python -m analysis.base_vs_error --save 30      # headless, 30 sim-seconds
 
 Plain python (no MuJoCo viewer, no mjpython). Live mode opens a window
 with a ~30 s rolling view of base displacement vs. per-axis EE error,
-world frame, error = ref - actual, plus the shared live gain panel
-(plotting.gain_panel.GainPanel) for tuning. The sim runs until the
+world frame, error = ref - actual. The sim runs until the
 window is closed (or Ctrl-C); then a full-run RMS/peak/rejection-%
 table prints on stdout and the final window is snapshot to
 analysis/output/base_vs_error.png. --save mode settles, runs a fixed
-duration headlessly (no window, no gain panel), then does the same
+duration headlessly, then does the same
 table + save. Units are SI internally; mm on the figure and in the
 printed table.
 """
@@ -28,12 +27,11 @@ if "--save" in sys.argv:
     matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-import mujoco
 import numpy as np
 
 from analysis import metrics
-from controller import desired_pos, frames, servo
-from plotting.gain_panel import GainPanel
+from controller import desired_pos
+from controller.runner import ReactivePositionRunner
 from plotting.live_plot import LivePlot
 from plotting.style import C_BASE, C_RIGHT, C_LEFT
 from sim import motion, world
@@ -50,26 +48,54 @@ WINDOW_S = 30.0  # rolling on-screen window: 3 periods at 0.1 Hz
 OUT = Path("analysis/output")
 
 
+class _DelayedDefaultMotion:
+    def __init__(self):
+        self._start_time_s = None
+
+    def start_at(self, sample_time_s):
+        self._start_time_s = float(sample_time_s)
+
+    def pose_at(self, sample_time_s):
+        if self._start_time_s is None:
+            return motion.HOME_POS.copy(), motion.HOME_RPY.copy()
+        return motion.torso_pose_at(sample_time_s - self._start_time_s)
+
+    def twist_at(self, sample_time_s):
+        if self._start_time_s is None:
+            return np.zeros(3), np.zeros(3)
+        return motion.torso_twist_at(sample_time_s - self._start_time_s)
+
+
 def run(save_seconds=None):
     """Closed-loop rollout under sim.motion defaults with a live rolling plot.
-    save_seconds: if given, run headless for that many sim-seconds (no
-    window, no gain panel); otherwise run live (with the shared gain
-    panel) until the window is closed (or Ctrl-C). Returns (log, plot)
+    save_seconds: if given, run headless for that many sim-seconds; otherwise
+    run live until the window is closed (or Ctrl-C). Returns (log, plot)
     where log = {t, base_disp, right_e, left_e} full-run arrays
     (base_disp and *_e in meters, world frame)."""
-    mujoco.mj_resetData(world.model, world.data)
-    mujoco.mj_forward(world.model, world.data)
-    desired_pos.apply()
-    servo.init_ctrl()
+    world.backend.release()
+    world.backend.configure_torso_driver(None, None)
+    world.backend.reset()
+    source_targets = desired_pos.apply()
+    driver = _DelayedDefaultMotion()
+    world.backend.configure_torso_driver(driver.pose_at, driver.twist_at)
+    runner = ReactivePositionRunner(
+        world.backend,
+        world.MOUNT_CALIBRATION,
+        world.PIPELINE_SETUP,
+        source_targets,
+    )
+    runner.start()
 
-    dt = world.model.opt.timestep
-    zero_twist = (np.zeros(3), np.zeros(3))
-    for _ in range(int(SETTLE_SECONDS / dt)):
-        servo.apply_ctrl(dt, zero_twist)
-        mujoco.mj_step(world.model, world.data)
+    dt = runner.current_state.nominal_dt_s
+    settle_steps = int(SETTLE_SECONDS / dt)
+    for step in range(settle_steps):
+        if step == settle_steps - 1:
+            driver.start_at(
+                runner.current_state.sample_time_s + dt)
+        runner.cycle()
 
     home_pos = motion.HOME_POS
-    t_start = world.data.time  # phase 0 at motion start: no teleport
+    t_start = runner.current_state.sample_time_s
     n_steps = int(save_seconds / dt) if save_seconds is not None else None
 
     amp_mm = motion.LINEAR_AMPLITUDE * 1000.0
@@ -88,11 +114,6 @@ def run(save_seconds=None):
                f"{amp_mm[2]:.0f}] mm"),
     )
 
-    # Gain panel: live mode only (LivePlot's own plt.pause, inside
-    # plot.add, pumps its event loop too -- keep the reference alive for
-    # the run's duration).
-    panel = GainPanel() if save_seconds is None else None
-
     # Full-run history for the stats table — the LivePlot ring buffers
     # only keep the last WINDOW_S seconds.
     log = {"t": [], "base_disp": [], "right_e": [], "left_e": []}
@@ -106,20 +127,13 @@ def run(save_seconds=None):
             elif not plot.is_open():
                 break
 
-            t = world.data.time - t_start
-            motion.set_torso_pose(t)
-            # refresh xpos/xmat so the logged state sees the torso pose
-            # at t, not the previous step's (main.py/diagnose.py pattern)
-            mujoco.mj_kinematics(world.model, world.data)
-            # set_torso_pose (mocap write) and torso_twist_at
-            # (feedforward) must stay a matched pair — same scenario,
-            # same instant t.
-            base_twist = motion.torso_twist_at(t)
-
-            base_pos, _ = frames.torso_pose()
+            cycle = runner.cycle()
+            plant = cycle.input_state
+            t = plant.sample_time_s - t_start
+            base_pos = plant.torso_pose_world.position_m
             base_disp = base_pos - home_pos
-            right_e, _ = servo.pose_error("right")
-            left_e, _ = servo.pose_error("left")
+            right_e = cycle.traces.right.e_pos
+            left_e = cycle.traces.left.e_pos
 
             log["t"].append(t)
             log["base_disp"].append(base_disp)
@@ -131,11 +145,12 @@ def run(save_seconds=None):
                 "left EE error": left_e * 1000.0,
             })
 
-            servo.apply_ctrl(dt, base_twist)
-            mujoco.mj_step(world.model, world.data)
             step += 1
     except KeyboardInterrupt:
         pass  # fall through to the stats table
+    finally:
+        runner.close()
+        world.backend.configure_torso_driver(None, None)
 
     return {k: np.asarray(v) for k, v in log.items()}, plot
 

@@ -23,6 +23,8 @@ import mujoco
 import numpy as np
 import pinocchio as pin
 
+from tests.control_test_support import apply_cycle, reconstruct_pipeline
+
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
 
@@ -91,6 +93,7 @@ class ArmTwistPinocchioTest(unittest.TestCase):
 
     def test_arm_term_matches_pinocchio(self):
         from controller import frames
+        from controller.state import Twist
         from sim import world
 
         self.addCleanup(_restore_world)
@@ -120,14 +123,20 @@ class ArmTwistPinocchioTest(unittest.TestCase):
                         low, high = -np.pi, np.pi
                     q[i - 1] = rng.uniform(low, high)
                 qdot = rng.uniform(-2.0, 2.0, 7)
-                world.data.qpos[frames.qpos_adrs[side]] = q
-                world.data.qvel[frames.dof_adrs[side]] = qdot
+                world.data.qpos[world.qpos_adrs[side]] = q
+                world.data.qvel[world.dof_adrs[side]] = qdot
             mujoco.mj_kinematics(world.model, world.data)
 
             for side in world.SIDES:
-                q = np.asarray(world.data.qpos[frames.qpos_adrs[side]])
-                qdot = np.asarray(world.data.qvel[frames.dof_adrs[side]])
-                v, w = frames.ee_velocity(side, zero_twist)
+                q = np.asarray(world.data.qpos[world.qpos_adrs[side]])
+                qdot = np.asarray(world.data.qvel[world.dof_adrs[side]])
+                state = frames.arm_controller_state(
+                    world.read_state(Twist(*zero_twist)),
+                    side,
+                    world.MOUNT_CALIBRATION,
+                )
+                v = state.ee_twist_world.linear_m_s
+                w = state.ee_twist_world.angular_rad_s
 
                 pin.forwardKinematics(frames.pin_model, pin_data, q, qdot)
                 pin.updateFramePlacements(frames.pin_model, pin_data)
@@ -135,8 +144,11 @@ class ArmTwistPinocchioTest(unittest.TestCase):
                     frames.pin_model, pin_data, frames.ee_frame_id,
                     pin.LOCAL_WORLD_ALIGNED,
                 )
-                _, torso_rot = frames.torso_pose()
-                R_W_K = torso_rot @ frames._T_T_K[side][:3, :3]
+                plant = world.read_state(Twist(*zero_twist))
+                R_W_K = (
+                    plant.torso_pose_world.rotation
+                    @ world.MOUNT_CALIBRATION.for_arm(side).rotation
+                )
 
                 np.testing.assert_allclose(v, R_W_K @ v_K.linear,
                                            atol=self.ATOL)
@@ -167,26 +179,34 @@ class ComposedVsMeasuredFDTest(unittest.TestCase):
 
     def test_composed_matches_measured_fd(self):
         from controller import frames, servo
+        from controller.state import Twist
         from sim import motion, targets, world
 
         self.addCleanup(_restore_world)
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
 
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline()
 
         dt = world.model.opt.timestep
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, (np.zeros(3), np.zeros(3)))
+            apply_cycle(
+                pipeline, dt, (np.zeros(3), np.zeros(3)))
             mujoco.mj_step(world.model, world.data)
 
         n = int(self.MOTION_SECONDS / dt)
@@ -202,9 +222,17 @@ class ComposedVsMeasuredFDTest(unittest.TestCase):
             mujoco.mj_kinematics(world.model, world.data)
             base_twist = motion.torso_twist_at(tau, **SCENARIO)
             for s in world.SIDES:
-                p[s][k], R[s][k] = frames.measured_ee_pose(s)
-                v[s][k], w[s][k] = frames.ee_velocity(s, base_twist)
-            servo.apply_ctrl(dt, base_twist)
+                measured = world.measured_ee_pose(s)
+                p[s][k] = measured.position_m
+                R[s][k] = measured.rotation
+                state = frames.arm_controller_state(
+                    world.read_state(Twist(*base_twist)),
+                    s,
+                    world.MOUNT_CALIBRATION,
+                )
+                v[s][k] = state.ee_twist_world.linear_m_s
+                w[s][k] = state.ee_twist_world.angular_rad_s
+            apply_cycle(pipeline, dt, base_twist)
             mujoco.mj_step(world.model, world.data)
 
         for s in world.SIDES:

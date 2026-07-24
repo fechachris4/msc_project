@@ -1,8 +1,7 @@
 """Diagnose the right-arm tracking failure under torso roll. Read-only:
-the controller is never modified — every logged quantity is recomputed
-from sim state with the same public functions apply_ctrl itself calls
-(servo.pose_error, frames.jacobian_world, servo.qdot_from_error), so the
-log shows exactly what the controller saw each cycle.
+the controller is never modified — every logged quantity is taken from
+the explicit controller state and immutable ControlTrace produced by the
+real pipeline, so the log shows exactly what the controller saw each cycle.
 
     python -m analysis.diagnose
 
@@ -20,6 +19,7 @@ import mujoco
 import numpy as np
 
 from controller import desired_pos, frames, servo
+from controller.state import Twist
 from plotting.style import C_RIGHT, C_LEFT, C_XYZ
 from sim import motion, targets, world
 
@@ -32,16 +32,6 @@ SIM_SECONDS = 40.0                  # 4 periods
 
 SV_THRESHOLDS = (0.05, 0.01, 0.001)
 OUT = Path("analysis/output")
-
-
-def _dof_adrs(side):
-    adrs = []
-    for i in range(1, 8):
-        jnt_id = mujoco.mj_name2id(
-            world.model, mujoco.mjtObj.mjOBJ_JOINT, f"{side}_joint_{i}"
-        )
-        adrs.append(int(world.model.jnt_dofadr[jnt_id]))
-    return adrs
 
 
 def _arm_body_ids(side):
@@ -69,11 +59,12 @@ def run():
     mujoco.mj_resetData(world.model, world.data)
     mujoco.mj_forward(world.model, world.data)
     desired_pos.apply()
-    servo.init_ctrl()
+    pipeline = servo.ReactivePositionPipeline(
+        world.read_state(Twist.zero()), world.PIPELINE_SETUP)
+    world.apply_command(pipeline.command())
 
     dt = world.model.opt.timestep
     n_steps = int(SIM_SECONDS / dt)
-    dofs = {s: _dof_adrs(s) for s in world.SIDES}
     jlims = {s: world.jnt_range(s)[:2] for s in world.SIDES}
     bodies = {s: _arm_body_ids(s) for s in world.SIDES}
 
@@ -114,24 +105,29 @@ def run():
         # refresh xpos/xmat so the logged state and the controller see
         # the torso pose at t, not the previous step's (as main.py)
         mujoco.mj_kinematics(world.model, world.data)
+        plant = world.read_state(Twist(*base_twist))
+        states = frames.controller_states(
+            plant, world.MOUNT_CALIBRATION)
+        world_targets = targets.world_targets()
+        command, traces = pipeline.step(
+            states, world_targets, dt)
 
-        # Pre-control state: exactly what apply_ctrl is about to use.
+        # Pre-control state and pure controller output for this cycle.
         for s in world.SIDES:
             L = log[s]
-            e_pos, e_rot = servo.pose_error(s)
-            e_v, e_w = servo.twist_error(s, base_twist)
-            J = frames.jacobian_world(s)
+            state = states.for_arm(s)
+            trace = traces[s]
+            e_pos, e_rot = trace.e_pos, trace.e_rot
+            J = trace.J
             sv = np.linalg.svd(J, compute_uv=False)
-            q = world.data.qpos[frames.qpos_adrs[s]].copy()
-            qdot_raw = servo.qdot_from_error(
-                J, e_pos, e_rot, e_v, e_w, q, servo._Q_MID[s],
-                servo._K_NULL_VEC[s])
-            qdot_meas = world.data.qvel[dofs[s]].copy()
+            q = trace.q
+            qdot_raw = trace.qdot_raw
+            qdot_meas = state.joints.velocity_rad_s
             low, high = jlims[s]
 
             L["t"][k] = t
             L["target_pos"][k] = targets.target_position(s)
-            L["ee_pos"][k] = frames.ee_pose(s)[0]
+            L["ee_pos"][k] = state.ee_pose_world.position_m
             L["e_pos"][k] = e_pos
             L["e_norm"][k] = np.linalg.norm(e_pos)
             L["e_rot"][k] = e_rot
@@ -143,19 +139,23 @@ def run():
             L["q"][k] = q
             L["qdot_meas"][k] = qdot_meas
             L["qdot_raw"][k] = qdot_raw
-            L["qdot_sat"][k] = np.clip(qdot_raw, -servo.QDOT_LIMIT,
-                                       servo.QDOT_LIMIT)
+            qdot_limit = np.asarray(servo.LIMITS.joint_velocity_rad_s)
+            L["qdot_sat"][k] = np.clip(qdot_raw, -qdot_limit, qdot_limit)
             L["jlim_dist"][k] = np.minimum(q - low, high - q)
-            L["v_des"][k] = np.concatenate([servo.KP_POS * e_pos,
-                                            servo.KP_ROT * e_rot])
+            L["v_des"][k] = np.concatenate([
+                servo.CONTROL.kp_position_s_inv * e_pos,
+                servo.CONTROL.kp_rotation_s_inv * e_rot,
+            ])
             L["v_ach"][k] = J @ qdot_meas
 
-        servo.apply_ctrl(dt, base_twist)
+        world.apply_command(command)
 
         # Post-control: the setpoints the servos will now chase.
         for s in world.SIDES:
             ctrl = world.data.ctrl[world.ctrl_adrs[s]].copy()
-            lo, hi = servo._BOUNDS[s]
+            limits = world.PIPELINE_SETUP.for_arm(s).actuation_limits
+            lo = limits.lower_position_rad
+            hi = limits.upper_position_rad
             log[s]["ctrl_dist"][k] = np.minimum(ctrl - lo, hi - ctrl)
             log[s]["servo_lag"][k] = ctrl - log[s]["q"][k]
 
@@ -246,7 +246,9 @@ def make_figures(log, ev):
     for s, cs in (("right", C_RIGHT), ("left", C_LEFT)):
         L = log[s]
         low, high, _ = world.jnt_range(s)
-        lo_c, hi_c = servo._BOUNDS[s]
+        limits = world.PIPELINE_SETUP.for_arm(s).actuation_limits
+        lo_c = limits.lower_position_rad
+        hi_c = limits.upper_position_rad
         fig, axes = plt.subplots(7, 1, sharex=True, figsize=(9, 12),
                                  layout="constrained")
         for j in range(7):
@@ -271,15 +273,16 @@ def make_figures(log, ev):
     # 5 — is velocity saturation preventing recovery?
     fig, axes = plt.subplots(7, 1, sharex=True, figsize=(9, 12),
                              layout="constrained")
-    sat_frac = np.mean(np.abs(r["qdot_raw"]) > servo.QDOT_LIMIT, axis=0)
+    qdot_limit = np.asarray(servo.LIMITS.joint_velocity_rad_s)
+    sat_frac = np.mean(np.abs(r["qdot_raw"]) > qdot_limit, axis=0)
     for j in range(7):
         ax = axes[j]
         ax.plot(t, r["qdot_raw"][:, j], color="0.6", linewidth=0.8,
                 label="commanded (raw)" if j == 0 else None)
         ax.plot(t, r["qdot_sat"][:, j], color=C_RIGHT, linewidth=1.0,
                 label="after saturation" if j == 0 else None)
-        ax.axhline(servo.QDOT_LIMIT[j], color="red", linewidth=0.8)
-        ax.axhline(-servo.QDOT_LIMIT[j], color="red", linewidth=0.8)
+        ax.axhline(qdot_limit[j], color="red", linewidth=0.8)
+        ax.axhline(-qdot_limit[j], color="red", linewidth=0.8)
         ax.set_ylabel(f"q̇{j + 1} [rad/s]")
     _mark_events(axes[0], ev["right"])
     axes[0].legend(loc="upper right", fontsize=8)
@@ -354,7 +357,7 @@ def print_summary(log, ev):
         print(f"  min dist to ctrlrange  {np.min(L['ctrl_dist']):.4f} rad "
               f"(joint {int(np.unravel_index(np.argmin(L['ctrl_dist']), L['ctrl_dist'].shape)[1]) + 1})")
         print(f"  qdot saturation: any-joint fraction "
-              f"{np.mean(np.any(np.abs(L['qdot_raw']) > servo.QDOT_LIMIT, axis=1)):.2%}")
+              f"{np.mean(np.any(np.abs(L['qdot_raw']) > qdot_limit, axis=1)):.2%}")
         print(f"  servo lag |ctrl-q| peak {np.abs(L['servo_lag']).max():.3f} rad")
         print(f"  contacts: max {L['contacts'].max()} "
               f"(steps with any: {np.mean(L['contacts'] > 0):.2%})")

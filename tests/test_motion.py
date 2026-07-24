@@ -6,12 +6,19 @@ keep the world-frame EE error well below the base amplitude while the
 torso sways — the disturbance-rejection regression tripwire.
 """
 
+from dataclasses import replace
 import unittest
 
 import mujoco
 import numpy as np
 
 from controller.transforms import rotation_from_rpy
+from controller.state import Twist
+from tests.control_test_support import (
+    apply_cycle,
+    pose_error,
+    reconstruct_pipeline,
+)
 
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
@@ -86,7 +93,9 @@ class TorsoPoseOracleTest(unittest.TestCase):
             motion.set_torso_pose(t, **self.SCENARIO)
             mujoco.mj_kinematics(world.model, world.data)
 
-            pos, rot = frames.torso_pose()
+            plant = world.read_state(Twist.zero())
+            pos = plant.torso_pose_world.position_m
+            rot = plant.torso_pose_world.rotation
             exp_pos, exp_rpy = motion.torso_pose_at(t, **self.SCENARIO)
             np.testing.assert_allclose(pos, exp_pos, atol=1e-12)
             np.testing.assert_allclose(
@@ -138,22 +147,28 @@ class BaseMotionRejectionTest(unittest.TestCase):
 
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
 
         # Feasible targets by construction: the arms' own FK poses at home.
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline()
 
         dt = world.model.opt.timestep
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            apply_cycle(pipeline, dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
 
         t_start = world.data.time  # phase 0 at motion start: no teleport
@@ -168,10 +183,10 @@ class BaseMotionRejectionTest(unittest.TestCase):
                 t_rel, linear_amplitude=self.TEST_AMPLITUDE,
                 linear_frequency=self.TEST_FREQUENCY,
                 rotational_amplitude=np.zeros(3))
-            servo.apply_ctrl(dt, base_twist)
+            apply_cycle(pipeline, dt, base_twist)
             mujoco.mj_step(world.model, world.data)
             for side in world.SIDES:
-                e_pos, _ = servo.pose_error(side)
+                e_pos, _ = pose_error(side)
                 peak[side] = max(peak[side], np.linalg.norm(e_pos))
 
         for side in world.SIDES:
@@ -192,26 +207,34 @@ class PDvsPDisturbanceTest(unittest.TestCase):
     MOTION_SECONDS = 4.0                     # two periods
     PEAK_FLOOR = 0.005                       # m: disturbance engaged
 
-    def _run_peak(self):
+    def _run_peak(self, control=None):
         from controller import frames, servo
         from sim import motion, targets, world
 
+        control = servo.CONTROL if control is None else control
+
         mujoco.mj_resetData(world.model, world.data)
         for side in world.SIDES:
-            world.data.qpos[frames.qpos_adrs[side]] = HOME
+            world.data.qpos[world.qpos_adrs[side]] = HOME
         mujoco.mj_forward(world.model, world.data)
         for side in world.SIDES:
-            pos, rot = frames.ee_pose(side)
+            state = frames.arm_controller_state(
+                world.read_state(Twist.zero()),
+                side,
+                world.MOUNT_CALIBRATION,
+            )
+            pos = state.ee_pose_world.position_m
+            rot = state.ee_pose_world.rotation
             quat = np.zeros(4)
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
-        servo.init_ctrl()
+        pipeline = reconstruct_pipeline(control)
 
         dt = world.model.opt.timestep
         zero_twist = (np.zeros(3), np.zeros(3))
         for _ in range(int(self.SETTLE_SECONDS / dt)):
-            servo.apply_ctrl(dt, zero_twist)
+            apply_cycle(pipeline, dt, zero_twist)
             mujoco.mj_step(world.model, world.data)
 
         t_start = world.data.time
@@ -225,10 +248,10 @@ class PDvsPDisturbanceTest(unittest.TestCase):
                 t_rel, linear_amplitude=self.AMPLITUDE,
                 linear_frequency=self.FREQUENCY,
                 rotational_amplitude=np.zeros(3))
-            servo.apply_ctrl(dt, base_twist)
+            apply_cycle(pipeline, dt, base_twist)
             mujoco.mj_step(world.model, world.data)
             for side in world.SIDES:
-                e_pos, _ = servo.pose_error(side)
+                e_pos, _ = pose_error(side)
                 peak[side] = max(peak[side], np.linalg.norm(e_pos))
         return peak
 
@@ -239,12 +262,9 @@ class PDvsPDisturbanceTest(unittest.TestCase):
         self.addCleanup(_restore_world)
 
         peak_pd = self._run_peak()
-        kd_pos, kd_rot = servo.KD_POS, servo.KD_ROT
-        servo.KD_POS = servo.KD_ROT = 0.0
-        try:
-            peak_p = self._run_peak()
-        finally:
-            servo.KD_POS, servo.KD_ROT = kd_pos, kd_rot
+        p_only = replace(
+            servo.CONTROL, kd_position=0.0, kd_rotation=0.0)
+        peak_p = self._run_peak(p_only)
 
         for side in world.SIDES:
             self.assertGreater(peak_pd[side], self.PEAK_FLOOR, side)
