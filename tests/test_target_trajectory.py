@@ -81,8 +81,8 @@ class TargetTrajectoryConfigTest(unittest.TestCase):
         source = Path(CONFIG.source_path).read_text()
         invalid_sources = (
             source.replace(
-                'shape = "measured_start_displacement"',
-                'shape = "unknown"',
+                'start = "measured"',
+                'start = "unknown"',
                 1,
             ),
             source.replace(
@@ -91,13 +91,18 @@ class TargetTrajectoryConfigTest(unittest.TestCase):
                 1,
             ),
             source.replace(
-                "leg_duration_s = 10.0",
-                "leg_duration_s = 0.0",
+                "duration_s = 10.0",
+                "duration_s = 0.0",
                 1,
             ),
             source.replace(
-                'orientation_policy = "hold_initial"',
-                'orientation_policy = "unknown"',
+                'type = "line"',
+                'type = "unknown"',
+                1,
+            ),
+            source.replace(
+                "loop = true",
+                'loop = "yes"',
                 1,
             ),
             source.replace(
