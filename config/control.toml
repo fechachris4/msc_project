@@ -35,7 +35,7 @@ position_lead_rad = 0.2
 #
 # END-EFFECTOR routing only — NOT whole-arm/link collision avoidance.
 [cylinder_keepout]
-cylinder_keepout_enabled = false
+cylinder_keepout_enabled = true
 cylinder_keepout_center_x_m = 0.0
 cylinder_keepout_center_y_m = 0.0
 cylinder_keepout_radius_m = 0.25
