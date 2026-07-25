@@ -125,11 +125,11 @@ velocity jumps.
 
 Users are not expected to learn or hand-author this. Codex may persist the
 resolved request under the existing per-arm target so runs are reproducible.
-A circle materialization can look like:
+A side-facing vertical circle in the world `yz` plane can look like:
 
 ```toml
 [targets.left.trajectory]
-reference_frame = "torso"
+reference_frame = "world"
 start = "measured"
 loop = true
 open_live_path_plot = true
@@ -142,12 +142,37 @@ max_angular_acceleration_rad_s2 = 1.00
 
 [[targets.left.trajectory.segments]]
 type = "circle"
+plane = "vertical_yz"
+radius_m = 0.05
+revolutions = 1
+clockwise = false
+```
+
+Named planes are `xy` (alias `horizontal`), `xz` (alias `vertical_xz`), and
+`yz` (alias `vertical_yz`). The resolved measured or configured trajectory
+start remains the first point on the circle. The centre is derived one radius
+behind that point along the plane's first named axis, so selecting a plane
+does not introduce a startup jump. With `clockwise = false`, the initial
+geometric direction is from the first named axis toward the second: `+x` to
+`+y` for `xy`, `+x` to `+z` for `xz`, and `+y` to `+z` for `yz`.
+
+The advanced form remains available when a non-canonical plane or a particular
+centre direction is required. It uses the same circle machinery, but
+`normal` and `start_direction` must be supplied together and cannot be mixed
+with `plane`:
+
+```toml
+[[targets.left.trajectory.segments]]
+type = "circle"
 radius_m = 0.05
 normal = [1.0, 0.0, 0.0]
 start_direction = [0.0, 0.0, 1.0]
 revolutions = 1
 clockwise = false
 ```
+
+There is deliberately no `center_m` shorthand: a centre that does not already
+place the resolved start on the circle would create an implicit position jump.
 
 A smooth ordinary path can be materialized as:
 

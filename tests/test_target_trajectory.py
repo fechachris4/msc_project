@@ -35,6 +35,21 @@ def _without_left_trajectory(source):
     )
 
 
+def _with_left_trajectory(source, trajectory):
+    prefix, remainder = source.split(
+        "[targets.left.trajectory]", 1
+    )
+    _, simulation = remainder.split(
+        "[simulation.initial_joint_position_rad]", 1
+    )
+    return (
+        prefix
+        + trajectory
+        + "\n[simulation.initial_joint_position_rad]"
+        + simulation
+    )
+
+
 class TargetTrajectoryConfigTest(unittest.TestCase):
     def test_optional_trajectory_is_part_of_the_existing_target(self):
         self.assertIsNone(CONFIG.right_target.trajectory)
@@ -210,6 +225,117 @@ offsets_m = [
         self.assertLessEqual(
             result.rate_bounds.max_linear_speed_m_s, 0.10 + 1e-10
         )
+
+    def test_named_circle_planes_parse_to_exact_circle_directions(self):
+        source = Path(CONFIG.source_path).read_text()
+        expected = {
+            "xy": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
+            "horizontal": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
+            "xz": ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0)),
+            "vertical_xz": ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0)),
+            "yz": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+            "vertical_yz": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            for plane, directions in expected.items():
+                trajectory = f"""
+[targets.left.trajectory]
+reference_frame = "world"
+start = "measured"
+loop = true
+open_live_path_plot = false
+
+[[targets.left.trajectory.segments]]
+type = "circle"
+plane = "{plane}"
+radius_m = 0.05
+duration_s = 4.0
+revolutions = 1
+clockwise = false
+"""
+                candidate = _with_left_trajectory(source, trajectory)
+                path = Path(directory) / f"{plane}.toml"
+                path.write_text(candidate)
+                with self.subTest(plane=plane):
+                    circle = load_config(
+                        path
+                    ).left_target.trajectory.segments[0]
+                    self.assertEqual(circle.normal, directions[0])
+                    self.assertEqual(
+                        circle.start_direction, directions[1]
+                    )
+
+    def test_named_vertical_circle_materializes_from_resolved_start(self):
+        source = Path(CONFIG.source_path).read_text()
+        trajectory = """
+[targets.left.trajectory]
+reference_frame = "world"
+start = "measured"
+loop = true
+open_live_path_plot = false
+
+[[targets.left.trajectory.segments]]
+type = "circle"
+plane = "vertical_yz"
+radius_m = 0.05
+duration_s = 4.0
+revolutions = 1
+clockwise = false
+"""
+        candidate = _with_left_trajectory(source, trajectory)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "vertical-circle.toml"
+            path.write_text(candidate)
+            specification = load_config(path).left_target.trajectory
+        start = Pose(np.array([0.3, 0.2, 1.1]), np.eye(3))
+        result = materialize_trajectory(specification, start)
+        beginning = result.source.sample(0.0).pose.position_m
+        halfway = result.source.sample(
+            0.5 * result.duration_s
+        ).pose.position_m
+        closing = result.source.sample(
+            result.duration_s
+        ).pose.position_m
+        np.testing.assert_allclose(beginning, start.position_m, atol=1e-12)
+        np.testing.assert_allclose(closing, start.position_m, atol=1e-12)
+        np.testing.assert_allclose(
+            halfway,
+            start.position_m + np.array([0.0, -0.10, 0.0]),
+            atol=1e-12,
+        )
+
+    def test_named_circle_rejects_ambiguous_or_unknown_geometry(self):
+        source = Path(CONFIG.source_path).read_text()
+        invalid_geometries = (
+            'plane = "vertical_yz"\n'
+            "normal = [1.0, 0.0, 0.0]\n"
+            "start_direction = [0.0, 0.0, 1.0]",
+            'plane = "diagonal"',
+            'plane = "vertical_yz"\ncenter_m = [0.3, 0.2, 1.1]',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for index, geometry in enumerate(invalid_geometries):
+                trajectory = f"""
+[targets.left.trajectory]
+reference_frame = "world"
+start = "measured"
+loop = true
+open_live_path_plot = false
+
+[[targets.left.trajectory.segments]]
+type = "circle"
+{geometry}
+radius_m = 0.05
+duration_s = 4.0
+revolutions = 1
+clockwise = false
+"""
+                candidate = _with_left_trajectory(source, trajectory)
+                path = Path(directory) / f"invalid-circle-{index}.toml"
+                path.write_text(candidate)
+                with self.subTest(index=index):
+                    with self.assertRaises(ValueError):
+                        load_config(path)
 
 
 class TargetTrajectoryIntegrationTest(unittest.TestCase):
