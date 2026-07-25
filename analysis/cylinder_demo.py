@@ -6,7 +6,7 @@ blocked and the router must go around (or over). The committed
 ``config/control.toml`` stays disabled — this script enables the keep-out
 locally, so running it never changes default simulation behaviour.
 
-    .venv/bin/python -m analysis.cylinder_demo              # viewer
+    .venv/bin/mjpython -m analysis.cylinder_demo            # viewer (macOS)
     .venv/bin/python -m analysis.cylinder_demo --headless   # no window
 
 Everything is SI (metres, radians); millimetres appear only in the printout.
@@ -20,6 +20,7 @@ import argparse
 import time
 
 import mujoco
+import mujoco.viewer
 import numpy as np
 
 from controller.cylinder_router import CylinderKeepout
