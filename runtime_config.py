@@ -47,11 +47,11 @@ class LimitConfig:
 
 @dataclass(frozen=True)
 class CylinderKeepoutConfig:
-    """End-effector keep-out cylinder, one-to-one with the C++ EffectiveConfig.
+    """One central world-frame end-effector keep-out cylinder.
 
-    Field names match ``basic_control/src/app/Options.h`` exactly so the two
-    schemas stay comparable. Lengths are metres in the arm base frame; the
-    cylinder axis is that frame's +z.
+    Field names remain comparable with ``basic_control/src/app/Options.h``,
+    but this simulation interprets centre and height in WORLD coordinates.
+    The axis is always world +z, perpendicular to the ground.
     """
 
     cylinder_keepout_enabled: bool

@@ -34,10 +34,10 @@ from runtime_config import CONFIG, CylinderKeepoutConfig, ReactivePoseConfig
 
 
 def keepout_from_config(config):
-    """Build the router's keep-out from the TOML config record.
+    """Build the shared world-frame keep-out from the TOML config record.
 
-    Mirrors ``basic_control/src/app/main.cpp`` lines 194-204, which performs
-    the same field-for-field copy from EffectiveConfig into CylinderKeepout.
+    The field-for-field copy remains comparable with the hardware schema, but
+    this simulation interprets every geometric value in WORLD coordinates.
     """
     if not isinstance(config, CylinderKeepoutConfig):
         raise TypeError("config must be a CylinderKeepoutConfig")
@@ -65,8 +65,8 @@ class CylinderRouteStatus:
     at_final_waypoint: bool
     target_adjusted: bool
     route_changed: bool
-    requested_target_base_m: np.ndarray
-    effective_target_base_m: np.ndarray
+    requested_target_world_m: np.ndarray
+    effective_target_world_m: np.ndarray
     active_waypoint_world_m: np.ndarray
     waypoints_world_m: tuple
 
@@ -133,38 +133,32 @@ class ReactivePositionRunner:
         self._followers = {
             side: CylinderRouteFollower(self._keepout) for side in selected
         }
-        # The C++ replans on a TargetStore sequence bump. The analogue here is
-        # a change in the SAMPLED FRAMED target: frame-relative, so torso
-        # motion alone never counts as the operator issuing a new target.
+        # This world-fixed obstacle requires a fresh route whenever the
+        # resolved WORLD target moves. That includes a base/torso-frame target
+        # carried by torso motion, even when its sampled local coordinates are
+        # unchanged.
         self._accepted_target = {side: None for side in selected}
 
     @property
     def cylinder_keepout(self):
         return self._keepout
 
-    def _base_pose_world(self, plant, side):
-        """T_W_B for one arm — the frame the keep-out cylinder is defined in."""
-        return frames.compose_pose(
-            plant.torso_pose_world, self._calibration.for_arm(side)
-        )
-
-    def _accepted_target_key(self, sampled_targets, side):
-        target = sampled_targets.for_arm(side)
+    def _accepted_target_key(self, sampled_targets, resolved, side):
+        sampled = sampled_targets.for_arm(side)
+        target_world = resolved.for_arm(side).pose_world.position_m
         return (
-            target.reference_frame,
-            tuple(np.asarray(target.pose.position_m, dtype=float).tolist()),
+            sampled.reference_frame,
+            tuple(np.asarray(target_world, dtype=float).tolist()),
         )
 
-    def _route_targets(
-        self, plant, sampled_targets, resolved, controller_states
-    ):
+    def _route_targets(self, sampled_targets, resolved, controller_states):
         """Substitute the active waypoint for each arm's world target position.
 
-        Positions cross into the arm base frame, through the router, and back.
-        Orientation and twist are passed through untouched, so intermediate
-        waypoints are followed at the REQUESTED orientation. When the keep-out
-        is disabled this returns ``resolved`` unchanged, preserving the
-        simulation's original direct-target behaviour exactly.
+        Positions are already resolved in world coordinates and go through the
+        router without either arm-base transform. Both arms therefore avoid the
+        same upright central cylinder. Orientation and twist pass through
+        untouched, so intermediate waypoints use the REQUESTED orientation.
+        When disabled, return ``resolved`` unchanged.
         """
         if not self._keepout.enabled:
             return resolved, {}
@@ -172,25 +166,23 @@ class ReactivePositionRunner:
         routed = {"right": resolved.right, "left": resolved.left}
         statuses = {}
         for side in self._arms:
-            base_pose = self._base_pose_world(plant, side)
-            rotation = base_pose.rotation
-            origin = base_pose.position_m
             follower = self._followers[side]
 
-            ee_world = controller_states.for_arm(side).ee_pose_world.position_m
-            ee_base = rotation.T @ (ee_world - origin)
-
+            ee_world = np.asarray(
+                controller_states.for_arm(side).ee_pose_world.position_m,
+                dtype=float,
+            )
             target = resolved.for_arm(side)
-            target_base = rotation.T @ (target.pose_world.position_m - origin)
+            target_world = np.asarray(
+                target.pose_world.position_m, dtype=float)
 
-            key = self._accepted_target_key(sampled_targets, side)
+            key = self._accepted_target_key(sampled_targets, resolved, side)
             route_changed = key != self._accepted_target[side]
             if route_changed:
                 self._accepted_target[side] = key
-                follower.set_target(ee_base, target_base)
+                follower.set_target(ee_world, target_world)
 
-            waypoint_base = follower.update(ee_base)
-            waypoint_world = origin + rotation @ waypoint_base
+            waypoint_world = follower.update(ee_world)
             routed[side] = WorldTarget(
                 Pose(waypoint_world, target.pose_world.rotation),
                 target.twist_world,
@@ -203,12 +195,10 @@ class ReactivePositionRunner:
                 at_final_waypoint=follower.at_final_waypoint(),
                 target_adjusted=route.target_adjusted,
                 route_changed=route_changed,
-                requested_target_base_m=route.requested_target,
-                effective_target_base_m=route.effective_target,
+                requested_target_world_m=route.requested_target,
+                effective_target_world_m=route.effective_target,
                 active_waypoint_world_m=waypoint_world,
-                waypoints_world_m=tuple(
-                    origin + rotation @ point for point in route.waypoints
-                ),
+                waypoints_world_m=tuple(route.waypoints),
             )
         return (
             DualArmWorldTargets(right=routed["right"], left=routed["left"]),
@@ -241,11 +231,8 @@ class ReactivePositionRunner:
             # first Update has a valid single-waypoint route.
             states = frames.controller_states(plant_state, self._calibration)
             for side in self._arms:
-                base_pose = self._base_pose_world(plant_state, side)
                 ee_world = states.for_arm(side).ee_pose_world.position_m
-                self._followers[side].reset(
-                    base_pose.rotation.T @ (ee_world - base_pose.position_m)
-                )
+                self._followers[side].reset(ee_world)
                 self._accepted_target[side] = None
         return plant_state
 
@@ -269,7 +256,7 @@ class ReactivePositionRunner:
         controller_states = frames.controller_states(
             input_state, self._calibration)
         routed, cylinder_routes = self._route_targets(
-            input_state, sampled_targets, resolved, controller_states)
+            sampled_targets, resolved, controller_states)
         command, traces = self._pipeline.step(
             controller_states,
             routed,

@@ -6,18 +6,16 @@ destabilize the arms. The simulation has no whole-arm collision-checking
 architecture, so introducing a physical obstacle body would change closed-loop
 behaviour rather than merely display it.
 
-Geometry is written into ``viewer.user_scn`` each frame, so it always reflects
-the live arm base pose. The cylinder is drawn from the SAME
-``CylinderKeepout`` the router consumes and the SAME base-frame transform, so
-what you see is what the router is avoiding.
+Geometry is written into ``viewer.user_scn`` each frame. The cylinder is drawn
+once from the SAME ``CylinderKeepout`` the router consumes, directly in WORLD
+coordinates. It is shared by both arms and never inherits either tilted arm
+base's rotation.
 
-Lengths are metres; the cylinder axis is the arm base frame's +z.
+Lengths are metres; the cylinder axis is world +z, perpendicular to the floor.
 """
 
 import mujoco
 import numpy as np
-
-from controller import frames
 
 
 # Physical cylinder: warm and fairly solid. Inflated clearance boundary: cool
@@ -29,17 +27,6 @@ ACTIVE_WAYPOINT_RGBA = (0.10, 1.00, 0.35, 0.95)
 ROUTE_WAYPOINT_RADIUS_M = 0.018
 ACTIVE_WAYPOINT_RADIUS_M = 0.030
 ROUTE_LINE_WIDTH_M = 0.006
-
-
-def base_pose_world(plant, calibration, side):
-    """T_W_B for one arm — the frame the keep-out cylinder is defined in."""
-    return frames.compose_pose(
-        plant.torso_pose_world, calibration.for_arm(side)
-    )
-
-
-def base_poses_world(plant, calibration, sides):
-    return {side: base_pose_world(plant, calibration, side) for side in sides}
 
 
 def describe(keepout, sides):
@@ -57,8 +44,8 @@ def describe(keepout, sides):
         f"z=[{keepout.z_min_m:.3f}, {keepout.z_max_m:.3f}] m  "
         f"clearance={keepout.clearance_m:.3f} m  "
         f"tolerance={keepout.waypoint_tolerance_m:.3f} m\n"
-        f"  frame: per-arm BASE frame, one cylinder per arm "
-        f"({', '.join(sides)})\n"
+        f"  frame: WORLD, axis=+z; one central cylinder shared by "
+        f"{', '.join(sides)}\n"
         "  END-EFFECTOR routing only - NOT whole-arm/link collision avoidance"
     )
 
@@ -107,8 +94,8 @@ def _add_line(scene, start, end, rgba):
     )
 
 
-def draw(scene, keepout, base_poses, cylinder_routes=None):
-    """Draw both cylinders per arm, plus the active route when routing.
+def draw(scene, keepout, cylinder_routes=None):
+    """Draw one shared cylinder plus each arm's active route when routing.
 
     ``scene`` is ``viewer.user_scn``. Returns the number of geoms added, so a
     caller can tell "disabled" from "drawn" without inspecting the scene.
@@ -117,22 +104,25 @@ def draw(scene, keepout, base_poses, cylinder_routes=None):
         return 0
 
     before = scene.ngeom
-    radius = keepout.radius_m
-    inflated_radius = keepout.obstacle_radius_m
-    for side, pose in base_poses.items():
-        origin = np.asarray(pose.position_m, dtype=float)
-        rotation = np.asarray(pose.rotation, dtype=float)
-        _add_cylinder_sized(
-            scene, origin, rotation, keepout.center,
-            keepout.z_min_m, keepout.z_max_m, radius, PHYSICAL_RGBA)
-        _add_cylinder_sized(
-            scene, origin, rotation, keepout.center,
-            keepout.obstacle_z_min_m, keepout.obstacle_z_max_m,
-            inflated_radius, CLEARANCE_RGBA)
+    _add_cylinder_sized(
+        scene,
+        keepout.center,
+        keepout.z_min_m,
+        keepout.z_max_m,
+        keepout.radius_m,
+        PHYSICAL_RGBA,
+    )
+    _add_cylinder_sized(
+        scene,
+        keepout.center,
+        keepout.obstacle_z_min_m,
+        keepout.obstacle_z_max_m,
+        keepout.obstacle_radius_m,
+        CLEARANCE_RGBA,
+    )
 
-        status = None if cylinder_routes is None else cylinder_routes.get(side)
-        if status is None:
-            continue
+    for status in (() if cylinder_routes is None
+                   else cylinder_routes.values()):
         points = [np.asarray(p, dtype=float) for p in status.waypoints_world_m]
         for previous, point in zip(points, points[1:]):
             _add_line(scene, previous, point, ROUTE_RGBA)
@@ -148,26 +138,26 @@ def draw(scene, keepout, base_poses, cylinder_routes=None):
 
 
 def _add_cylinder_sized(
-    scene, origin, rotation, center_xy, z_low, z_high, radius, rgba
+    scene, center_xy, z_low, z_high, radius, rgba
 ):
     geom = _add_geom(scene)
     if geom is None:
         return
     half_height = 0.5 * (z_high - z_low)
-    center_base = np.array(
+    center_world = np.array(
         [center_xy[0], center_xy[1], 0.5 * (z_low + z_high)], dtype=float
     )
     mujoco.mjv_initGeom(
         geom,
         int(mujoco.mjtGeom.mjGEOM_CYLINDER),
         np.array([radius, half_height, 0.0], dtype=float),
-        origin + rotation @ center_base,
-        rotation.flatten(),
+        center_world,
+        np.eye(3).flatten(),
         np.array(rgba, dtype=np.float32),
     )
 
 
-def link_intersections(model, data, keepout, base_poses):
+def link_intersections(model, data, keepout):
     """Diagnostic only: arm link origins inside the inflated cylinder.
 
     The cylinder is not a physical body, so MuJoCo reports no contacts for it.
@@ -183,26 +173,26 @@ def link_intersections(model, data, keepout, base_poses):
 
     findings = []
     inflated_radius = keepout.obstacle_radius_m
-    for side, pose in base_poses.items():
-        origin = np.asarray(pose.position_m, dtype=float)
-        rotation = np.asarray(pose.rotation, dtype=float)
+    for side in ("right", "left"):
         prefix = f"{side}_"
         for body_id in range(model.nbody):
             name = mujoco.mj_id2name(
                 model, int(mujoco.mjtObj.mjOBJ_BODY), body_id)
-            if not name or not name.startswith(prefix):
+            if (
+                not name
+                or not name.startswith(prefix)
+                or name == f"{side}_target"
+            ):
                 continue
-            point_base = rotation.T @ (
-                np.asarray(data.xpos[body_id], dtype=float) - origin
-            )
+            point_world = np.asarray(data.xpos[body_id], dtype=float)
             if not (
                 keepout.obstacle_z_min_m
-                <= point_base[2]
+                <= point_world[2]
                 <= keepout.obstacle_z_max_m
             ):
                 continue
             radial = float(
-                np.linalg.norm(point_base[:2] - keepout.center)
+                np.linalg.norm(point_world[:2] - keepout.center)
             )
             if radial < inflated_radius:
                 findings.append((side, name, inflated_radius - radial))

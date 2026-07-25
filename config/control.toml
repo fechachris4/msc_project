@@ -25,13 +25,13 @@ joint_velocity_rad_s = [
 ]
 position_lead_rad = 0.2
 
-# Optional vertical cylinder around the human/occupied area, expressed in each
-# ARM BASE frame (the same frame as targets.reference_frame = "base"), so each
-# arm routes around its own copy. When enabled, direct end-effector paths that
-# cross the inflated cylinder automatically take the shortest clockwise,
+# One world-frame vertical cylinder around the human/occupied area. The scene's
+# torso/person is centred at world x=0, y=0 between the two arm mounts, so the
+# configured centre below is that shared central axis. Both arms route around
+# this SAME cylinder; it is never rotated by either tilted arm-base frame.
+# Direct paths that cross the inflated cylinder take the shortest clockwise,
 # counter-clockwise or over-the-top waypoint route. Targets inside are moved
-# just outside; they are not refused. Key names match the hardware controller's
-# config/control.toml one-to-one. Metres.
+# just outside; they are not refused. Metres, in WORLD coordinates.
 #
 # END-EFFECTOR routing only — NOT whole-arm/link collision avoidance.
 [cylinder_keepout]
