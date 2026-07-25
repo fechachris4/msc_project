@@ -144,13 +144,10 @@ def main(argv=None):
                 cycle = runner.cycle()
                 desired_pos.show_targets(cycle.resolved_targets)
                 # Visualization only: user_scn geometry never contacts the
-                # arms. Rebuilt each frame so it tracks the moving arm bases.
+                # arms. The one shared cylinder stays world-aligned.
                 viewer.user_scn.ngeom = 0
-                base_poses = cylinder_view.base_poses_world(
-                    cycle.input_state, world.MOUNT_CALIBRATION, arms)
                 cylinder_view.draw(
-                    viewer.user_scn, keepout, base_poses,
-                    cycle.cylinder_routes)
+                    viewer.user_scn, keepout, cycle.cylinder_routes)
                 if path_publication_enabled:
                     try:
                         path_publisher.append(cycle)
@@ -186,7 +183,7 @@ def main(argv=None):
                         )
                     diagnostic = cylinder_view.format_link_intersections(
                         cylinder_view.link_intersections(
-                            world.model, world.data, keepout, base_poses)
+                            world.model, world.data, keepout)
                     )
                     if diagnostic is not None:
                         print(f"        {diagnostic}")

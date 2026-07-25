@@ -1,10 +1,9 @@
 """Cylinder keep-out wired into the simulation: config, Runner, viewer.
 
-Covers the parts the pure-geometry tests cannot: that the TOML schema matches
-the C++ field names, that a disabled keep-out leaves the simulation's original
-direct-target behaviour untouched, that an enabled keep-out routes the
-end effector while preserving the requested orientation, and that the viewer
-geometry is visualization-only and uses the same transform as the router.
+Covers the parts the pure-geometry tests cannot: the strict TOML schema, the
+disabled passthrough, shared world-frame routing, requested-orientation
+preservation, and a single world-vertical visualization using the same
+``CylinderKeepout`` as the router.
 
 All lengths are metres.
 """
@@ -52,20 +51,17 @@ def _run_one_cycle(keepout):
 
 
 def _blocking_keepout(cycle, side="right"):
-    """Build a keep-out that sits between the EE and its target, base frame."""
-    base_pose = cylinder_view.base_pose_world(
-        cycle.input_state, world.MOUNT_CALIBRATION, side)
-    rotation = np.asarray(base_pose.rotation, dtype=float)
-    origin = np.asarray(base_pose.position_m, dtype=float)
-
-    ee_base = rotation.T @ (
-        cycle.controller_states.for_arm(side).ee_pose_world.position_m - origin
+    """Build a world-frame keep-out between one EE and its target."""
+    ee_world = np.asarray(
+        cycle.controller_states.for_arm(side).ee_pose_world.position_m,
+        dtype=float,
     )
-    target_base = rotation.T @ (
-        cycle.resolved_targets.for_arm(side).pose_world.position_m - origin
+    target_world = np.asarray(
+        cycle.resolved_targets.for_arm(side).pose_world.position_m,
+        dtype=float,
     )
-    midpoint = 0.5 * (ee_base + target_base)
-    separation = float(np.linalg.norm(target_base[:2] - ee_base[:2]))
+    midpoint = 0.5 * (ee_world + target_world)
+    separation = float(np.linalg.norm(target_world[:2] - ee_world[:2]))
     return CylinderKeepout(
         enabled=True,
         center_xy_m=(midpoint[0], midpoint[1]),
@@ -84,9 +80,9 @@ class CylinderConfigSchemaTest(unittest.TestCase):
             self.assertTrue(
                 hasattr(config, key), f"missing config field {key}")
 
-    def test_defaults_match_the_hardware_controller(self):
+    def test_committed_world_cylinder_matches_the_scene_person(self):
         config = CONFIG.cylinder_keepout
-        self.assertFalse(config.cylinder_keepout_enabled)
+        self.assertTrue(config.cylinder_keepout_enabled)
         self.assertEqual(config.cylinder_keepout_center_x_m, 0.0)
         self.assertEqual(config.cylinder_keepout_center_y_m, 0.0)
         self.assertEqual(config.cylinder_keepout_radius_m, 0.25)
@@ -94,6 +90,15 @@ class CylinderConfigSchemaTest(unittest.TestCase):
         self.assertEqual(config.cylinder_keepout_z_max_m, 1.8)
         self.assertEqual(config.cylinder_keepout_clearance_m, 0.10)
         self.assertEqual(config.cylinder_waypoint_tolerance_m, 0.01)
+        np.testing.assert_allclose(
+            world.model.body_pos[world.torso_body_id][:2],
+            [
+                config.cylinder_keepout_center_x_m,
+                config.cylinder_keepout_center_y_m,
+            ],
+            atol=0.0,
+            rtol=0.0,
+        )
 
     def test_keepout_from_config_copies_every_field(self):
         keepout = keepout_from_config(CONFIG.cylinder_keepout)
@@ -138,8 +143,8 @@ class CylinderConfigSchemaTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "control.toml"
             path.write_text(source.replace(
-                "cylinder_keepout_enabled = false",
-                "cylinder_keepout_enabled = false\ncylinder_unexpected = 1",
+                "cylinder_keepout_enabled = true",
+                "cylinder_keepout_enabled = true\ncylinder_unexpected = 1",
             ))
             with self.assertRaises(ValueError):
                 load_config(path)
@@ -157,10 +162,10 @@ class DisabledKeepoutTest(unittest.TestCase):
             )
         self.assertIs(cycle.routed_targets, cycle.resolved_targets)
 
-    def test_committed_default_config_is_disabled(self):
-        self.assertFalse(
+    def test_committed_config_enables_the_central_keepout(self):
+        self.assertTrue(
             CONFIG.cylinder_keepout.cylinder_keepout_enabled,
-            "the committed default must preserve original behaviour",
+            "the central human keep-out must be enabled",
         )
 
 
@@ -194,18 +199,12 @@ class EnabledKeepoutRunnerTest(unittest.TestCase):
         from controller.cylinder_router import CylinderRouter
 
         router = CylinderRouter(self.keepout)
-        base_pose = cylinder_view.base_pose_world(
-            self.cycle.input_state, world.MOUNT_CALIBRATION, "right")
-        rotation = np.asarray(base_pose.rotation, dtype=float)
-        origin = np.asarray(base_pose.position_m, dtype=float)
-
         status = self.cycle.cylinder_routes["right"]
-        points = [rotation.T @ (np.asarray(p, dtype=float) - origin)
-                  for p in status.waypoints_world_m]
-        start = rotation.T @ (
-            self.cycle.controller_states.right.ee_pose_world.position_m
-            - origin
-        )
+        points = [
+            np.asarray(point, dtype=float)
+            for point in status.waypoints_world_m
+        ]
+        start = self.cycle.controller_states.right.ee_pose_world.position_m
         previous = start
         for point in points:
             self.assertFalse(
@@ -213,6 +212,15 @@ class EnabledKeepoutRunnerTest(unittest.TestCase):
                 "a routed segment enters the inflated cylinder",
             )
             previous = point
+
+    def test_status_reports_world_targets_without_a_base_transform(self):
+        status = self.cycle.cylinder_routes["right"]
+        np.testing.assert_allclose(
+            status.requested_target_world_m,
+            self.cycle.resolved_targets.right.pose_world.position_m,
+            atol=0.0,
+            rtol=0.0,
+        )
 
     def test_target_is_never_refused(self):
         status = self.cycle.cylinder_routes["right"]
@@ -247,25 +255,22 @@ class EnabledKeepoutRunnerTest(unittest.TestCase):
 
 class CylinderViewTest(unittest.TestCase):
     def setUp(self):
-        self.cycle = _run_one_cycle(CylinderKeepout(enabled=False))
-        self.base_poses = cylinder_view.base_poses_world(
-            self.cycle.input_state, world.MOUNT_CALIBRATION, world.SIDES)
         self.scene = mujoco.MjvScene(world.model, maxgeom=200)
 
     def test_disabled_draws_nothing(self):
         self.scene.ngeom = 0
         added = cylinder_view.draw(
-            self.scene, CylinderKeepout(enabled=False), self.base_poses)
+            self.scene, CylinderKeepout(enabled=False))
         self.assertEqual(added, 0)
         self.assertEqual(self.scene.ngeom, 0)
 
-    def test_enabled_draws_physical_and_clearance_cylinders_per_arm(self):
+    def test_enabled_draws_one_physical_and_one_clearance_cylinder(self):
         keepout = CylinderKeepout(
             enabled=True, radius_m=0.25, clearance_m=0.1,
             z_min_m=0.0, z_max_m=1.0)
         self.scene.ngeom = 0
-        added = cylinder_view.draw(self.scene, keepout, self.base_poses)
-        self.assertEqual(added, 2 * len(self.base_poses))
+        added = cylinder_view.draw(self.scene, keepout)
+        self.assertEqual(added, 2)
 
         # MjvGeom stores size/pos as float32, so compare at float32 precision.
         radii = sorted(
@@ -274,59 +279,49 @@ class CylinderViewTest(unittest.TestCase):
         self.assertAlmostEqual(radii[0], 0.25, places=6)
         self.assertAlmostEqual(radii[-1], 0.35, places=6)
 
-    def test_drawn_geometry_uses_the_same_base_transform_as_the_router(self):
+    def test_drawn_geometry_is_world_centred_and_world_vertical(self):
         keepout = CylinderKeepout(
             enabled=True, radius_m=0.25, clearance_m=0.1,
             z_min_m=0.0, z_max_m=1.0, center_xy_m=(0.1, -0.2))
         self.scene.ngeom = 0
-        cylinder_view.draw(self.scene, keepout, self.base_poses)
-
-        pose = self.base_poses["right"]
-        rotation = np.asarray(pose.rotation, dtype=float)
-        origin = np.asarray(pose.position_m, dtype=float)
-        expected = origin + rotation @ np.array([0.1, -0.2, 0.5])
+        cylinder_view.draw(self.scene, keepout)
+        expected = np.array([0.1, -0.2, 0.5])
 
         # float32 scene storage: 1e-5 m is ~100x the representable resolution
         # here and still far below any geometric error that would matter.
         positions = [
             np.array(self.scene.geoms[i].pos) for i in range(self.scene.ngeom)
         ]
-        self.assertTrue(
-            any(float(np.linalg.norm(p - expected)) < 1e-5 for p in positions),
-            "no drawn cylinder sits at the router's centre in world",
-        )
+        np.testing.assert_allclose(positions[0], expected, atol=1e-5, rtol=0.0)
         matrices = [
             np.array(self.scene.geoms[i].mat).reshape(3, 3)
             for i in range(self.scene.ngeom)
         ]
-        self.assertTrue(
-            any(float(np.max(np.abs(m - rotation))) < 1e-6 for m in matrices),
-            "no drawn cylinder uses the arm base rotation",
-        )
+        for matrix in matrices:
+            np.testing.assert_allclose(
+                matrix, np.eye(3), atol=1e-6, rtol=0.0)
 
     def test_drawn_geometry_is_visualization_only(self):
         """user_scn geometry must not introduce collidable model geoms."""
         before = world.model.ngeom
         keepout = CylinderKeepout(enabled=True, radius_m=0.25)
         self.scene.ngeom = 0
-        cylinder_view.draw(self.scene, keepout, self.base_poses)
+        cylinder_view.draw(self.scene, keepout)
         self.assertEqual(world.model.ngeom, before)
 
     def test_link_diagnostic_reports_without_changing_routing(self):
-        pose = self.base_poses["right"]
-        rotation = np.asarray(pose.rotation, dtype=float)
-        origin = np.asarray(pose.position_m, dtype=float)
         shoulder = world.data.xpos[world.backend.arm_base_id["right"]]
-        centre_base = rotation.T @ (np.asarray(shoulder, dtype=float) - origin)
 
         swallowing = CylinderKeepout(
             enabled=True,
-            center_xy_m=(centre_base[0], centre_base[1]),
+            center_xy_m=(shoulder[0], shoulder[1]),
             radius_m=1.5, clearance_m=0.1,
-            z_min_m=centre_base[2] - 2.0, z_max_m=centre_base[2] + 2.0)
+            z_min_m=shoulder[2] - 2.0, z_max_m=shoulder[2] + 2.0)
         findings = cylinder_view.link_intersections(
-            world.model, world.data, swallowing, self.base_poses)
+            world.model, world.data, swallowing)
         self.assertGreater(len(findings), 0)
+        self.assertFalse(
+            any(name.endswith("_target") for _, name, _ in findings))
         message = cylinder_view.format_link_intersections(findings)
         self.assertIn("not whole-arm avoidance", message)
 
@@ -334,7 +329,7 @@ class CylinderViewTest(unittest.TestCase):
         self.assertEqual(
             cylinder_view.link_intersections(
                 world.model, world.data,
-                CylinderKeepout(enabled=False), self.base_poses),
+                CylinderKeepout(enabled=False)),
             [],
         )
         self.assertIsNone(cylinder_view.format_link_intersections([]))
@@ -346,6 +341,8 @@ class CylinderViewTest(unittest.TestCase):
             CylinderKeepout(enabled=True), world.SIDES)
         self.assertIn("DISABLED", disabled)
         self.assertIn("ENABLED", enabled)
+        self.assertIn("WORLD", enabled)
+        self.assertIn("one central cylinder", enabled)
         self.assertIn("NOT whole-arm", enabled)
 
 
@@ -367,13 +364,13 @@ class OppositeSidesDemonstrationTest(unittest.TestCase):
         from analysis import cylinder_demo
         from controller.cylinder_router import CylinderRouter
 
-        keepout, demo_targets, start_base, target_base = (
+        keepout, demo_targets, start_world, target_world = (
             cylinder_demo.build_scenario())
 
         # The straight line really is blocked, and both endpoints are outside.
         router = CylinderRouter(keepout)
-        self.assertTrue(router.segment_intersects(start_base, target_base))
-        for point in (start_base, target_base):
+        self.assertTrue(router.segment_intersects(start_world, target_world))
+        for point in (start_world, target_world):
             radial = float(
                 np.linalg.norm(point[:2] - keepout.center))
             self.assertGreater(radial, keepout.obstacle_radius_m)
@@ -413,19 +410,19 @@ class OppositeSidesDemonstrationTest(unittest.TestCase):
         from analysis import cylinder_demo
         from controller.cylinder_router import CylinderRouter
 
-        keepout, _, start_base, target_base = cylinder_demo.build_scenario()
+        keepout, _, start_world, target_world = cylinder_demo.build_scenario()
         router = CylinderRouter(keepout)
-        route = router.plan(start_base, target_base)
+        route = router.plan(start_world, target_world)
 
         self.assertNotEqual(route.kind, CylinderRouteKind.DIRECT)
-        previous = start_base
+        previous = start_world
         for point in route.waypoints:
             self.assertFalse(
                 router.segment_intersects(previous, point),
                 "a demonstration segment enters the inflated cylinder",
             )
             previous = point
-        np.testing.assert_allclose(route.waypoints[-1], target_base)
+        np.testing.assert_allclose(route.waypoints[-1], target_world)
 
 
 if __name__ == "__main__":

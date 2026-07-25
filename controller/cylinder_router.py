@@ -6,10 +6,9 @@ MuJoCo, no I/O. Every constant and branch mirrors the C++ so the two stay
 comparable — ``tests/test_cylinder_router.py`` cross-checks this module against
 the compiled C++ implementation.
 
-Frames and units: all inputs and outputs are metres in ONE cylinder frame, the
-frame the caller chose to express the keep-out in. The cylinder axis is that
-frame's +z. Angles are radians. Nothing here converts frames; the caller
-(``controller/runner.py``) does that once at its boundary.
+Frames and units: all inputs and outputs are metres in WORLD coordinates. The
+single cylinder axis is world +z. Angles are radians. Nothing here converts
+frames; ``controller/runner.py`` supplies already-resolved world positions.
 
 SCOPE: this routes the END EFFECTOR point only. It is not whole-arm or
 per-link collision avoidance, and it never refuses a target — a request inside
@@ -48,11 +47,11 @@ def route_kind_name(kind):
 
 @dataclass(frozen=True, slots=True)
 class CylinderKeepout:
-    """One finite vertical cylinder; field-for-field the C++ ``CylinderKeepout``.
+    """One finite world-vertical cylinder shared by both arms.
 
-    center_xy_m      cylinder axis position in the cylinder frame, m
+    center_xy_m      cylinder axis position in world x/y, m
     radius_m         physical radius, m (inflated by clearance when routing)
-    z_min_m/z_max_m  finite extent along the cylinder frame's z, m
+    z_min_m/z_max_m  finite extent along world z, m
     clearance_m      inflation applied to BOTH radius and height, m
     waypoint_tolerance_m  advance distance for the follower, m
     """

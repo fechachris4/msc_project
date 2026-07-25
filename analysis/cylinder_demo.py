@@ -1,10 +1,9 @@
 """Cylinder keep-out demonstration: start and target on opposite sides.
 
-Places a keep-out cylinder directly between the right arm's measured start
-pose and a target mirrored to the far side of it, so the direct path is
-blocked and the router must go around (or over). The committed
-``config/control.toml`` stays disabled — this script enables the keep-out
-locally, so running it never changes default simulation behaviour.
+Places one world-vertical keep-out cylinder directly between the right arm's
+measured start pose and a target mirrored to the far side of it, so the direct
+path is blocked and the router must go around (or over). This diagnostic uses
+local geometry and never changes the committed central-person configuration.
 
     .venv/bin/mjpython -m analysis.cylinder_demo            # viewer (macOS)
     .venv/bin/python -m analysis.cylinder_demo --headless   # no window
@@ -45,9 +44,9 @@ SIDE = "right"
 # already ships for the left arm.
 START_POSTURE_RAD = CONFIG.simulation.initial_joint_position("left")
 
-# Cylinder geometry for the demonstration, metres in the arm base frame.
-# The route direction is base +y, verified reachable at 0.00 mm residual from
-# the posture above; base +-x is near the reach limit and would confound the
+# Cylinder geometry for the demonstration, metres in the world frame.
+# The route direction is world +y, verified reachable at 0.00 mm residual from
+# the posture above; world +-x is near the reach limit and would confound the
 # demonstration with tracking error.
 ROUTE_AXIS = np.array([0.0, 1.0, 0.0])
 STANDOFF_M = 0.15   # cylinder centre this far along ROUTE_AXIS from the EE
@@ -56,14 +55,6 @@ CLEARANCE_M = 0.02
 HALF_HEIGHT_M = 0.50
 WAYPOINT_TOLERANCE_M = 0.02
 PRINT_EVERY = 250
-
-
-def _base_frame(plant):
-    pose = cylinder_view.base_pose_world(plant, world.MOUNT_CALIBRATION, SIDE)
-    return (
-        np.asarray(pose.position_m, dtype=float),
-        np.asarray(pose.rotation, dtype=float),
-    )
 
 
 def set_start_posture():
@@ -77,7 +68,7 @@ def set_start_posture():
 
 
 def build_scenario():
-    """Return (keepout, framed targets, start/target in base frame).
+    """Return (keepout, framed targets, start/target in world frame).
 
     The target is the measured start position reflected through the cylinder
     axis, so start and target sit on exactly opposite sides of it and the
@@ -87,37 +78,35 @@ def build_scenario():
 
     set_start_posture()
     plant = world.read_state(Twist.zero())
-    origin, rotation = _base_frame(plant)
     states = frames.controller_states(plant, world.MOUNT_CALIBRATION)
     ee = states.for_arm(SIDE).ee_pose_world
 
-    start_base = rotation.T @ (
-        np.asarray(ee.position_m, dtype=float) - origin)
-    rotation_base = rotation.T @ np.asarray(ee.rotation, dtype=float)
+    start_world = np.asarray(ee.position_m, dtype=float)
+    rotation_world = np.asarray(ee.rotation, dtype=float)
 
     axis = ROUTE_AXIS / float(np.linalg.norm(ROUTE_AXIS))
-    centre = start_base + STANDOFF_M * axis
+    centre = start_world + STANDOFF_M * axis
     # Mirror the start through the centre: opposite sides, equal standoff.
-    target_base = centre + STANDOFF_M * axis
+    target_world = centre + STANDOFF_M * axis
 
     keepout = CylinderKeepout(
         enabled=True,
         center_xy_m=(float(centre[0]), float(centre[1])),
         radius_m=RADIUS_M,
-        z_min_m=float(start_base[2]) - HALF_HEIGHT_M,
-        z_max_m=float(start_base[2]) + HALF_HEIGHT_M,
+        z_min_m=float(start_world[2]) - HALF_HEIGHT_M,
+        z_max_m=float(start_world[2]) + HALF_HEIGHT_M,
         clearance_m=CLEARANCE_M,
         waypoint_tolerance_m=WAYPOINT_TOLERANCE_M,
     )
 
     demo_target = FramedTarget(
-        TargetFrame.BASE,
-        Pose(target_base, rotation_base),
+        TargetFrame.WORLD,
+        Pose(target_world, rotation_world),
         Twist.zero(),
     )
     held = FramedTarget(
-        TargetFrame.BASE,
-        Pose(start_base, rotation_base),
+        TargetFrame.WORLD,
+        Pose(start_world, rotation_world),
         Twist.zero(),
     )
     targets = (
@@ -125,19 +114,19 @@ def build_scenario():
         if SIDE == "right"
         else DualArmFramedTargets(right=held, left=demo_target)
     )
-    return keepout, targets, start_base, target_base
+    return keepout, targets, start_world, target_world
 
 
-def _print_header(keepout, start_base, target_base):
+def _print_header(keepout, start_world, target_world):
     print(cylinder_view.describe(keepout, (SIDE,)))
-    separation = float(np.linalg.norm(target_base[:2] - start_base[:2]))
+    separation = float(np.linalg.norm(target_world[:2] - start_world[:2]))
     print(
-        f"  start  (base) = [{start_base[0]: .3f} {start_base[1]: .3f} "
-        f"{start_base[2]: .3f}] m"
+        f"  start  (world) = [{start_world[0]: .3f} {start_world[1]: .3f} "
+        f"{start_world[2]: .3f}] m"
     )
     print(
-        f"  target (base) = [{target_base[0]: .3f} {target_base[1]: .3f} "
-        f"{target_base[2]: .3f}] m"
+        f"  target (world) = [{target_world[0]: .3f} {target_world[1]: .3f} "
+        f"{target_world[2]: .3f}] m"
     )
     print(
         f"  centre-to-centre separation = {separation:.3f} m across an "
@@ -145,7 +134,7 @@ def _print_header(keepout, start_base, target_base):
     )
 
 
-def _print_status(step, cycle, keepout, base_poses):
+def _print_status(step, cycle, keepout):
     status = cycle.cylinder_routes.get(SIDE)
     if status is None:
         return
@@ -162,15 +151,15 @@ def _print_status(step, cycle, keepout, base_poses):
     )
     message = cylinder_view.format_link_intersections(
         cylinder_view.link_intersections(
-            world.model, world.data, keepout, base_poses)
+            world.model, world.data, keepout)
     )
     if message is not None:
         print(f"    {message}")
 
 
 def run(headless=False, steps=4000):
-    keepout, targets, start_base, target_base = build_scenario()
-    _print_header(keepout, start_base, target_base)
+    keepout, targets, start_world, target_world = build_scenario()
+    _print_header(keepout, start_world, target_world)
 
     world.backend.configure_torso_driver(None, None)
     runner = ReactivePositionRunner(
@@ -188,13 +177,11 @@ def run(headless=False, steps=4000):
         if headless:
             for step in range(steps):
                 cycle = runner.cycle()
-                base_poses = cylinder_view.base_poses_world(
-                    cycle.input_state, world.MOUNT_CALIBRATION, (SIDE,))
                 status = cycle.cylinder_routes.get(SIDE)
                 if status is not None:
                     kinds.add(status.kind)
                 if step % PRINT_EVERY == 0:
-                    _print_status(step, cycle, keepout, base_poses)
+                    _print_status(step, cycle, keepout)
             return kinds
 
         with mujoco.viewer.launch_passive(
@@ -204,17 +191,14 @@ def run(headless=False, steps=4000):
             while viewer.is_running():
                 step_start = time.perf_counter()
                 cycle = runner.cycle()
-                base_poses = cylinder_view.base_poses_world(
-                    cycle.input_state, world.MOUNT_CALIBRATION, (SIDE,))
                 viewer.user_scn.ngeom = 0
                 cylinder_view.draw(
-                    viewer.user_scn, keepout, base_poses,
-                    cycle.cylinder_routes)
+                    viewer.user_scn, keepout, cycle.cylinder_routes)
                 status = cycle.cylinder_routes.get(SIDE)
                 if status is not None:
                     kinds.add(status.kind)
                 if step % PRINT_EVERY == 0:
-                    _print_status(step, cycle, keepout, base_poses)
+                    _print_status(step, cycle, keepout)
                 step += 1
                 viewer.sync()
                 remaining = (
