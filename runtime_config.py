@@ -18,6 +18,14 @@ ARMS = ("right", "left")
 TARGET_FRAMES = ("world", "base", "torso")
 TRAJECTORY_STARTS = ("measured", "configured_target")
 TRAJECTORY_SEGMENT_TYPES = ("hold", "line", "waypoints", "circle")
+_CIRCLE_PLANE_DIRECTIONS = {
+    "xy": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
+    "horizontal": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
+    "xz": ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0)),
+    "vertical_xz": ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0)),
+    "yz": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+    "vertical_yz": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+}
 
 
 @dataclass(frozen=True)
@@ -695,20 +703,14 @@ def _parse_trajectory_segment(table, trajectory_location, index):
         "type",
         "duration_s",
         "radius_m",
+        "plane",
         "normal",
         "start_direction",
         "revolutions",
         "clockwise",
         "end_rpy_rad",
     }
-    required = {
-        "type",
-        "radius_m",
-        "normal",
-        "start_direction",
-        "revolutions",
-        "clockwise",
-    }
+    required = {"type", "radius_m", "revolutions", "clockwise"}
     actual = set(table)
     missing = sorted(required - actual)
     extra = sorted(actual - allowed)
@@ -716,18 +718,41 @@ def _parse_trajectory_segment(table, trajectory_location, index):
         raise ValueError(
             f"{location} circle keys differ; missing={missing}, extra={extra}"
         )
+    has_plane = "plane" in table
+    has_normal = "normal" in table
+    has_start_direction = "start_direction" in table
+    if has_plane and (has_normal or has_start_direction):
+        raise ValueError(
+            f"{location} circle requires either plane or "
+            "normal/start_direction, not both"
+        )
+    if not has_plane and not (has_normal and has_start_direction):
+        raise ValueError(
+            f"{location} circle requires plane or both "
+            "normal and start_direction"
+        )
+    if has_plane:
+        plane = _choice(
+            table["plane"],
+            tuple(_CIRCLE_PLANE_DIRECTIONS),
+            f"{location}.plane",
+        )
+        normal, start_direction = _CIRCLE_PLANE_DIRECTIONS[plane]
+    else:
+        normal = _vector(table["normal"], 3, f"{location}.normal")
+        start_direction = _vector(
+            table["start_direction"],
+            3,
+            f"{location}.start_direction",
+        )
     return TrajectorySegmentConfig(
         type=kind,
         duration_s=_optional_positive(table, "duration_s", location),
         radius_m=_finite_number(
             table["radius_m"], f"{location}.radius_m", positive=True
         ),
-        normal=_vector(table["normal"], 3, f"{location}.normal"),
-        start_direction=_vector(
-            table["start_direction"],
-            3,
-            f"{location}.start_direction",
-        ),
+        normal=normal,
+        start_direction=start_direction,
         revolutions=_positive_integer(
             table["revolutions"], f"{location}.revolutions"
         ),
