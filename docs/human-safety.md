@@ -126,6 +126,11 @@ safety stops. Minimum reported clearance was 0.01996 m beyond the configured
 required 0.02 m. The safety-projection phase measured 0.35 ms at the 99th
 percentile on the development Mac after warm-up.
 
+The complete Python/MuJoCo Runner cycle measured 3.13 ms at the 99th
+percentile in that run, which is above the configured 2 ms nominal cycle.
+The safety mathematics is inside its sub-millisecond budget, but end-to-end
+500 Hz timing is not yet proven.
+
 The complete Python suite passes 281 tests; three optional C++ router
 cross-checks are skipped when the separate reference build is unavailable.
 
@@ -137,3 +142,5 @@ cylinder, not live whole-body tracking; collision meshes, mount calibration,
 timing, sensing latency, actuator tracking, and stop behavior must be
 validated on the real system. Hardware commissioning should begin at reduced
 speed with an independent emergency stop and conservative monitored tests.
+The eventual C++/hardware loop also needs measured worst-case timing before
+this filter can be treated as a real-time protection layer.
