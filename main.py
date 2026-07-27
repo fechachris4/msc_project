@@ -4,6 +4,7 @@ Per-step data flow (all SI: meters, radians; mm only in the printout):
   sampled TOML target source + backend PlantState [trajectory, sim/world]
   -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  [controller/frames]
   -> pose + twist errors; PD + DLS qdot          [controller/reactive_controller]
+  -> whole-arm human-distance safety projection  [controller/reactive_controller]
   -> integrate joint-position command (rad)      [controller/position_actuation]
   -> backend.exchange: apply command, mj_step, return next state
 
@@ -27,7 +28,7 @@ from plotting.live_cartesian_path import (
     LiveCartesianPathPublisher,
 )
 from runtime_config import CONFIG, print_effective_config
-from sim import cylinder_view, motion, world
+from sim import cylinder_view, human_safety_view, motion, world
 from sim.target_trajectory import (
     prepare_target_trajectory,
     print_target_trajectory_setup,
@@ -121,6 +122,7 @@ def main(argv=None):
     runner.start()
     keepout = runner.cylinder_keepout
     print(cylinder_view.describe(keepout, arms))
+    print(human_safety_view.describe(CONFIG.human_safety))
     path_publisher = None
     path_publication_enabled = False
     if show_trajectory:
@@ -148,6 +150,14 @@ def main(argv=None):
                 viewer.user_scn.ngeom = 0
                 cylinder_view.draw(
                     viewer.user_scn, keepout, cycle.cylinder_routes)
+                human_safety_view.draw(
+                    viewer.user_scn,
+                    cycle.input_state,
+                    cycle.controller_states,
+                    cycle.human_safety_states,
+                    CONFIG.human_safety,
+                    arms,
+                )
                 if path_publication_enabled:
                     try:
                         path_publisher.append(cycle)
@@ -180,6 +190,24 @@ def main(argv=None):
                             f"/{status.waypoint_count}  "
                             f"final={status.at_final_waypoint}  "
                             f"target_adjusted={status.target_adjusted}"
+                        )
+                    for side, status in (
+                        cycle.human_safety_statuses.items()
+                    ):
+                        clearance_mm = (
+                            status.minimum_clearance_m * 1000.0
+                        )
+                        label = (
+                            "SAFETY STOP"
+                            if status.stopped
+                            else "human safety"
+                        )
+                        print(
+                            f"        {side:5s} {label}: "
+                            f"clearance={clearance_mm:.1f} mm  "
+                            f"active={status.active_constraint_count}  "
+                            f"adjusted={status.human_adjusted}  "
+                            f"reason={status.reason}"
                         )
                     diagnostic = cylinder_view.format_link_intersections(
                         cylinder_view.link_intersections(

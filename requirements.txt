@@ -2,3 +2,5 @@ mujoco>=3.8
 numpy>=2.0
 pin>=4.0
 matplotlib>=3.9
+scipy>=1.17
+osqp>=1.1

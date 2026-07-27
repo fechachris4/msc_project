@@ -1,7 +1,7 @@
 # Project Map
 
 Audit date: 2026-07-07; architecture and evidence status refreshed
-2026-07-23 after migration Steps 1–6. Current suite: 188 tests pass
+2026-07-27 after the whole-arm safety-filter port. Current suite: 281 tests pass
 (`python -m unittest discover tests`), plus the 500-cycle golden trace at
 `rtol=1e-12`, `atol=1e-12`.
 
@@ -30,7 +30,9 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 ├── controller/frames.py      (PlantState + framed targets → world controller state)
 │   ├── controller/pin_fk.py       (Pinocchio T_K_E(q) — CONTROL PATH)
 │   └── controller/transforms.py   (pure SE(3) math)
-├── controller/reactive_controller.py  (complete PD + DLS + null-space equations)
+├── controller/human_safety.py      (torso-frame whole-arm distance constraints)
+├── controller/link_spheres.py      (mesh-covering arm geometry)
+├── controller/reactive_controller.py  (PD + DLS + safety projection equations)
 ├── controller/position_actuation.py   (limits + persistent position integration)
 ├── controller/servo.py                (explicit reactive-position composition)
 ├── controller/runner.py               (frame boundary, pipeline step, backend exchange)
@@ -60,8 +62,10 @@ sim/scene.xml + sim/assets/kinova_gen3/gen3.xml   (MJCF: torso mocap + 2 attache
 | `controller/pin_fk.py` | Pinocchio-backed `T_K_E(q)` — control path FK | Validated | pinocchio, `gen3.xml` | `frames.py` | `test_pin_fk` vs analytical FK, 1e-9 | High | Do not touch |
 | `controller/state.py` | Fixed-shape, read-only SI plant/target/command records | Implemented | numpy | backend, frames, Runner, pipelines | `test_state_frames.py` | High | Keep one-to-one with future C++ structs |
 | `controller/frames.py` | Pure boundary from plant/framed target to world controller quantities | Validated (incl. moved torso) | state, pin_fk, transforms | Runner, diagnostics | `WorldFrameEETest`, `JacobianWorldTest`, `test_state_frames.py` | High | No backend imports or controller flags |
+| `controller/link_spheres.py` | Conservative sphere chains covering every active Kinova collision-mesh vertex | Validated | generated constants only | frames, safety view | `LinkSphereGroundTruthTest` | High in current MJCF | Regenerate after collision-mesh changes |
+| `controller/human_safety.py` | Torso-attached capped-cylinder distance and whole-arm point constraints | Validated | state, runtime config | Runner | `test_human_safety.py` | High in simulation | Geometry only; no controller policy |
 | `controller/desired_pos.py` | Configured framed targets and MuJoCo marker display | Implemented | state, transforms, targets | `main.py`, analysis | `test_reference.py` | High | No control math |
-| `controller/reactive_controller.py` | Complete world-frame PD, DLS IK, and null-space equations in reading order | Validated | state, runtime config | servo pipeline | golden trace + `test_reactive_pipeline.py` | High | Sole controller-math file |
+| `controller/reactive_controller.py` | Complete world-frame PD, DLS IK, null-space, and safety-projection equations in reading order | Validated | state, runtime config | servo pipeline | golden trace + `test_reactive_pipeline.py` + `test_human_safety.py` | High in simulation | Sole controller-math file |
 | `controller/position_actuation.py` | Joint-velocity clipping and persistent position integration | Validated | state | servo pipeline | golden trace + `test_reactive_pipeline.py` | High | Reconstruct to reset |
 | `controller/servo.py` | Explicit reactive-pose-to-position pipeline composition | Validated | reactive_pose, position_actuation, state | Runner, tests | golden trace + pipeline/closed-loop tests | High | No frames, backend, or MuJoCo |
 | `controller/backend.py` | Minimal plant protocol: takeover, exchange, release | Implemented | state | Runner, backends | `test_runner_backend.py` | High | Do not add backend-specific operations |

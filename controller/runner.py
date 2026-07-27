@@ -11,6 +11,7 @@ from controller.cylinder_router import (
     CylinderRouteFollower,
     route_kind_name,
 )
+from controller import human_safety
 from controller.servo import (
     DualArmControlTraces,
     DualArmPipelineSetup,
@@ -19,6 +20,7 @@ from controller.servo import (
 from controller.state import (
     DualArmControllerStates,
     DualArmFramedTargets,
+    DualArmHumanSafetyStates,
     DualArmWorldTargets,
     JointPositionCommand,
     MountCalibration,
@@ -30,7 +32,12 @@ from controller.trajectory import (
     as_dual_arm_target_source,
     sample_dual_arm_target_source,
 )
-from runtime_config import CONFIG, CylinderKeepoutConfig, ReactivePoseConfig
+from runtime_config import (
+    CONFIG,
+    CylinderKeepoutConfig,
+    HumanSafetyConfig,
+    ReactivePoseConfig,
+)
 
 
 def keepout_from_config(config):
@@ -81,6 +88,8 @@ class RunnerCycle:
     resolved_targets: DualArmWorldTargets
     routed_targets: DualArmWorldTargets
     controller_states: DualArmControllerStates
+    human_safety_states: DualArmHumanSafetyStates
+    human_safety_statuses: dict
     command: JointPositionCommand
     traces: DualArmControlTraces
     next_state: PlantState
@@ -99,6 +108,7 @@ class ReactivePositionRunner:
         arms=("right", "left"),
         controller_config=CONFIG.reactive_pose,
         cylinder_keepout=CONFIG.cylinder_keepout,
+        human_safety_config=CONFIG.human_safety,
     ):
         if not isinstance(backend, PlantBackend):
             raise TypeError("backend must satisfy PlantBackend")
@@ -108,6 +118,10 @@ class ReactivePositionRunner:
             raise TypeError("pipeline_setup must be DualArmPipelineSetup")
         if not isinstance(controller_config, ReactivePoseConfig):
             raise TypeError("controller_config must be ReactivePoseConfig")
+        if not isinstance(human_safety_config, HumanSafetyConfig):
+            raise TypeError(
+                "human_safety_config must be HumanSafetyConfig"
+            )
         selected = tuple(arms)
         if not selected or any(
             side not in ("right", "left") for side in selected
@@ -122,6 +136,7 @@ class ReactivePositionRunner:
         self._target_source = as_dual_arm_target_source(source_targets)
         self._arms = selected
         self._controller_config = controller_config
+        self._human_safety_config = human_safety_config
         self._plant_state = None
         self._pipeline = None
         self._target_time_origin_s = None
@@ -220,6 +235,7 @@ class ReactivePositionRunner:
                 plant_state,
                 self._pipeline_setup,
                 self._controller_config,
+                self._human_safety_config,
             )
         except Exception:
             self._backend.release()
@@ -255,6 +271,11 @@ class ReactivePositionRunner:
             input_state, self._calibration, sampled_targets)
         controller_states = frames.controller_states(
             input_state, self._calibration)
+        human_safety_states = human_safety.evaluate_dual_arm(
+            input_state,
+            controller_states,
+            self._human_safety_config,
+        )
         routed, cylinder_routes = self._route_targets(
             sampled_targets, resolved, controller_states)
         command, traces = self._pipeline.step(
@@ -262,7 +283,9 @@ class ReactivePositionRunner:
             routed,
             input_state.nominal_dt_s,
             self._arms,
+            human_safety_states,
         )
+        human_safety_statuses = self._pipeline.human_safety_statuses
         next_state = self._backend.exchange(command)
         self._plant_state = next_state
         return RunnerCycle(
@@ -272,6 +295,8 @@ class ReactivePositionRunner:
             resolved_targets=resolved,
             routed_targets=routed,
             controller_states=controller_states,
+            human_safety_states=human_safety_states,
+            human_safety_statuses=human_safety_statuses,
             command=command,
             traces=traces,
             next_state=next_state,

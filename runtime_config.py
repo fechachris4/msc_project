@@ -73,6 +73,24 @@ class CylinderKeepoutConfig:
 
 
 @dataclass(frozen=True)
+class HumanSafetyConfig:
+    """Torso-attached finite cylinder used by the whole-arm safety filter."""
+
+    enabled: bool
+    center_xy_torso_m: tuple[float, float]
+    radius_m: float
+    z_min_torso_m: float
+    z_max_torso_m: float
+    clearance_m: float
+    control_margin_m: float
+    activation_distance_m: float
+    recovery_gain_s_inv: float
+    approach_velocity_damping: float
+    projection_iterations: int
+    constraint_tolerance_m_s: float
+
+
+@dataclass(frozen=True)
 class TrajectoryConstraintsConfig:
     max_linear_speed_m_s: float | None
     max_linear_acceleration_m_s2: float | None
@@ -135,6 +153,7 @@ class ProjectConfig:
     reactive_pose: ReactivePoseConfig
     limits: LimitConfig
     cylinder_keepout: CylinderKeepoutConfig
+    human_safety: HumanSafetyConfig
     right_target: TargetConfig
     left_target: TargetConfig
     simulation: SimulationConfig
@@ -154,6 +173,7 @@ _ROOT_KEYS = {
     "controller",
     "limits",
     "cylinder_keepout",
+    "human_safety",
     "targets",
     "simulation",
 }
@@ -180,6 +200,20 @@ _CYLINDER_KEEPOUT_KEYS = {
     "cylinder_keepout_z_max_m",
     "cylinder_keepout_clearance_m",
     "cylinder_waypoint_tolerance_m",
+}
+_HUMAN_SAFETY_KEYS = {
+    "enabled",
+    "center_xy_torso_m",
+    "radius_m",
+    "z_min_torso_m",
+    "z_max_torso_m",
+    "clearance_m",
+    "control_margin_m",
+    "activation_distance_m",
+    "recovery_gain_s_inv",
+    "approach_velocity_damping",
+    "projection_iterations",
+    "constraint_tolerance_m_s",
 }
 _TARGET_KEYS = {"reference_frame", "position_m", "rpy_rad"}
 _TRAJECTORY_REQUIRED_KEYS = {
@@ -406,6 +440,69 @@ def _parse_cylinder_keepout(table):
         raise ValueError(
             f"{location}.cylinder_keepout_z_max_m must be greater than "
             "cylinder_keepout_z_min_m"
+        )
+    return config
+
+
+def _parse_human_safety(table):
+    location = "human_safety"
+    table = _require_table(table, location)
+    _require_exact_keys(table, _HUMAN_SAFETY_KEYS, location)
+    config = HumanSafetyConfig(
+        enabled=_boolean(table["enabled"], f"{location}.enabled"),
+        center_xy_torso_m=_vector(
+            table["center_xy_torso_m"],
+            2,
+            f"{location}.center_xy_torso_m",
+        ),
+        radius_m=_finite_number(
+            table["radius_m"], f"{location}.radius_m", positive=True
+        ),
+        z_min_torso_m=_finite_number(
+            table["z_min_torso_m"], f"{location}.z_min_torso_m"
+        ),
+        z_max_torso_m=_finite_number(
+            table["z_max_torso_m"], f"{location}.z_max_torso_m"
+        ),
+        clearance_m=_finite_number(
+            table["clearance_m"],
+            f"{location}.clearance_m",
+            nonnegative=True,
+        ),
+        control_margin_m=_finite_number(
+            table["control_margin_m"],
+            f"{location}.control_margin_m",
+            nonnegative=True,
+        ),
+        activation_distance_m=_finite_number(
+            table["activation_distance_m"],
+            f"{location}.activation_distance_m",
+            positive=True,
+        ),
+        recovery_gain_s_inv=_finite_number(
+            table["recovery_gain_s_inv"],
+            f"{location}.recovery_gain_s_inv",
+            positive=True,
+        ),
+        approach_velocity_damping=_finite_number(
+            table["approach_velocity_damping"],
+            f"{location}.approach_velocity_damping",
+            nonnegative=True,
+        ),
+        projection_iterations=_positive_integer(
+            table["projection_iterations"],
+            f"{location}.projection_iterations",
+        ),
+        constraint_tolerance_m_s=_finite_number(
+            table["constraint_tolerance_m_s"],
+            f"{location}.constraint_tolerance_m_s",
+            positive=True,
+        ),
+    )
+    if config.z_max_torso_m <= config.z_min_torso_m:
+        raise ValueError(
+            f"{location}.z_max_torso_m must be greater than "
+            "z_min_torso_m"
         )
     return config
 
@@ -816,6 +913,7 @@ def load_config(path=DEFAULT_CONFIG_PATH):
     _require_exact_keys(limits, _LIMIT_KEYS, "limits")
 
     cylinder_keepout = _parse_cylinder_keepout(parsed["cylinder_keepout"])
+    human_safety = _parse_human_safety(parsed["human_safety"])
 
     targets = _require_table(parsed["targets"], "targets")
     _require_exact_keys(targets, set(ARMS), "targets")
@@ -842,6 +940,7 @@ def load_config(path=DEFAULT_CONFIG_PATH):
             ),
         ),
         cylinder_keepout=cylinder_keepout,
+        human_safety=human_safety,
         right_target=_parse_target(targets["right"], "right"),
         left_target=_parse_target(targets["left"], "left"),
         simulation=_parse_simulation(parsed["simulation"]),
@@ -896,6 +995,7 @@ def effective_config_dict(config):
         },
         "limits": asdict(config.limits),
         "cylinder_keepout": asdict(config.cylinder_keepout),
+        "human_safety": asdict(config.human_safety),
         "targets": {
             "right": asdict(config.right_target),
             "left": asdict(config.left_target),

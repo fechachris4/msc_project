@@ -9,13 +9,15 @@ from pathlib import Path
 import numpy as np
 import pinocchio as pin
 
-from controller.pin_fk import build_pin_model, pin_T_K_E
+from controller.link_spheres import LINK_SPHERES
+from controller.pin_fk import build_pin_model
 from controller.state import (
     ArmControllerState,
     DualArmControllerStates,
     DualArmFramedTargets,
     DualArmWorldTargets,
     FramedTarget,
+    LinkSafetyPoints,
     MountCalibration,
     PlantState,
     Pose,
@@ -36,6 +38,71 @@ _GEN3_PATH = (
 pin_model, pin_data, ee_frame_id = build_pin_model(
     _GEN3_PATH, "base_link", "pinch_site"
 )
+_LINK_SPHERE_NAMES = tuple(sphere.name for sphere in LINK_SPHERES)
+_LINK_SPHERE_FRAME_NAMES = tuple(
+    sphere.frame_name for sphere in LINK_SPHERES
+)
+_LINK_SPHERE_CENTERS = np.asarray([
+    sphere.center_frame_m for sphere in LINK_SPHERES
+])
+_LINK_SPHERE_RADII = np.asarray([
+    sphere.radius_m for sphere in LINK_SPHERES
+])
+_LINK_SPHERE_MOUNT_EXEMPT = np.asarray([
+    sphere.mount_exempt for sphere in LINK_SPHERES
+])
+_LINK_SPHERE_FRAME_GROUPS = tuple(
+    (
+        frame_name,
+        pin_model.getFrameId(frame_name),
+        np.asarray([
+            index for index, sphere in enumerate(LINK_SPHERES)
+            if sphere.frame_name == frame_name
+        ], dtype=int),
+    )
+    for frame_name in dict.fromkeys(_LINK_SPHERE_FRAME_NAMES)
+)
+
+
+def _link_safety_points(q, T_W_B, R_W_B):
+    """Resolve fixed mesh-derived sphere centres and point Jacobians."""
+    del q  # Joint Jacobians and placements are already current in pin_data.
+    positions_world = np.empty((len(LINK_SPHERES), 3))
+    jacobians_world = np.empty((len(LINK_SPHERES), 3, 7))
+    for _, frame_id, indices in _LINK_SPHERE_FRAME_GROUPS:
+        placement = pin_data.oMf[frame_id]
+        offsets_base = (
+            _LINK_SPHERE_CENTERS[indices] @ placement.rotation.T
+        )
+        positions_base = placement.translation + offsets_base
+        frame_jacobian_base = pin.getFrameJacobian(
+            pin_model,
+            pin_data,
+            frame_id,
+            pin.LOCAL_WORLD_ALIGNED,
+        )
+        angular_cross_offset = np.cross(
+            frame_jacobian_base[3:].T[None, :, :],
+            offsets_base[:, None, :],
+        )
+        point_jacobians_base = (
+            frame_jacobian_base[:3].T[None, :, :]
+            + angular_cross_offset
+        ).transpose(0, 2, 1)
+        positions_world[indices] = (
+            T_W_B[:3, 3] + positions_base @ R_W_B.T
+        )
+        jacobians_world[indices] = np.einsum(
+            "ij,njk->nik", R_W_B, point_jacobians_base
+        )
+    return LinkSafetyPoints(
+        names=_LINK_SPHERE_NAMES,
+        frame_names=_LINK_SPHERE_FRAME_NAMES,
+        position_world_m=positions_world,
+        jacobian_world_m_rad=jacobians_world,
+        radius_m=_LINK_SPHERE_RADII,
+        mount_exempt=_LINK_SPHERE_MOUNT_EXEMPT,
+    )
 
 
 def compose_pose(parent_to_child, child_to_object):
@@ -64,15 +131,16 @@ def arm_controller_state(plant, side, calibration):
         plant.torso_pose_world.rotation,
     )
     T_T_B = transform_from_pose(mount.position_m, mount.rotation)
-    T_B_E = pin_T_K_E(
-        pin_model, pin_data, ee_frame_id, joints.position_rad
-    )
-    ee_pose_world = Pose(*pose_from_transform(T_W_T @ T_T_B @ T_B_E))
+    T_W_B = T_W_T @ T_T_B
+    q = joints.position_rad
+    pin.computeJointJacobians(pin_model, pin_data, q)
+    pin.updateFramePlacements(pin_model, pin_data)
+    T_B_E = pin_data.oMf[ee_frame_id].homogeneous.copy()
+    ee_pose_world = Pose(*pose_from_transform(T_W_B @ T_B_E))
 
-    J_B = pin.computeFrameJacobian(
+    J_B = pin.getFrameJacobian(
         pin_model,
         pin_data,
-        joints.position_rad,
         ee_frame_id,
         pin.LOCAL_WORLD_ALIGNED,
     )
@@ -97,6 +165,7 @@ def arm_controller_state(plant, side, calibration):
         ee_pose_world=ee_pose_world,
         ee_twist_world=ee_twist_world,
         jacobian_world=jacobian_world,
+        link_safety_points=_link_safety_points(q, T_W_B, R_W_B),
     )
 
 

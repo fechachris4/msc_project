@@ -11,6 +11,7 @@ Usage from the repository root:
 
 import argparse
 import csv
+from dataclasses import replace
 import hashlib
 import json
 from functools import partial
@@ -98,6 +99,9 @@ def _reset_current_code():
         world.PIPELINE_SETUP,
         targets.framed_world_targets(),
         ARMS,
+        human_safety_config=replace(
+            CONFIG.human_safety, enabled=False
+        ),
     )
     runner.start()
     return runner
@@ -174,6 +178,11 @@ def _cycle_rows(cycle, dt, plant, traces):
         _flatten(row, "qdot_null_objective", qdot_null_objective)
         _flatten(row, "qdot_null_projected", qdot_null_projected)
         for name in trace.__dataclass_fields__:
+            if name == "qdot_safety_filtered":
+                np.testing.assert_array_equal(
+                    trace.qdot_safety_filtered, trace.qdot_raw
+                )
+                continue
             _flatten(row, name, getattr(trace, name))
         rows.append(row)
     return rows

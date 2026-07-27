@@ -12,14 +12,23 @@ from controller.position_actuation import (
     PositionActuationLimits,
     PositionIntegrator,
 )
-from controller.reactive_controller import JointCentering, ReactiveController
+from controller.reactive_controller import (
+    JointCentering,
+    ReactiveController,
+    SafetyVelocityProjector,
+    SafetyVelocitySolve,
+    constrain_velocity_for_human,
+)
 from controller.state import (
+    ArmHumanSafetyState,
     DualArmControllerStates,
+    DualArmHumanSafetyStates,
     DualArmWorldTargets,
     JointPositionCommand,
     PlantState,
 )
-from runtime_config import CONFIG, ReactivePoseConfig
+from controller.link_spheres import LINK_SPHERES
+from runtime_config import CONFIG, HumanSafetyConfig, ReactivePoseConfig
 
 
 CONTROL = CONFIG.reactive_pose
@@ -50,6 +59,7 @@ class ControlTrace:
     qdot_measured: np.ndarray
     qdot_raw: np.ndarray
     qdot_speed_clipped: np.ndarray
+    qdot_safety_filtered: np.ndarray
     qdot_effective: np.ndarray
     ctrl_before: np.ndarray
     ctrl_after: np.ndarray
@@ -132,6 +142,7 @@ class ReactivePositionPipeline:
         plant_state,
         setup,
         controller_config=CONTROL,
+        human_safety_config=CONFIG.human_safety,
     ):
         if not isinstance(plant_state, PlantState):
             raise TypeError("plant_state must be a PlantState")
@@ -139,9 +150,25 @@ class ReactivePositionPipeline:
             raise TypeError("setup must be a DualArmPipelineSetup")
         if not isinstance(controller_config, ReactivePoseConfig):
             raise TypeError("controller_config must be ReactivePoseConfig")
+        if not isinstance(human_safety_config, HumanSafetyConfig):
+            raise TypeError(
+                "human_safety_config must be HumanSafetyConfig"
+            )
 
         self._controllers = {}
         self._integrators = {}
+        self._actuation_limits = {}
+        self._human_safety_config = human_safety_config
+        self._last_human_safety_statuses = {}
+        max_human_constraints = sum(
+            not sphere.mount_exempt for sphere in LINK_SPHERES
+        )
+        self._safety_projectors = {
+            side: SafetyVelocityProjector(
+                max_human_constraints, human_safety_config
+            )
+            for side in ARMS
+        }
         for side in ARMS:
             arm_setup = setup.for_arm(side)
             self._controllers[side] = ReactiveController(
@@ -151,6 +178,7 @@ class ReactivePositionPipeline:
                 plant_state.arm(side).position_rad,
                 arm_setup.actuation_limits,
             )
+            self._actuation_limits[side] = arm_setup.actuation_limits
 
     def command(self):
         """Return the current persistent position command for both arms."""
@@ -159,12 +187,33 @@ class ReactivePositionPipeline:
             left_position_rad=self._integrators["left"].command_rad,
         )
 
-    def step(self, states, targets, dt_s, arms=ARMS):
+    @property
+    def human_safety_statuses(self):
+        return dict(self._last_human_safety_statuses)
+
+    def step(
+        self,
+        states,
+        targets,
+        dt_s,
+        arms=ARMS,
+        human_safety_states=None,
+    ):
         """Compute one command without reading or writing a plant backend."""
         if not isinstance(states, DualArmControllerStates):
             raise TypeError("states must be DualArmControllerStates")
         if not isinstance(targets, DualArmWorldTargets):
             raise TypeError("targets must be DualArmWorldTargets")
+        if (
+            human_safety_states is not None
+            and not isinstance(
+                human_safety_states, DualArmHumanSafetyStates
+            )
+        ):
+            raise TypeError(
+                "human_safety_states must be DualArmHumanSafetyStates "
+                "or None"
+            )
         selected = tuple(arms)
         if len(set(selected)) != len(selected):
             raise ValueError("arms must not contain duplicates")
@@ -173,15 +222,54 @@ class ReactivePositionPipeline:
                 raise ValueError(f"unknown arm: {side!r}")
 
         traces = {"right": None, "left": None}
+        safety_statuses = {}
         for side in selected:
             state = states.for_arm(side)
             output = self._controllers[side].compute(
                 state, targets.for_arm(side)
             )
+            if human_safety_states is None:
+                # Direct pipeline users that did not supply evaluated geometry
+                # retain the exact pre-safety actuation path.
+                safety = SafetyVelocitySolve(
+                    qdot_safe=output.solve.qdot_raw,
+                    minimum_clearance_m=float("inf"),
+                    active_constraint_count=0,
+                    projection_iterations=0,
+                    max_constraint_violation_m_s=0.0,
+                    human_adjusted=False,
+                    limit_adjusted=False,
+                    stopped=False,
+                    reason="not_evaluated",
+                    limiting_points=(),
+                )
+            else:
+                lower_velocity, upper_velocity = self._integrators[
+                    side
+                ].velocity_bounds(state.joints.position_rad, dt_s)
+                safety = constrain_velocity_for_human(
+                    output.solve.qdot_raw,
+                    lower_velocity,
+                    upper_velocity,
+                    human_safety_states.for_arm(side),
+                    self._human_safety_config,
+                    measured_velocity_rad_s=(
+                        state.joints.velocity_rad_s
+                    ),
+                    projector=self._safety_projectors[side],
+                )
             actuation = self._integrators[side].step(
                 state.joints.position_rad,
-                output.solve.qdot_raw,
+                safety.qdot_safe,
                 dt_s,
+            )
+            velocity_limit = self._actuation_limits[
+                side
+            ].velocity_rad_s
+            qdot_speed_clipped = np.clip(
+                output.solve.qdot_raw,
+                -velocity_limit,
+                velocity_limit,
             )
             traces[side] = ControlTrace(
                 J=state.jacobian_world,
@@ -195,12 +283,17 @@ class ReactivePositionPipeline:
                 q=state.joints.position_rad,
                 qdot_measured=state.joints.velocity_rad_s,
                 qdot_raw=output.solve.qdot_raw,
-                qdot_speed_clipped=actuation.qdot_speed_clipped,
+                qdot_speed_clipped=qdot_speed_clipped,
+                qdot_safety_filtered=safety.qdot_safe,
                 qdot_effective=actuation.qdot_effective,
                 ctrl_before=actuation.command_before_rad,
                 ctrl_after=actuation.command_after_rad,
-                speed_saturated=actuation.speed_saturated,
+                speed_saturated=(
+                    output.solve.qdot_raw != qdot_speed_clipped
+                ),
                 lead_clamped=actuation.lead_clamped,
                 range_clamped=actuation.range_clamped,
             )
+            safety_statuses[side] = safety
+        self._last_human_safety_statuses = safety_statuses
         return self.command(), DualArmControlTraces(**traces)

@@ -80,6 +80,37 @@ class PositionIntegrator:
     def command_rad(self):
         return _array(self._command_rad, "command_rad")
 
+    def velocity_bounds(self, measured_position_rad, dt_s):
+        """Exact velocity interval that avoids every downstream clamp."""
+        measured = _array(measured_position_rad, "measured_position_rad")
+        dt = float(dt_s)
+        if not np.isfinite(dt) or dt <= 0.0:
+            raise ValueError("dt_s must be finite and positive")
+
+        command_lower = np.maximum(
+            measured - self._limits.lead_rad,
+            self._limits.lower_position_rad,
+        )
+        command_upper = np.minimum(
+            measured + self._limits.lead_rad,
+            self._limits.upper_position_rad,
+        )
+        lower = np.maximum(
+            -self._limits.velocity_rad_s,
+            (command_lower - self._command_rad) / dt,
+        )
+        upper = np.minimum(
+            self._limits.velocity_rad_s,
+            (command_upper - self._command_rad) / dt,
+        )
+        if np.any(lower > upper):
+            raise RuntimeError(
+                "persistent command has no clamp-free velocity interval"
+            )
+        return _array(lower, "lower_velocity_rad_s"), _array(
+            upper, "upper_velocity_rad_s"
+        )
+
     def step(self, measured_position_rad, requested_velocity_rad_s, dt_s):
         measured = _array(measured_position_rad, "measured_position_rad")
         requested = _array(

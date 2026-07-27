@@ -8,9 +8,11 @@ Read the functions below in order:
 4. damped least-squares inverse kinematics,
 5. null-space joint centering,
 6. requested joint velocity.
+7. safety-priority projection of that velocity.
 
 This file deliberately contains no frame conversion, command integration,
-limits, timing, backend access, lifecycle handling, or persistent state.
+timing, backend access, or lifecycle handling.  The reusable QP workspace is
+the only persistent numerical state and changes no controller semantics.
 Changing the controller equations belongs here; changing numerical gains
 belongs in ``config/control.toml``.
 """
@@ -18,10 +20,99 @@ belongs in ``config/control.toml``.
 from dataclasses import dataclass
 
 import numpy as np
+import osqp
 import pinocchio as pin
+from scipy import sparse
 
-from controller.state import ArmControllerState, WorldTarget
-from runtime_config import ReactivePoseConfig
+from controller.state import (
+    ArmControllerState,
+    ArmHumanSafetyState,
+    WorldTarget,
+)
+from runtime_config import HumanSafetyConfig, ReactivePoseConfig
+
+
+class SafetyVelocityProjector:
+    """Reusable fixed-structure OSQP workspace for one arm."""
+
+    def __init__(self, max_human_constraints, config):
+        count = int(max_human_constraints)
+        if count <= 0:
+            raise ValueError("max_human_constraints must be positive")
+        if not isinstance(config, HumanSafetyConfig):
+            raise TypeError("config must be a HumanSafetyConfig")
+        self._max_human_constraints = count
+
+        # Dense human rows plus one identity row per joint.  The sparsity
+        # pattern never changes, so each cycle updates only numeric values.
+        row_indices = []
+        column_starts = [0]
+        for joint in range(7):
+            row_indices.extend(range(count))
+            row_indices.append(count + joint)
+            column_starts.append(len(row_indices))
+        constraint_matrix = sparse.csc_matrix(
+            (
+                np.ones(len(row_indices)),
+                np.asarray(row_indices, dtype=np.int32),
+                np.asarray(column_starts, dtype=np.int32),
+            ),
+            shape=(count + 7, 7),
+        )
+        self._solver = osqp.OSQP()
+        self._solver.setup(
+            P=sparse.eye(7, format="csc"),
+            q=np.zeros(7),
+            A=constraint_matrix,
+            l=np.full(count + 7, -np.inf),
+            u=np.full(count + 7, np.inf),
+            verbose=False,
+            eps_abs=config.constraint_tolerance_m_s,
+            eps_rel=0.0,
+            max_iter=config.projection_iterations,
+            polishing=False,
+            warm_starting=True,
+            adaptive_rho=True,
+            rho=1.0,
+            check_termination=5,
+        )
+
+    def project(self, requested, A, b, lower, upper):
+        count = A.shape[0]
+        if count > self._max_human_constraints:
+            raise ValueError("human constraint count exceeds fixed capacity")
+        padded_A = np.zeros((self._max_human_constraints, 7))
+        padded_A[:count] = A
+        matrix_values = np.concatenate([
+            np.concatenate((padded_A[:, joint], [1.0]))
+            for joint in range(7)
+        ])
+        lower_bounds = np.concatenate((
+            b,
+            np.full(self._max_human_constraints - count, -np.inf),
+            lower,
+        ))
+        upper_bounds = np.concatenate((
+            np.full(self._max_human_constraints, np.inf),
+            upper,
+        ))
+        self._solver.update(
+            q=-requested,
+            l=lower_bounds,
+            u=upper_bounds,
+            Ax=matrix_values,
+        )
+        result = self._solver.solve(raise_error=False)
+        candidate_available = (
+            result.x is not None
+            and np.all(np.isfinite(result.x))
+        )
+        return (
+            np.asarray(result.x, dtype=float)
+            if candidate_available else np.zeros(7),
+            candidate_available,
+            int(result.info.iter),
+        )
 
 
 def pose_error(state, target):
@@ -114,6 +205,261 @@ def solve_reactive_velocity(
     )
 
 
+def constrain_velocity_for_human(
+    requested_velocity_rad_s,
+    lower_velocity_rad_s,
+    upper_velocity_rad_s,
+    safety_state,
+    config,
+    measured_velocity_rad_s=None,
+    projector=None,
+):
+    """Equation 7: project requested qdot into limits and safe half-spaces.
+
+    For every active arm sphere, the control-barrier inequality is
+
+        distance_jacobian @ qdot >= -recovery_gain * signed_clearance.
+
+    Positive clearance permits bounded approach; penetration requires outward
+    recovery.  A fixed-structure OSQP solve finds the minimum change to the
+    requested seven-joint velocity.  The same solver has a C/C++ interface for
+    the hardware port.  A result is used only after every constraint is
+    independently checked.  Otherwise the filter returns a hold/catch-up
+    command and marks a genuine safety stop.
+    """
+    if not isinstance(safety_state, ArmHumanSafetyState):
+        raise TypeError("safety_state must be an ArmHumanSafetyState")
+    if not isinstance(config, HumanSafetyConfig):
+        raise TypeError("config must be a HumanSafetyConfig")
+
+    requested = _finite_vector7(
+        requested_velocity_rad_s, "requested_velocity_rad_s"
+    )
+    lower = _finite_vector7(
+        lower_velocity_rad_s, "lower_velocity_rad_s"
+    )
+    upper = _finite_vector7(
+        upper_velocity_rad_s, "upper_velocity_rad_s"
+    )
+    measured = (
+        np.zeros(7)
+        if measured_velocity_rad_s is None
+        else _finite_vector7(
+            measured_velocity_rad_s, "measured_velocity_rad_s"
+        )
+    )
+    if np.any(lower > upper):
+        raise ValueError(
+            "lower_velocity_rad_s must not exceed upper_velocity_rad_s"
+        )
+
+    bounded_request = np.clip(requested, lower, upper)
+    if not config.enabled:
+        return SafetyVelocitySolve(
+            qdot_safe=requested,
+            minimum_clearance_m=safety_state.minimum_clearance_m,
+            active_constraint_count=0,
+            projection_iterations=0,
+            max_constraint_violation_m_s=0.0,
+            human_adjusted=False,
+            limit_adjusted=False,
+            stopped=False,
+            reason="disabled",
+            limiting_points=(),
+        )
+    constraints = safety_state.constraints
+    active_indices = (
+        np.empty(0, dtype=int)
+        if constraints is None
+        else np.flatnonzero(constraints.active)
+    )
+    minimum_clearance = safety_state.minimum_clearance_m
+    if active_indices.size == 0:
+        return SafetyVelocitySolve(
+            qdot_safe=bounded_request,
+            minimum_clearance_m=minimum_clearance,
+            active_constraint_count=0,
+            projection_iterations=0,
+            max_constraint_violation_m_s=0.0,
+            human_adjusted=False,
+            limit_adjusted=not np.array_equal(
+                requested, bounded_request
+            ),
+            stopped=False,
+            reason="clear",
+            limiting_points=(),
+        )
+
+    A = constraints.distance_jacobian_m_rad[active_indices]
+    active_clearance = constraints.signed_clearance_m[active_indices]
+    measured_distance_rate = A @ measured
+    b = (
+        -config.recovery_gain_s_inv
+        * (active_clearance - config.control_margin_m)
+        - config.approach_velocity_damping
+        * np.minimum(measured_distance_rate, 0.0)
+    )
+    bounded_slack = A @ bounded_request - b
+    if np.min(bounded_slack) >= -config.constraint_tolerance_m_s:
+        return SafetyVelocitySolve(
+            qdot_safe=bounded_request,
+            minimum_clearance_m=minimum_clearance,
+            active_constraint_count=len(active_indices),
+            projection_iterations=0,
+            max_constraint_violation_m_s=0.0,
+            human_adjusted=False,
+            limit_adjusted=not np.array_equal(
+                requested, bounded_request
+            ),
+            stopped=False,
+            reason=(
+                "joint_limit_filtered"
+                if not np.array_equal(requested, bounded_request)
+                else "clear"
+            ),
+            limiting_points=tuple(
+                constraints.point_names[index]
+                for local_index, index in enumerate(active_indices)
+                if bounded_slack[local_index]
+                <= 10.0 * config.constraint_tolerance_m_s
+            ),
+        )
+    tolerance = config.constraint_tolerance_m_s
+    x, iterations = _repair_constraint_feasibility(
+        bounded_request,
+        A,
+        b,
+        lower,
+        upper,
+        tolerance,
+        max_iterations=4,
+    )
+    violation = _maximum_constraint_violation(x, A, b, lower, upper)
+    candidate_available = violation <= tolerance
+    if not candidate_available:
+        row_scale = np.maximum(np.linalg.norm(A, axis=1), 1e-12)
+        solver_A = A / row_scale[:, None]
+        solver_b = b / row_scale
+        active_projector = (
+            SafetyVelocityProjector(len(active_indices), config)
+            if projector is None else projector
+        )
+        x, candidate_available, solver_iterations = (
+            active_projector.project(
+                requested, solver_A, solver_b, lower, upper
+            )
+        )
+        iterations += solver_iterations
+        violation = _maximum_constraint_violation(
+            x, A, b, lower, upper
+        )
+        if candidate_available and violation > tolerance:
+            x, repair_iterations = _repair_constraint_feasibility(
+                x,
+                A,
+                b,
+                lower,
+                upper,
+                tolerance,
+                max_iterations=16,
+            )
+            iterations += repair_iterations
+            violation = _maximum_constraint_violation(
+                x, A, b, lower, upper
+            )
+    feasible = candidate_available and violation <= tolerance
+    stopped = not feasible
+    if stopped:
+        # Holding joint position is the fail-safe action.  If the persistent
+        # command must catch up to measured/position bounds, use only that
+        # required velocity and still report the stop.
+        x = np.clip(np.zeros(7), lower, upper)
+        violation = _maximum_constraint_violation(x, A, b, lower, upper)
+
+    human_adjusted = not np.allclose(
+        x, bounded_request, rtol=0.0, atol=tolerance
+    )
+    limit_adjusted = not np.array_equal(requested, bounded_request)
+    safe_slack = A @ x - b
+    limiting = tuple(
+        constraints.point_names[index]
+        for local_index, index in enumerate(active_indices)
+        if safe_slack[local_index] <= 10.0 * tolerance
+    )
+    if stopped:
+        reason = (
+            "unsafe_initial_state_hold"
+            if np.any(active_clearance < 0.0)
+            else "constraint_projection_failed_hold"
+        )
+    elif human_adjusted:
+        reason = "filtered"
+    elif limit_adjusted:
+        reason = "joint_limit_filtered"
+    else:
+        reason = "clear"
+    return SafetyVelocitySolve(
+        qdot_safe=x,
+        minimum_clearance_m=minimum_clearance,
+        active_constraint_count=len(active_indices),
+        projection_iterations=iterations,
+        max_constraint_violation_m_s=violation,
+        human_adjusted=human_adjusted,
+        limit_adjusted=limit_adjusted,
+        stopped=stopped,
+        reason=reason,
+        limiting_points=limiting,
+    )
+
+
+def _finite_vector7(value, name):
+    vector = np.asarray(value, dtype=float)
+    if vector.shape != (7,) or not np.all(np.isfinite(vector)):
+        raise ValueError(f"{name} must be a finite shape-(7,) array")
+    return vector
+
+
+def _maximum_constraint_violation(value, A, b, lower, upper):
+    violations = [
+        float(np.max(lower - value)),
+        float(np.max(value - upper)),
+    ]
+    if A.size:
+        violations.append(float(np.max(b - A @ value)))
+    return max(0.0, *violations)
+
+
+def _repair_constraint_feasibility(
+    candidate,
+    A,
+    b,
+    lower,
+    upper,
+    tolerance,
+    max_iterations,
+):
+    """Repair a near-feasible QP result; never bypass final verification."""
+    value = np.clip(np.asarray(candidate, dtype=float), lower, upper)
+    row_norm_squared = np.einsum("ij,ij->i", A, A)
+    completed = 0
+    for completed in range(1, max_iterations + 1):
+        for index in range(len(A)):
+            deficit = b[index] - A[index] @ value
+            if (
+                deficit > tolerance
+                and row_norm_squared[index] > np.finfo(float).eps
+            ):
+                value += (
+                    deficit / row_norm_squared[index]
+                ) * A[index]
+        value = np.clip(value, lower, upper)
+        if _maximum_constraint_violation(
+            value, A, b, lower, upper
+        ) <= tolerance:
+            break
+    return value, completed
+
+
 class ReactiveController:
     """Pure controller policy; it has no state that persists between cycles."""
 
@@ -195,3 +541,56 @@ class ReactiveOutput:
     def __post_init__(self):
         for name in ("e_pos", "e_rot", "e_v", "e_w"):
             object.__setattr__(self, name, _read_only(getattr(self, name)))
+
+
+@dataclass(frozen=True, slots=True)
+class SafetyVelocitySolve:
+    qdot_safe: np.ndarray
+    minimum_clearance_m: float
+    active_constraint_count: int
+    projection_iterations: int
+    max_constraint_violation_m_s: float
+    human_adjusted: bool
+    limit_adjusted: bool
+    stopped: bool
+    reason: str
+    limiting_points: tuple[str, ...]
+
+    def __post_init__(self):
+        object.__setattr__(
+            self, "qdot_safe", _read_only(self.qdot_safe)
+        )
+        if self.qdot_safe.shape != (7,) or not np.all(
+            np.isfinite(self.qdot_safe)
+        ):
+            raise ValueError("qdot_safe must be a finite shape-(7,) array")
+        minimum = float(self.minimum_clearance_m)
+        if np.isnan(minimum):
+            raise ValueError("minimum_clearance_m must not be NaN")
+        object.__setattr__(self, "minimum_clearance_m", minimum)
+        for name in (
+            "active_constraint_count",
+            "projection_iterations",
+        ):
+            value = int(getattr(self, name))
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+            object.__setattr__(self, name, value)
+        violation = float(self.max_constraint_violation_m_s)
+        if not np.isfinite(violation) or violation < 0.0:
+            raise ValueError(
+                "max_constraint_violation_m_s must be finite and non-negative"
+            )
+        object.__setattr__(
+            self, "max_constraint_violation_m_s", violation
+        )
+        for name in ("human_adjusted", "limit_adjusted", "stopped"):
+            object.__setattr__(self, name, bool(getattr(self, name)))
+        if not isinstance(self.reason, str) or not self.reason:
+            raise ValueError("reason must be a non-empty string")
+        points = tuple(self.limiting_points)
+        if any(not isinstance(name, str) or not name for name in points):
+            raise ValueError(
+                "limiting_points must contain non-empty strings"
+            )
+        object.__setattr__(self, "limiting_points", points)

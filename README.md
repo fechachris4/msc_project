@@ -14,6 +14,7 @@ Per control step, all SI (meters, radians; mm only at prints/plots):
 sample target source once + backend PlantState
   -> resolve target/state into world frame          controller/frames
   -> pose/twist error, PD, DLS, null-space qdot     controller/reactive_controller
+  -> whole-arm human-distance safety projection     controller/reactive_controller
   -> clip and integrate joint-position command      controller/position_actuation
   -> apply command, mj_step, read next PlantState   sim/world.MujocoBackend
 ```
@@ -24,10 +25,19 @@ mirroring what the hardware will provide.
 `ReactivePositionRunner` owns that ordering. Target mocap bodies are display
 markers, not controller inputs.
 
+Whole-arm human protection is enabled under `[human_safety]` in
+`config/control.toml`. Conservative sphere chains cover the Kinova collision
+meshes; their world positions and joint Jacobians are recomputed every cycle.
+A torso-frame human envelope then constrains the requested joint velocity
+before position integration. The older `[cylinder_keepout]` waypoint router
+remains optional path shaping and is not the safety mechanism. The equation,
+geometry derivation, stop behavior, and current evidence are documented in
+[`docs/human-safety.md`](docs/human-safety.md).
+
 ## Setup
 
 Requires the project virtual environment (Python 3.14 with `mujoco`,
-`pinocchio`, `numpy`, `matplotlib`):
+`pinocchio`, `numpy`, `scipy`, `osqp`, `matplotlib`):
 
 ```bash
 source .venv/bin/activate
@@ -134,6 +144,7 @@ config/
 sim/
   scene.xml                MJCF scene: torso mocap body + dual Kinova Gen3 + targets
   world.py                 MuJoCo backend: model/data, exchange, lifecycle
+  human_safety_view.py     viewer-only safety envelope and link-sphere display
   target_trajectory.py     trajectory initialization for the real-time loop
   targets.py               set/read EE target poses (mocap spheres, world frame)
   motion.py                scripted base motion: sinusoidal torso disturbance
@@ -148,7 +159,9 @@ controller/
   kinematics.py            analytical FK from MjModel constants [test reference only]
   frames.py                target/state boundary + world-frame EE kinematics
   desired_pos.py           configured framed targets and MuJoCo marker display
-  reactive_controller.py   complete controller equations, read top-to-bottom
+  link_spheres.py          mesh-derived conservative whole-arm geometry
+  human_safety.py          torso-frame distances and link-point constraints
+  reactive_controller.py   complete control + safety equations, top-to-bottom
   position_actuation.py    velocity limits + persistent position integration
   servo.py                 explicit reactive-pose-to-position composition
 plotting/                 reusable instruments only (no MuJoCo except via callers)
@@ -166,6 +179,8 @@ analysis/                  every experiment script; figures -> analysis/output/
   validate_velocity.py     ee_velocity vs finite-difference ground truth
   fk_validation.py         live direct-vs-FK comparison (right arm)
 tests/                     unit + closed-loop tests (python -m unittest discover tests)
+tools/
+  derive_link_spheres.py   regenerate conservative geometry from collision meshes
 ```
 
 Two FK implementations exist deliberately: `pin_fk.py` (Pinocchio) is the
