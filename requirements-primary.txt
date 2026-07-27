@@ -4,3 +4,5 @@ numpy==2.4.4
 mujoco==3.10.0
 pin==4.0.0
 matplotlib==3.11.0
+scipy==1.17.1
+osqp==1.1.1

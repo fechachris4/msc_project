@@ -23,6 +23,13 @@ class RuntimeConfigTest(unittest.TestCase):
         self.assertEqual(CONFIG.reactive_pose.null_gain_s_inv, 1.0)
         self.assertEqual(CONFIG.reactive_pose.dls_damping, 0.05)
         self.assertEqual(len(CONFIG.limits.joint_velocity_rad_s), 7)
+        self.assertTrue(CONFIG.human_safety.enabled)
+        self.assertEqual(
+            CONFIG.human_safety.center_xy_torso_m, (0.0, 0.0)
+        )
+        self.assertEqual(CONFIG.human_safety.radius_m, 0.25)
+        self.assertEqual(CONFIG.human_safety.clearance_m, 0.02)
+        self.assertEqual(CONFIG.human_safety.control_margin_m, 0.02)
         self.assertEqual(CONFIG.right_target.reference_frame, "world")
         self.assertEqual(CONFIG.left_target.reference_frame, "world")
 
@@ -127,6 +134,7 @@ class RuntimeConfigTest(unittest.TestCase):
         self.assertIn("reactive_pose", values["controller"])
         self.assertIn("targets", values)
         self.assertIn("limits", values)
+        self.assertIn("human_safety", values)
 
     def test_startup_print_contains_effective_config_and_source_hash(self):
         with mock.patch("builtins.print") as output:

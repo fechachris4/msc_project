@@ -8,6 +8,7 @@ preservation, and a single world-vertical visualization using the same
 All lengths are metres.
 """
 
+from dataclasses import replace
 import tempfile
 from pathlib import Path
 import unittest
@@ -383,6 +384,9 @@ class OppositeSidesDemonstrationTest(unittest.TestCase):
             demo_targets,
             arms=(cylinder_demo.SIDE,),
             cylinder_keepout=keepout,
+            human_safety_config=replace(
+                CONFIG.human_safety, enabled=False
+            ),
         )
         runner.start()
         try:
