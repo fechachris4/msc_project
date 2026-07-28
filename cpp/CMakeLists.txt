@@ -129,9 +129,7 @@ endif()
 file(GLOB_RECURSE SRL_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_LIST_DIR}/src/*.cpp")
 list(FILTER SRL_SOURCES EXCLUDE REGEX "/src/app/")
-if(NOT SRL_WITH_GPMP2)
-  list(FILTER SRL_SOURCES EXCLUDE REGEX "/src/planning/Gpmp2Planner\\.cpp$")
-endif()
+list(FILTER SRL_SOURCES EXCLUDE REGEX "/src/planning/Gpmp2Planner\\.cpp$")
 if(NOT SRL_WITH_VIEWER)
   list(FILTER SRL_SOURCES EXCLUDE REGEX "/src/render/")
 endif()
@@ -163,16 +161,26 @@ if(SRL_WITH_VIEWER)
   target_link_libraries(srl_core PUBLIC glfw)
   target_compile_definitions(srl_core PUBLIC SRL_HAVE_VIEWER=1)
 endif()
-if(SRL_WITH_GPMP2)
-  target_include_directories(srl_core SYSTEM PUBLIC "${SRL_GPMP2_INCLUDE_DIR}")
-  target_link_libraries(srl_core PUBLIC
-    "${SRL_GPMP2_LIBRARY}" "${SRL_GTSAM_LIBRARY}")
-  target_compile_definitions(srl_core PUBLIC SRL_HAVE_GPMP2=1)
-endif()
-
 set_target_properties(srl_core PROPERTIES
   BUILD_RPATH "${SRL_RPATHS}"
   INSTALL_RPATH "${SRL_RPATHS}")
+
+# Keep the older dependency headers bundled with HumanSL's GPMP2 build away
+# from the current Pinocchio headers used by srl_core.
+if(SRL_WITH_GPMP2)
+  add_library(srl_gpmp2 src/planning/Gpmp2Planner.cpp)
+  target_include_directories(srl_gpmp2
+    PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src"
+    SYSTEM PRIVATE "${SRL_GPMP2_INCLUDE_DIR}")
+  target_link_libraries(srl_gpmp2
+    PUBLIC srl_core
+    PRIVATE "${SRL_GPMP2_LIBRARY}" "${SRL_GTSAM_LIBRARY}")
+  target_compile_definitions(srl_gpmp2 PUBLIC SRL_HAVE_GPMP2=1)
+  target_compile_options(srl_gpmp2 PRIVATE -Wall -Wextra -Wpedantic)
+  set_target_properties(srl_gpmp2 PROPERTIES
+    BUILD_RPATH "${SRL_RPATHS}"
+    INSTALL_RPATH "${SRL_RPATHS}")
+endif()
 
 # ---------------------------------------------------------------------- apps
 function(srl_add_app name source)
@@ -191,8 +199,13 @@ srl_add_app(srl_golden_trace src/app/golden_trace.cpp)
 srl_add_app(srl_trajectory_dump src/app/trajectory_dump.cpp)
 srl_add_app(srl_headless_trace src/app/headless_trace.cpp)
 if(SRL_WITH_GPMP2)
-  srl_add_app(srl_gpmp2_plan src/app/gpmp2_plan.cpp)
-  srl_add_app(srl_gpmp2_sim  src/app/gpmp2_sim.cpp)
+  add_executable(srl_gpmp2_plan src/app/gpmp2_plan.cpp)
+  add_executable(srl_gpmp2_sim src/app/gpmp2_sim.cpp)
+  foreach(_srl_gpmp2_app srl_gpmp2_plan srl_gpmp2_sim)
+    target_link_libraries(${_srl_gpmp2_app} PRIVATE srl_gpmp2)
+    set_target_properties(${_srl_gpmp2_app} PROPERTIES
+      BUILD_RPATH "${SRL_RPATHS}" INSTALL_RPATH "${SRL_RPATHS}")
+  endforeach()
 endif()
 
 # --------------------------------------------------------------------- tests
