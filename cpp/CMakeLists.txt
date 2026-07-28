@@ -13,6 +13,7 @@ endif()
 
 option(SRL_WITH_VIEWER "Build the GLFW viewer" ON)
 option(SRL_WITH_OSQP   "Build the OSQP safety-projection fallback" ON)
+option(SRL_WITH_GPMP2  "Build the optional GPMP2 joint-space planner" OFF)
 option(SRL_BUILD_TESTS "Build unit tests" ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
@@ -65,10 +66,40 @@ FetchContent_Declare(tomlplusplus
   GIT_SHALLOW ON)
 FetchContent_MakeAvailable(tomlplusplus)
 
-# ---------------------------------------------------------------- Accelerate
-# NumPy on this machine is built on Apple Accelerate, so calling the same
-# dgesv/dgesdd here makes linear algebra bit-identical to np.linalg.
-find_library(SRL_ACCELERATE Accelerate REQUIRED)
+# --------------------------------------------------------------------- LAPACK
+# Keep Apple parity by using the same Accelerate LAPACK as NumPy. Ubuntu uses
+# its system LAPACK implementation; exact Python bit parity is an Apple-only
+# verification target, while the equations and units are portable.
+if(APPLE)
+  find_library(SRL_LAPACK Accelerate REQUIRED)
+else()
+  find_package(LAPACK REQUIRED)
+  set(SRL_LAPACK LAPACK::LAPACK)
+endif()
+
+# --------------------------------------------------------------------- GPMP2
+# GPMP2 is intentionally optional. The copy currently available to this
+# project is an Ubuntu x86-64 build and cannot be linked by the macOS parity
+# build. On Ubuntu, point SRL_GPMP2_ROOT at a prefix containing include/ and
+# lib/libgpmp2.so plus lib/libgtsam.so.
+if(SRL_WITH_GPMP2)
+  set(SRL_GPMP2_ROOT "" CACHE PATH "GPMP2/GTSAM installation prefix")
+  find_path(SRL_GPMP2_INCLUDE_DIR gpmp2/gp/GaussianProcessPriorLinear.h
+    HINTS "${SRL_GPMP2_ROOT}/include")
+  find_library(SRL_GPMP2_LIBRARY NAMES gpmp2
+    HINTS "${SRL_GPMP2_ROOT}/lib")
+  find_library(SRL_GTSAM_LIBRARY NAMES gtsam
+    HINTS "${SRL_GPMP2_ROOT}/lib")
+  if(NOT SRL_GPMP2_INCLUDE_DIR OR
+     NOT SRL_GPMP2_LIBRARY OR
+     NOT SRL_GTSAM_LIBRARY)
+    message(FATAL_ERROR
+      "SRL_WITH_GPMP2=ON requires GPMP2 and GTSAM. "
+      "Pass -DSRL_GPMP2_ROOT=<prefix>.")
+  endif()
+  get_filename_component(SRL_GPMP2_LIBRARY_DIR "${SRL_GPMP2_LIBRARY}" DIRECTORY)
+  list(APPEND SRL_RPATHS "${SRL_GPMP2_LIBRARY_DIR}")
+endif()
 
 # ----------------------------------------------------------------------- OSQP
 if(SRL_WITH_OSQP)
@@ -98,6 +129,9 @@ endif()
 file(GLOB_RECURSE SRL_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_LIST_DIR}/src/*.cpp")
 list(FILTER SRL_SOURCES EXCLUDE REGEX "/src/app/")
+if(NOT SRL_WITH_GPMP2)
+  list(FILTER SRL_SOURCES EXCLUDE REGEX "/src/planning/Gpmp2Planner\\.cpp$")
+endif()
 if(NOT SRL_WITH_VIEWER)
   list(FILTER SRL_SOURCES EXCLUDE REGEX "/src/render/")
 endif()
@@ -106,7 +140,7 @@ add_library(srl_core ${SRL_SOURCES})
 target_include_directories(srl_core PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 target_link_libraries(srl_core
   PUBLIC srl_eigen srl_urdfdom_headers srl::mujoco srl::pinocchio
-  PRIVATE tomlplusplus::tomlplusplus "${SRL_ACCELERATE}")
+  PRIVATE tomlplusplus::tomlplusplus ${SRL_LAPACK})
 target_compile_definitions(srl_core PUBLIC
   SRL_PYTHON_ROOT="${CMAKE_CURRENT_LIST_DIR}/..")
 target_compile_options(srl_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -129,6 +163,12 @@ if(SRL_WITH_VIEWER)
   target_link_libraries(srl_core PUBLIC glfw)
   target_compile_definitions(srl_core PUBLIC SRL_HAVE_VIEWER=1)
 endif()
+if(SRL_WITH_GPMP2)
+  target_include_directories(srl_core SYSTEM PUBLIC "${SRL_GPMP2_INCLUDE_DIR}")
+  target_link_libraries(srl_core PUBLIC
+    "${SRL_GPMP2_LIBRARY}" "${SRL_GTSAM_LIBRARY}")
+  target_compile_definitions(srl_core PUBLIC SRL_HAVE_GPMP2=1)
+endif()
 
 set_target_properties(srl_core PROPERTIES
   BUILD_RPATH "${SRL_RPATHS}"
@@ -150,6 +190,10 @@ srl_add_app(srl_sim          src/app/main.cpp)
 srl_add_app(srl_golden_trace src/app/golden_trace.cpp)
 srl_add_app(srl_trajectory_dump src/app/trajectory_dump.cpp)
 srl_add_app(srl_headless_trace src/app/headless_trace.cpp)
+if(SRL_WITH_GPMP2)
+  srl_add_app(srl_gpmp2_plan src/app/gpmp2_plan.cpp)
+  srl_add_app(srl_gpmp2_sim  src/app/gpmp2_sim.cpp)
+endif()
 
 # --------------------------------------------------------------------- tests
 if(SRL_BUILD_TESTS)

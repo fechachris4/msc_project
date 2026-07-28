@@ -5,16 +5,32 @@
 #include <stdexcept>
 #include <vector>
 
+#if defined(__APPLE__)
 // Match the LAPACK implementation NumPy is built against. NumPy's macOS
 // wheels use Accelerate's *new* LAPACK (macOS 13.3+), not the legacy
 // LAPACK 3.2.1 interface, so ask for the same one.
 #define ACCELERATE_NEW_LAPACK
 #include <Accelerate/Accelerate.h>
+#else
+// Standard Fortran LAPACK ABI used by Linux distributions.
+extern "C" {
+void dgesv_(const int* n, const int* nrhs, double* a, const int* lda,
+            int* ipiv, double* b, const int* ldb, int* info);
+void dgesdd_(const char* jobz, const int* m, const int* n, double* a,
+             const int* lda, double* s, double* u, const int* ldu, double* vt,
+             const int* ldvt, double* work, const int* lwork, int* iwork,
+             int* info);
+}
+#endif
 
 namespace srl::linalg {
 namespace {
 
+#if defined(__APPLE__)
 using LapackInt = __LAPACK_int;
+#else
+using LapackInt = int;
+#endif
 
 }  // namespace
 
