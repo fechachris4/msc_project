@@ -11,7 +11,8 @@ constexpr int kMaxSceneGeoms = 4000;
 
 }  // namespace
 
-Viewer::Viewer(mjModel* model, mjData* data, const char* title)
+Viewer::Viewer(mjModel* model, mjData* data, const char* title,
+               bool vertical_sync)
     : model_(model), data_(data) {
   if (!glfwInit()) throw std::runtime_error("glfwInit failed");
   glfwWindowHint(GLFW_SAMPLES, 4);
@@ -21,7 +22,7 @@ Viewer::Viewer(mjModel* model, mjData* data, const char* title)
     throw std::runtime_error("could not create a GLFW window");
   }
   glfwMakeContextCurrent(window_);
-  glfwSwapInterval(1);
+  glfwSwapInterval(vertical_sync ? 1 : 0);
 
   mjv_defaultCamera(&camera_);
   mjv_defaultOption(&option_);
@@ -57,6 +58,10 @@ Viewer::~Viewer() {
 
 bool Viewer::IsRunning() const {
   return window_ != nullptr && !glfwWindowShouldClose(window_);
+}
+
+void Viewer::SetTitle(const char* title) {
+  if (window_ != nullptr) glfwSetWindowTitle(window_, title);
 }
 
 void Viewer::UpdateScene() {
