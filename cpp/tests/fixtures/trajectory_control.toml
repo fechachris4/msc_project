@@ -1,0 +1,120 @@
+[run]
+nominal_dt_s = 0.002
+arm = "both"
+
+[controller.reactive_pose]
+kp_position_s_inv = 2.0
+kp_rotation_s_inv = 2.0
+kd_position = 0.3
+kd_rotation = 0.3
+null_gain_s_inv = 1.0
+dls_damping = 0.05
+position_enabled = true
+orientation_enabled = true
+velocity_enabled = true
+
+[limits]
+joint_velocity_rad_s = [
+  1.3892820845874863,
+  1.3892820845874863,
+  1.3892820845874863,
+  1.3892820845874863,
+  1.2199851471440364,
+  1.2199851471440364,
+  1.2199851471440364,
+]
+position_lead_rad = 0.2
+
+# Real-time whole-arm protection around the wearer. Geometry is expressed in
+# the TORSO frame, so the envelope translates and rotates with the person.
+# The radius and height describe the occupied human volume; each arm's
+# mesh-derived sphere radius and clearance_m are added by the safety filter.
+# The fixed shoulder/mount interface is modelled but explicitly exempt.
+[human_safety]
+enabled = true
+center_xy_torso_m = [0.0, 0.0]
+radius_m = 0.25
+z_min_torso_m = -1.10
+z_max_torso_m = 0.70
+clearance_m = 0.02
+control_margin_m = 0.02
+activation_distance_m = 0.10
+recovery_gain_s_inv = 4.0
+approach_velocity_damping = 0.0
+projection_iterations = 50
+constraint_tolerance_m_s = 1e-6
+
+# One world-frame vertical cylinder around the human/occupied area. The scene's
+# torso/person is centred at world x=0, y=0 between the two arm mounts, so the
+# configured centre below is that shared central axis. Both arms route around
+# this SAME cylinder; it is never rotated by either tilted arm-base frame.
+# Direct paths that cross the inflated cylinder take the shortest clockwise,
+# counter-clockwise or over-the-top waypoint route. Targets inside are moved
+# just outside; they are not refused. Metres, in WORLD coordinates.
+#
+# END-EFFECTOR routing only — NOT whole-arm/link collision avoidance.
+[cylinder_keepout]
+cylinder_keepout_enabled = true
+cylinder_keepout_center_x_m = 0.0
+cylinder_keepout_center_y_m = 0.0
+cylinder_keepout_radius_m = 0.25
+cylinder_keepout_z_min_m = 0.0
+cylinder_keepout_z_max_m = 1.8
+cylinder_keepout_clearance_m = 0.10
+cylinder_waypoint_tolerance_m = 0.01
+
+[targets.right]
+reference_frame = "world"
+position_m = [0.45, -0.20, 1.20]
+rpy_rad = [0.0, 1.6, 0.8]
+
+[targets.left]
+reference_frame = "world"
+position_m = [0.45, 0.30, 1.20]
+rpy_rad = [0.0, 0.0, 0.0]
+
+[targets.left.trajectory]
+reference_frame = "world"
+start = "measured"
+loop = false
+open_live_path_plot = false
+
+[targets.left.trajectory.constraints]
+max_linear_speed_m_s = 0.6
+max_linear_acceleration_m_s2 = 2.0
+max_angular_speed_rad_s = 1.5
+max_angular_acceleration_rad_s2 = 4.0
+
+[[targets.left.trajectory.segments]]
+type = "hold"
+duration_s = 1.5
+
+[[targets.left.trajectory.segments]]
+type = "line"
+displacement_m = [0.20, 0.05, -0.10]
+duration_s = 4.0
+
+[[targets.left.trajectory.segments]]
+type = "waypoints"
+offsets_m = [[0.0, 0.0, 0.0], [0.05, 0.10, 0.02], [0.12, 0.04, 0.09], [0.18, -0.03, 0.01]]
+durations_s = [2.0, 3.0, 2.5]
+
+[[targets.left.trajectory.segments]]
+type = "circle"
+radius_m = 0.08
+plane = "yz"
+revolutions = 2
+clockwise = true
+duration_s = 6.0
+
+[simulation.initial_joint_position_rad]
+# Simulation initialization is separate from generic target semantics.
+left = [
+  0.22356,
+  0.73366,
+  -0.39854,
+  1.71674,
+  -0.53462,
+  0.91219,
+  0.62194,
+]
