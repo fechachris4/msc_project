@@ -1,0 +1,3 @@
+# CMake build tree, including all FetchContent'd dependencies.
+build/
+.cache/

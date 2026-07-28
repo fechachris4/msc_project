@@ -1,0 +1,150 @@
+# C++ port of the MSc SRL MuJoCo simulation
+
+A modern C++20 port of the Python simulation in the parent directory: a
+torso-mounted dual Kinova Gen3 (supernumerary robotic limbs) holding a
+world-frame end-effector pose while the torso moves — "chicken-head"
+stabilisation.
+
+The Python implementation is **unmodified**. This directory is additive.
+
+Documentation, in reading order:
+
+| Document | Contents |
+|---|---|
+| [`docs/01-architecture.md`](docs/01-architecture.md) | How the Python simulation works: entry point, startup order, cycle order, mathematics, outputs |
+| [`docs/02-behaviour-contract.md`](docs/02-behaviour-contract.md) | The clause-by-clause contract the port must satisfy (A1–M4) |
+| [`docs/03-cpp-design.md`](docs/03-cpp-design.md) | C++ architecture, dependencies, numerics strategy, staged migration plan |
+| [`docs/04-parity-report.md`](docs/04-parity-report.md) | Measured parity results, where residuals come from, what is still unvalidated |
+
+## What was ported
+
+The **simulation**: entry point, configuration, model loading, the control
+loop, trajectory generation, the controller, state updates, rendering and
+telemetry.
+
+| Python | C++ | Notes |
+|---|---|---|
+| `runtime_config.py` | `src/config/RuntimeConfig.*` | Strict TOML loader; byte-identical effective-config output |
+| `controller/state.py` | `src/core/Types.h` | Plain aggregates, one per Python record |
+| `controller/transforms.py` | `src/math/Transforms.*` | Pure SE(3)/SO(3) |
+| (NumPy `linalg`) | `src/math/LinAlg.*` | Accelerate `dgesv`/`dgesdd` — the same LAPACK NumPy uses |
+| `controller/pin_fk.py` | `src/kinematics/PinModel.*` | Same Pinocchio 4.0.0 binary |
+| `controller/frames.py` | `src/kinematics/Frames.*` | World-frame kinematics + target resolution |
+| `controller/link_spheres.py` | `src/kinematics/LinkSpheres.h` | **Generated** by `tools/generate_link_spheres.py` |
+| `controller/human_safety.py` | `src/control/HumanSafety.*` | Torso-frame envelope geometry |
+| `controller/reactive_controller.py` | `src/control/ReactiveController.*` + `SafetyFilter.*` | Equations 1–6 and equation 7 respectively |
+| `controller/position_actuation.py` | `src/control/PositionActuation.*` | Persistent position integration |
+| `controller/cylinder_router.py` | `src/control/CylinderRouter.*` | Keep-out routing |
+| `controller/servo.py` | `src/control/Servo.*` | Pipeline composition |
+| `controller/runner.py` | `src/control/Runner.*` | Cycle ordering |
+| `controller/trajectory.py` | `src/trajectory/Trajectory.*` | Hold / C² waypoint spline / circle / program / periodic |
+| `controller/trajectory_config.py` | `src/trajectory/TrajectoryConfig.*` | Structured-intent compiler |
+| `controller/backend.py` | `src/sim/Backend.h` | Takeover / exchange / release |
+| `sim/world.py` | `src/sim/MujocoBackend.*` | Model/data ownership, stepping, lifecycle |
+| `sim/motion.py`, `sim/target_motion.py` | `src/sim/Motion.*`, `TargetMotion.*` | Scripted disturbances |
+| `sim/targets.py`, `controller/desired_pos.py` | `src/sim/Targets.*`, `DesiredPos.*` | Marker I/O and configured targets |
+| `sim/target_trajectory.py` | `src/sim/TargetTrajectory.*` | Trajectory initialisation |
+| `sim/cylinder_view.py`, `sim/human_safety_view.py` | `src/render/Overlays.*` | Viewer geometry |
+| `mujoco.viewer.launch_passive` | `src/render/Viewer.*` | GLFW + `mjr` |
+| `main.py` | `src/app/main.cpp` | Viewer entry point |
+| `tests/golden_trace.py` | `src/app/golden_trace.cpp` + `src/telemetry/TraceWriter.*` | 210-column trace, identical schema |
+
+## Intentional deviations
+
+Each is a deliberate choice, not an oversight.
+
+1. **No import-time global backend.** `sim/world.py` constructs a
+   `MujocoBackend` at module import; the C++ constructs everything explicitly
+   in `main`. Same behaviour — and what the Python project's own risk list
+   (`PROJECT_MAP.md` §10.4) asks a C++ port to do.
+2. **Validation at boundaries, not on every temporary.** The Python records
+   re-validate shapes and finiteness on every construction. The port
+   validates at the boundaries that can actually produce bad data (config
+   load, backend read, target sampling) rather than 500 times a second on the
+   control path.
+3. **The `analysis/` and `plotting/` suite is not ported.** Those are
+   matplotlib experiment tooling, not the simulation. The port emits the same
+   underlying numbers as CSV (`srl_headless_trace`, `srl_golden_trace`) so the
+   existing Python figures can be produced from C++ output.
+4. **The viewer is GLFW + `mjr`**, not `mujoco.viewer.launch_passive`, which
+   is Python-only. Scene, camera defaults and overlay geometry match;
+   interaction affordances differ (left-drag rotate, right-drag pan, scroll
+   zoom, Esc to quit). `--trajectory-plot` is accepted and reported as
+   unsupported rather than silently ignored.
+5. **OSQP is a build option** (`-DSRL_WITH_OSQP=ON` by default). The harness
+   reports `qp_fallback_entries` so the effect of omitting it is measured, not
+   assumed — it is currently 0 in every scenario tested.
+6. **Legacy `shape = "measured_start_displacement"` trajectory tables are
+   rejected** with an explicit error instead of being translated. The shipped
+   config uses the segment form; the legacy shim exists only for backwards
+   compatibility in the Python.
+7. **`LinkSpheres.h` is generated, not transcribed** — 18 spheres of
+   17-significant-digit constants are too easy to corrupt by hand.
+
+## Build
+
+Requirements: CMake ≥ 3.24, a C++20 compiler, macOS (for Accelerate), and the
+project's Python venv present at `../.venv` — the build links the native
+MuJoCo and Pinocchio libraries that venv already ships.
+
+Eigen, toml++, GLFW, urdfdom_headers and OSQP are fetched at configure time
+from pinned versions into the build tree. Nothing is installed system-wide.
+
+```bash
+cd ..                                  # the Python project root
+cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build cpp/build -j
+```
+
+Options: `-DSRL_WITH_VIEWER=OFF`, `-DSRL_WITH_OSQP=OFF`,
+`-DSRL_BUILD_TESTS=OFF`, `-DSRL_VENV=/path/to/.venv`.
+
+## Run
+
+```bash
+./cpp/build/srl_sim                 # viewer; arm selection from control.toml
+./cpp/build/srl_sim right           # or left / both
+./cpp/build/srl_print_config        # effective configuration + sha256
+./cpp/build/srl_smoke               # dependency/linkage check
+
+./cpp/build/srl_golden_trace   --out trace.csv
+./cpp/build/srl_headless_trace --out headless.csv --steps 2000
+./cpp/build/srl_trajectory_dump cpp/tests/fixtures/trajectory_control.toml 400
+```
+
+Tests:
+
+```bash
+ctest --test-dir cpp/build --output-on-failure
+```
+
+## How behavioural parity was verified
+
+One command runs the whole gate:
+
+```bash
+bash cpp/tools/verify_parity.sh
+```
+
+It builds, runs the 336 unit assertions, and then performs four
+Python-vs-C++ comparisons at `rtol = atol = 1e-12` — the same tolerance the
+Python golden trace holds itself to:
+
+1. **Effective configuration** — byte-identical, including CPython float
+   `repr()` and the config SHA-256.
+2. **Golden trace** — 250 cycles × 2 arms against the *committed*
+   `tests/golden/reactive_current.csv`: 105,000 fields, worst difference
+   2.167e-13.
+3. **Headless default-config trace** — 2,000 closed-loop cycles with human
+   safety, cylinder routing and the configured trajectory all enabled:
+   236,000 fields, worst difference 4.441e-13, and **every discrete column
+   identical** (safety-ladder branch, stop flags, active constraint counts,
+   route kinds).
+4. **Trajectory generation** — hold + line + 4-point C² spline + 2-revolution
+   circle: durations, boundaries, rate bounds and all rotational quantities
+   bit-identical; translation residual ≤ 1.13e-14.
+
+The residual traces to one-ULP differences in dense matrix products,
+amplified by the conditioning of the damped-least-squares solve. Full
+analysis and the list of what remains unvalidated are in
+[`docs/04-parity-report.md`](docs/04-parity-report.md).
