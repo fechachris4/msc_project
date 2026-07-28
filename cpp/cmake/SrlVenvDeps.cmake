@@ -109,17 +109,21 @@ message(STATUS "SRL Pinocchio: ${SRL_PINOCCHIO_LIBRARIES}")
 # anything linking the dylib directly inherits the framework-shaped install
 # name. Rather than install_name_tool every target, materialise that layout
 # once as symlinks inside the build tree and put it on the rpath.
-get_filename_component(_srl_mujoco_libname "${SRL_MUJOCO_LIBRARY}" NAME)
-set(SRL_MUJOCO_SHIM_DIR "${CMAKE_BINARY_DIR}/mujoco_rpath")
-set(_srl_shim_versions "${SRL_MUJOCO_SHIM_DIR}/mujoco.framework/Versions/A")
-file(MAKE_DIRECTORY "${_srl_shim_versions}")
-if(NOT EXISTS "${_srl_shim_versions}/${_srl_mujoco_libname}")
-  file(CREATE_LINK "${SRL_MUJOCO_LIBRARY}"
-       "${_srl_shim_versions}/${_srl_mujoco_libname}" SYMBOLIC)
+if(APPLE)
+  get_filename_component(_srl_mujoco_libname "${SRL_MUJOCO_LIBRARY}" NAME)
+  set(SRL_MUJOCO_SHIM_DIR "${CMAKE_BINARY_DIR}/mujoco_rpath")
+  set(_srl_shim_versions "${SRL_MUJOCO_SHIM_DIR}/mujoco.framework/Versions/A")
+  file(MAKE_DIRECTORY "${_srl_shim_versions}")
+  if(NOT EXISTS "${_srl_shim_versions}/${_srl_mujoco_libname}")
+    file(CREATE_LINK "${SRL_MUJOCO_LIBRARY}"
+         "${_srl_shim_versions}/${_srl_mujoco_libname}" SYMBOLIC)
+  endif()
 endif()
 
-# Runtime lookup for all three sets of dylibs.
+# Runtime lookup for the native libraries shipped by the Python environment.
 set(SRL_RPATHS
   "${SRL_CMEEL_PREFIX}/lib"
-  "${SRL_MUJOCO_ROOT}"
-  "${SRL_MUJOCO_SHIM_DIR}")
+  "${SRL_MUJOCO_ROOT}")
+if(APPLE)
+  list(APPEND SRL_RPATHS "${SRL_MUJOCO_SHIM_DIR}")
+endif()
