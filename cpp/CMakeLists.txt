@@ -200,12 +200,20 @@ srl_add_app(srl_trajectory_dump src/app/trajectory_dump.cpp)
 srl_add_app(srl_headless_trace src/app/headless_trace.cpp)
 if(SRL_WITH_GPMP2)
   add_executable(srl_gpmp2_plan src/app/gpmp2_plan.cpp)
-  add_executable(srl_gpmp2_sim src/app/gpmp2_sim.cpp)
-  foreach(_srl_gpmp2_app srl_gpmp2_plan srl_gpmp2_sim)
-    target_link_libraries(${_srl_gpmp2_app} PRIVATE srl_gpmp2)
-    set_target_properties(${_srl_gpmp2_app} PROPERTIES
+  target_link_libraries(srl_gpmp2_plan PRIVATE srl_gpmp2)
+  set_target_properties(srl_gpmp2_plan PROPERTIES
+    BUILD_RPATH "${SRL_RPATHS}" INSTALL_RPATH "${SRL_RPATHS}")
+  if(SRL_WITH_VIEWER)
+    find_package(Threads REQUIRED)
+    add_executable(srl_gpmp2_sim src/app/gpmp2_sim.cpp)
+    target_link_libraries(srl_gpmp2_sim PRIVATE srl_gpmp2 Threads::Threads)
+    set_target_properties(srl_gpmp2_sim PROPERTIES
       BUILD_RPATH "${SRL_RPATHS}" INSTALL_RPATH "${SRL_RPATHS}")
-  endforeach()
+  else()
+    message(STATUS
+      "SRL_WITH_VIEWER=OFF: srl_gpmp2_sim is not built; "
+      "srl_gpmp2_plan remains available")
+  endif()
 endif()
 
 # --------------------------------------------------------------------- tests

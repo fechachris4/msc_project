@@ -126,7 +126,8 @@ not on macOS:
 ```bash
 cmake -S cpp -B cpp/build \
   -DSRL_WITH_GPMP2=ON \
-  -DSRL_GPMP2_ROOT=/path/to/HumanSL_MAIN/third_party
+  -DSRL_GPMP2_ROOT=/path/to/HumanSL_MAIN/third_party \
+  -DSRL_WITH_VIEWER=ON
 cmake --build cpp/build -j
 
 ./cpp/build/srl_gpmp2_plan left planned.csv \
@@ -137,9 +138,18 @@ cmake --build cpp/build -j
 ```
 
 Both applications take seven goal joint angles in radians. Planning happens
-before the 2 ms simulation loop. `srl_gpmp2_plan` writes SI-unit CSV;
-`srl_gpmp2_sim` refuses to execute unless every interpolated 2 ms sample
-passes the simulator's real joint-limit and 18-sphere human-clearance check.
+on a background thread while the visible MuJoCo simulation runs at its 2 ms
+control period and holds the measured joints. `srl_gpmp2_plan` remains a
+CSV-only diagnostic. `srl_gpmp2_sim` starts the viewer immediately, refuses
+to execute unless every interpolated 2 ms sample passes the simulator's real
+joint-limit and 18-sphere human-clearance check, and then hands the accepted
+plan to the live joint controller. The controller is paced toward 500 Hz
+while rendering is limited to roughly 60 Hz.
+
+This is one in-simulation planning request from the command-line goal, not
+continuous replanning. The loop targets the configured 2 ms wall-clock period
+but is not a hard real-time scheduler; an over-budget cycle runs late rather
+than skipping physics.
 
 The GPMP2 cost currently uses a three-sphere DH proxy inherited from the
 prototype. It is useful for optimization but is not accepted as collision

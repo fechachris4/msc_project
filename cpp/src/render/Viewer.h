@@ -18,13 +18,15 @@ namespace srl::render {
 
 class Viewer {
  public:
-  Viewer(mjModel* model, mjData* data, const char* title);
+  Viewer(mjModel* model, mjData* data, const char* title,
+         bool vertical_sync = true);
   ~Viewer();
 
   Viewer(const Viewer&) = delete;
   Viewer& operator=(const Viewer&) = delete;
 
   bool IsRunning() const;
+  void SetTitle(const char* title);
 
   // Refresh the scene from the current model/data, then reset the overlay
   // cursor so callers can append their own geoms.
