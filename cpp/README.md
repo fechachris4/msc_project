@@ -37,6 +37,9 @@ telemetry.
 | `controller/cylinder_router.py` | `src/control/CylinderRouter.*` | Keep-out routing |
 | `controller/servo.py` | `src/control/Servo.*` | Pipeline composition |
 | `controller/runner.py` | `src/control/Runner.*` | Cycle ordering |
+| (new optimized-plan boundary) | `src/planning/JointTrajectory.*`, `PlanValidation.*` | Time-stamped joint states, Hermite sampling, exact post-validation |
+| HumanSL GPMP2 prototype | `src/planning/Gpmp2Planner.*` | Optional joint-space factor graph adapter |
+| (new optimized-plan executor) | `src/control/JointTrajectoryController.*`, `PlannedJointRunner.*` | Joint feedback, existing safety projection and position integration |
 | `controller/trajectory.py` | `src/trajectory/Trajectory.*` | Hold / C² waypoint spline / circle / program / periodic |
 | `controller/trajectory_config.py` | `src/trajectory/TrajectoryConfig.*` | Structured-intent compiler |
 | `controller/backend.py` | `src/sim/Backend.h` | Takeover / exchange / release |
@@ -83,9 +86,10 @@ Each is a deliberate choice, not an oversight.
 
 ## Build
 
-Requirements: CMake ≥ 3.24, a C++20 compiler, macOS (for Accelerate), and the
-project's Python venv present at `../.venv` — the build links the native
-MuJoCo and Pinocchio libraries that venv already ships.
+Requirements: CMake ≥ 3.24, a C++20 compiler, LAPACK (Apple Accelerate on
+macOS or a system LAPACK on Linux), and the project's Python venv present at
+`../.venv` — the build links the native MuJoCo and Pinocchio libraries that
+venv already ships.
 
 Eigen, toml++, GLFW, urdfdom_headers and OSQP are fetched at configure time
 from pinned versions into the build tree. Nothing is installed system-wide.
@@ -97,7 +101,52 @@ cmake --build cpp/build -j
 ```
 
 Options: `-DSRL_WITH_VIEWER=OFF`, `-DSRL_WITH_OSQP=OFF`,
+`-DSRL_WITH_GPMP2=OFF`,
 `-DSRL_BUILD_TESTS=OFF`, `-DSRL_VENV=/path/to/.venv`.
+
+## Optional GPMP2 joint-space planning
+
+The planner is an optional layer and is off by default. Its execution flow is:
+
+```text
+measured q, qdot + joint goal + torso-frame human SDF
+    -> GPMP2 factor-graph optimization
+    -> time-stamped q, qdot samples
+    -> exact Pinocchio/joint-limit post-validation
+    -> qdot_ref + Kp(q_ref - q_measured)
+    -> existing whole-arm safety projection
+    -> existing persistent position integration
+    -> MuJoCo backend
+```
+
+The GPMP2 bundle currently available in `HumanSL_MAIN/third_party` contains
+Linux x86-64 `.so` files. Build and run this option on the Ubuntu workspace,
+not on macOS:
+
+```bash
+cmake -S cpp -B cpp/build \
+  -DSRL_WITH_GPMP2=ON \
+  -DSRL_GPMP2_ROOT=/path/to/HumanSL_MAIN/third_party
+cmake --build cpp/build -j
+
+./cpp/build/srl_gpmp2_plan left planned.csv \
+  -0.70 0.45 -0.20 1.20 -0.20 0.75 0.30
+
+./cpp/build/srl_gpmp2_sim left \
+  -0.70 0.45 -0.20 1.20 -0.20 0.75 0.30
+```
+
+Both applications take seven goal joint angles in radians. Planning happens
+before the 2 ms simulation loop. `srl_gpmp2_plan` writes SI-unit CSV;
+`srl_gpmp2_sim` refuses to execute unless every interpolated 2 ms sample
+passes the simulator's real joint-limit and 18-sphere human-clearance check.
+
+The GPMP2 cost currently uses a three-sphere DH proxy inherited from the
+prototype. It is useful for optimization but is not accepted as collision
+proof. `PlanValidation` uses the current Pinocchio model after planning, and
+`PlannedJointRunner` applies the existing safety filter again online. A future
+milestone should replace the proxy with a GPMP2 sphere model numerically
+matched against all non-exempt Pinocchio spheres.
 
 ## Run
 
