@@ -1,5 +1,15 @@
+# MSc reactive-baseline configuration.
+# All runtime values use SI units: metres, seconds and radians.
+# Supported choices are listed beside each selector so this file remains the
+# single visible control surface.
+
+# ---------------------------------------------------------------------------
+# Runtime and reactive controller
+# ---------------------------------------------------------------------------
+
 [run]
 nominal_dt_s = 0.002
+# Arm choices: "right", "left", "both". A CLI arm argument overrides this.
 arm = "both"
 
 [controller.reactive_pose]
@@ -25,11 +35,13 @@ joint_velocity_rad_s = [
 ]
 position_lead_rad = 0.2
 
-# Real-time whole-arm protection around the wearer. Geometry is expressed in
-# the TORSO frame, so the envelope translates and rotates with the person.
-# The radius and height describe the occupied human volume; each arm's
-# mesh-derived sphere radius and clearance_m are added by the safety filter.
-# The fixed shoulder/mount interface is modelled but explicitly exempt.
+# ---------------------------------------------------------------------------
+# Safety and end-effector routing
+# ---------------------------------------------------------------------------
+
+# Whole-arm protection around the wearer. This finite cylinder is expressed in
+# the TORSO frame and therefore moves with the person. Link radii and
+# clearance_m are added by the safety filter; the fixed mount is exempt.
 [human_safety]
 enabled = true
 center_xy_torso_m = [0.0, 0.0]
@@ -44,15 +56,9 @@ approach_velocity_damping = 0.0
 projection_iterations = 50
 constraint_tolerance_m_s = 1e-6
 
-# One world-frame vertical cylinder around the human/occupied area. The scene's
-# torso/person is centred at world x=0, y=0 between the two arm mounts, so the
-# configured centre below is that shared central axis. Both arms route around
-# this SAME cylinder; it is never rotated by either tilted arm-base frame.
-# Direct paths that cross the inflated cylinder take the shortest clockwise,
-# counter-clockwise or over-the-top waypoint route. Targets inside are moved
-# just outside; they are not refused. Metres, in WORLD coordinates.
-#
-# END-EFFECTOR routing only — NOT whole-arm/link collision avoidance.
+# WORLD-frame end-effector waypoint router around one vertical cylinder.
+# This is not whole-arm/link collision avoidance. During a planned run main.py
+# disables this router so it cannot rewrite the planner's position reference.
 [cylinder_keepout]
 cylinder_keepout_enabled = true
 cylinder_keepout_center_x_m = 0.0
@@ -63,21 +69,13 @@ cylinder_keepout_z_max_m = 1.8
 cylinder_keepout_clearance_m = 0.10
 cylinder_waypoint_tolerance_m = 0.01
 
-# Collision-aware Cartesian path planning above the reactive controller.
-# The planner has NO goal of its own: it plans from the measured end-effector
-# pose to the existing [targets.<arm>] pose, keeping goal representation in
-# one place. Collision is optimised in the TORSO frame, where the wearer
-# envelope above is static by construction; the delivered reference stays
-# WORLD-frame, because the task is a world-frame pose hold.
+# Cartesian planner above the reactive controller. It plans from the measured
+# end-effector pose to [targets.<arm>]. Collision costs are evaluated in the
+# TORSO frame; the delivered reference remains WORLD-frame.
 #
-# Mutually exclusive with [cylinder_keepout]: that router replaces the
-# reference POSITION while passing the planner's TWIST through unchanged, so
-# the P and D terms would reference different points. Enabling both raises.
-#
-# lead_compensation_enabled pre-inverts the controller's known steady-state
-# lag (v/Kp, the exact inverse) at the reference, so the planned path is what
-# the arm actually executes. It modifies no controller file. Turn it OFF to
-# measure the uncompensated reactive baseline.
+# Source selection in the current main.py:
+#   enabled=true   run this planner source; configured trajectories are replaced
+#   enabled=false  run the configured target/trajectory source below
 [planning]
 enabled = true
 arm = "right"
@@ -104,12 +102,15 @@ max_linear_acceleration_m_s2 = 0.5
 max_angular_speed_rad_s = 0.5
 max_angular_acceleration_rad_s2 = 1.0
 
+# ---------------------------------------------------------------------------
+# Targets and motion plans
+# ---------------------------------------------------------------------------
+
+# [targets.<arm>] is the static fallback and the planner goal.
+# An optional [targets.<arm>.trajectory] replaces that arm's static target.
 [targets.right]
 reference_frame = "world"
-# Planning demo goal: the straight line from the start pose penetrates the
-# wearer envelope by 175 mm, so the planner has real work to do and routes
-# around it to the configured 50 mm margin. main.py disables the keep-out
-# router for planned runs. Previous static-hold goal: [0.45, -0.20, 1.20].
+# Active right-arm planner goal.
 position_m = [0.20, 0.40, 1.10]
 rpy_rad = [0.0, 1.6, 0.8]
 
@@ -118,31 +119,46 @@ reference_frame = "world"
 position_m = [0.45, 0.30, 1.20]
 rpy_rad = [0.0, 0.0, 0.0]
 
+# LEFT POSITION TRAJECTORY
+#
+# start: "measured" holds the launch pose; "configured_target" starts from the
+# [targets.left] pose. loop=true requires continuous pose, twist and
+# acceleration at the end-to-start boundary.
+#
+# Supported segment types and their defining fields:
+#   hold      duration_s
+#   line      displacement_m or end_position_m; optional duration_s/end_rpy_rad
+#   waypoints offsets_m or positions_m; optional durations_s/rpy_rad
+#   circle    radius_m, revolutions, clockwise, and either plane or
+#             normal+start_direction; optional duration_s/end_rpy_rad
+#
+# Optional [targets.left.trajectory.constraints] fields:
+#   max_linear_speed_m_s, max_linear_acceleration_m_s2,
+#   max_angular_speed_rad_s, max_angular_acceleration_rad_s2
 [targets.left.trajectory]
 reference_frame = "world"
 start = "measured"
 loop = true
 open_live_path_plot = true
 
-# Optional trajectory-level orientation policy. This is independent of the
-# position segments below. The moving-object form samples the named MuJoCo
-# mocap body's WORLD position once per visible control cycle.
-# When enabled, it replaces the configured/static RPY along this trajectory.
-# Uncomment the complete block to enable it. The tool axes are local
-# left_pinch_site axes: tool_forward_axis is the grasping axis that points at
-# the object. Roll is fixed by aligning the projected tool_up_axis with the
-# projected world_up_direction. Verify the local axes for the mounted gripper.
-# Look-at requires reference_frame = "world"; do not also use per-segment
-# end_rpy_rad or rpy_rad.
+# LEFT ORIENTATION POLICY — active for the complete trajectory.
 #
-# [targets.left.trajectory.orientation]
-# policy = "look_at_sim_object"
-# object_body = "look_at_object"
-# tool_forward_axis = [0.0, 0.0, 1.0]
-# tool_up_axis = [0.0, 1.0, 0.0]
-# world_up_direction = [0.0, 0.0, 1.0]
+# Supported policies:
+#   no orientation table             keep the start/segment orientation
+#   "look_at_sim_object"             face a named moving MuJoCo body
+#   "look_at_fixed_world_point"      face a fixed WORLD point
 #
-# Fixed-point alternative: replace policy/object_body above with:
+# Look-at replaces segment RPY and cannot be combined with end_rpy_rad/rpy_rad.
+# The tool axes are local left_pinch_site axes. The forward axis faces the
+# object; tool-up and world-up resolve roll.
+[targets.left.trajectory.orientation]
+policy = "look_at_sim_object"
+object_body = "look_at_object"
+tool_forward_axis = [0.0, 0.0, 1.0]
+tool_up_axis = [0.0, 1.0, 0.0]
+world_up_direction = [0.0, 0.0, 1.0]
+
+# To use the fixed-point policy, replace the two fields above with:
 # policy = "look_at_fixed_world_point"
 # object_position_world_m = [0.30, 0.00, 1.10]
 
@@ -156,8 +172,12 @@ type = "line"
 displacement_m = [-0.40, 0.0, 0.0]
 duration_s = 10.0
 
+# ---------------------------------------------------------------------------
+# Simulation-only inputs
+# ---------------------------------------------------------------------------
+
 [simulation.initial_joint_position_rad]
-# Simulation initialization is separate from generic target semantics.
+# Initial joint posture for the arm with the configured trajectory.
 left = [
   0.22356,
   0.73366,
@@ -168,11 +188,11 @@ left = [
   0.62194,
 ]
 
-# Motion for the independent blue look_at_object mocap sphere in scene.xml.
-# Required only by policy = "look_at_sim_object". The sine starts at home:
+# Required by policy = "look_at_sim_object". This drives the independent,
+# non-contact blue mocap object in WORLD coordinates:
 # p(t) = home + linear_amplitude_m * sin(2*pi*frequency*t), all WORLD metres.
-# [simulation.look_at_object_motion]
-# body_name = "look_at_object"
-# home_position_world_m = [0.30, 0.00, 1.10]
-# linear_amplitude_m = [0.00, 0.10, 0.00]
-# linear_frequency_hz = 0.10
+[simulation.look_at_object_motion]
+body_name = "look_at_object"
+home_position_world_m = [0.30, 0.00, 1.10]
+linear_amplitude_m = [0.00, 0.10, 0.00]
+linear_frequency_hz = 0.10
