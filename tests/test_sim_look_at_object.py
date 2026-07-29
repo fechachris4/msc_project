@@ -64,10 +64,8 @@ duration_s = 2.0
 """
 
 
-def _with_object_motion(source):
-    header = "[simulation.look_at_object_motion]"
-    if header in source:
-        source = source.split(header, 1)[0].rstrip()
+def _add_object_motion(source):
+    marker = "[simulation.initial_joint_position_rad]"
     motion = """
 [simulation.look_at_object_motion]
 body_name = "look_at_object"
@@ -76,7 +74,7 @@ linear_amplitude_m = [0.04, 0.02, 0.00]
 linear_frequency_hz = 0.25
 
 """
-    return source + "\n\n" + motion
+    return source.replace(marker, motion + marker, 1)
 
 
 def _motion_config():
@@ -118,7 +116,7 @@ def _trajectory_config():
 class SimLookAtConfigTest(unittest.TestCase):
     def test_moving_object_policy_and_motion_parse_independently(self):
         source = Path(CONFIG.source_path).read_text()
-        candidate = _with_object_motion(
+        candidate = _add_object_motion(
             _replace_left_trajectory(
                 source, _moving_orientation_toml()
             )
@@ -144,7 +142,7 @@ class SimLookAtConfigTest(unittest.TestCase):
             'object_body = "look_at_object"\n'
             "object_position_world_m = [0.1, 0.2, 1.0]",
         )
-        source = _with_object_motion(
+        source = _add_object_motion(
             _replace_left_trajectory(
                 Path(CONFIG.source_path).read_text(), invalid
             )
