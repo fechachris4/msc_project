@@ -369,7 +369,9 @@ class TargetTrajectoryIntegrationTest(unittest.TestCase):
             displacement_m=(-0.15, 0.0, 0.0),
         )
         return replace(
-            trajectory, segments=(outward, returning)
+            trajectory,
+            segments=(outward, returning),
+            orientation=None,
         )
 
     def test_configured_source_repeats_exactly_from_measured_start(self):
