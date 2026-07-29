@@ -34,6 +34,13 @@
       <geom type="sphere" size="0.015" rgba="0.9 0.1 0.1 0.5"
             contype="0" conaffinity="0"/>
     </body>
+
+    <!-- Independent visual object for trajectory look-at orientation.
+         It is a world-frame mocap point, not an EE target or contact body. -->
+    <body name="look_at_object" mocap="true" pos="0.30 0.00 1.10">
+      <geom type="sphere" size="0.025" rgba="0.15 0.55 1.0 0.9"
+            contype="0" conaffinity="0"/>
+    </body>
   </worldbody>
 
   <contact>

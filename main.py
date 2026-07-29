@@ -83,6 +83,7 @@ def main(argv=None):
         for side in arms
         if CONFIG.target(side).trajectory is not None
     ]
+    look_at_object = None
     if len(active_trajectories) > 1:
         raise ValueError(
             "simulation currently supports one configured "
@@ -101,11 +102,13 @@ def main(argv=None):
             trajectory,
             initial_joint_position,
             static_targets,
+            CONFIG.simulation.look_at_object_motion,
         )
         print_target_trajectory_setup(
             trajectory_side, trajectory, setup
         )
         target_source = setup.source
+        look_at_object = setup.look_at_object
         show_trajectory = (
             show_trajectory or trajectory.open_live_path_plot
         )
@@ -184,6 +187,12 @@ def main(argv=None):
         with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
             while viewer.is_running():
                 step_start = time.perf_counter()
+                if look_at_object is not None:
+                    # The object is moved and then sampled at this same
+                    # visible-cycle time by the structured target source.
+                    look_at_object.apply(
+                        runner.target_elapsed_time_s
+                    )
                 cycle = runner.cycle()
                 desired_pos.show_targets(cycle.resolved_targets)
                 # Visualization only: user_scn geometry never contacts the
