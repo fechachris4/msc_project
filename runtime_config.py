@@ -18,6 +18,10 @@ ARMS = ("right", "left")
 TARGET_FRAMES = ("world", "base", "torso")
 TRAJECTORY_STARTS = ("measured", "configured_target")
 TRAJECTORY_SEGMENT_TYPES = ("hold", "line", "waypoints", "circle")
+TRAJECTORY_ORIENTATION_POLICIES = (
+    "look_at_fixed_world_point",
+    "look_at_sim_object",
+)
 _CIRCLE_PLANE_DIRECTIONS = {
     "xy": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
     "horizontal": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
@@ -149,6 +153,16 @@ class TrajectorySegmentConfig:
 
 
 @dataclass(frozen=True)
+class TrajectoryOrientationConfig:
+    policy: str
+    object_position_world_m: tuple[float, float, float] | None
+    tool_forward_axis: tuple[float, float, float]
+    tool_up_axis: tuple[float, float, float]
+    world_up_direction: tuple[float, float, float]
+    object_body: str | None = None
+
+
+@dataclass(frozen=True)
 class TargetTrajectoryConfig:
     reference_frame: str
     start: str
@@ -156,6 +170,7 @@ class TargetTrajectoryConfig:
     open_live_path_plot: bool
     constraints: TrajectoryConstraintsConfig
     segments: tuple[TrajectorySegmentConfig, ...]
+    orientation: TrajectoryOrientationConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -167,9 +182,18 @@ class TargetConfig:
 
 
 @dataclass(frozen=True)
+class LookAtObjectMotionConfig:
+    body_name: str
+    home_position_world_m: tuple[float, float, float]
+    linear_amplitude_m: tuple[float, float, float]
+    linear_frequency_hz: float
+
+
+@dataclass(frozen=True)
 class SimulationConfig:
     right_initial_joint_position_rad: tuple[float, ...] | None
     left_initial_joint_position_rad: tuple[float, ...] | None
+    look_at_object_motion: LookAtObjectMotionConfig | None
 
     def initial_joint_position(self, side):
         if side == "right":
@@ -280,13 +304,26 @@ _TRAJECTORY_REQUIRED_KEYS = {
     "open_live_path_plot",
     "segments",
 }
-_TRAJECTORY_ALLOWED_KEYS = _TRAJECTORY_REQUIRED_KEYS | {"constraints"}
+_TRAJECTORY_ALLOWED_KEYS = _TRAJECTORY_REQUIRED_KEYS | {
+    "constraints",
+    "orientation",
+}
 _TRAJECTORY_CONSTRAINT_KEYS = {
     "max_linear_speed_m_s",
     "max_linear_acceleration_m_s2",
     "max_angular_speed_rad_s",
     "max_angular_acceleration_rad_s2",
 }
+_LOOK_AT_COMMON_KEYS = {
+    "policy",
+    "tool_forward_axis",
+    "tool_up_axis",
+    "world_up_direction",
+}
+_FIXED_LOOK_AT_KEYS = _LOOK_AT_COMMON_KEYS | {
+    "object_position_world_m",
+}
+_SIM_OBJECT_LOOK_AT_KEYS = _LOOK_AT_COMMON_KEYS | {"object_body"}
 _LEGACY_TRAJECTORY_KEYS = {
     "shape",
     "reference_frame",
@@ -296,7 +333,16 @@ _LEGACY_TRAJECTORY_KEYS = {
     "orientation_policy",
     "open_live_path_plot",
 }
-_SIMULATION_KEYS = {"initial_joint_position_rad"}
+_SIMULATION_REQUIRED_KEYS = {"initial_joint_position_rad"}
+_SIMULATION_ALLOWED_KEYS = _SIMULATION_REQUIRED_KEYS | {
+    "look_at_object_motion",
+}
+_LOOK_AT_OBJECT_MOTION_KEYS = {
+    "body_name",
+    "home_position_world_m",
+    "linear_amplitude_m",
+    "linear_frequency_hz",
+}
 
 
 def _require_table(value, location):
@@ -331,6 +377,12 @@ def _finite_number(value, location, *, positive=False, nonnegative=False):
 def _boolean(value, location):
     if not isinstance(value, bool):
         raise ValueError(f"{location} must be true or false")
+    return value
+
+
+def _non_empty_string(value, location):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{location} must be a non-empty string")
     return value
 
 
@@ -688,6 +740,83 @@ def _parse_target(table, side):
     )
 
 
+def _vector_norm(vector):
+    return math.sqrt(sum(component * component for component in vector))
+
+
+def _parse_trajectory_orientation(table, trajectory_location):
+    location = f"{trajectory_location}.orientation"
+    table = _require_table(table, location)
+    policy = _choice(
+        table.get("policy"),
+        TRAJECTORY_ORIENTATION_POLICIES,
+        f"{location}.policy",
+    )
+    expected_keys = (
+        _FIXED_LOOK_AT_KEYS
+        if policy == "look_at_fixed_world_point"
+        else _SIM_OBJECT_LOOK_AT_KEYS
+    )
+    _require_exact_keys(table, expected_keys, location)
+    tool_forward = _vector(
+        table["tool_forward_axis"],
+        3,
+        f"{location}.tool_forward_axis",
+    )
+    tool_up = _vector(
+        table["tool_up_axis"], 3, f"{location}.tool_up_axis"
+    )
+    world_up = _vector(
+        table["world_up_direction"],
+        3,
+        f"{location}.world_up_direction",
+    )
+    forward_norm = _vector_norm(tool_forward)
+    tool_up_norm = _vector_norm(tool_up)
+    world_up_norm = _vector_norm(world_up)
+    if forward_norm < 1e-9:
+        raise ValueError(f"{location}.tool_forward_axis must be non-zero")
+    if tool_up_norm < 1e-9:
+        raise ValueError(f"{location}.tool_up_axis must be non-zero")
+    if world_up_norm < 1e-9:
+        raise ValueError(f"{location}.world_up_direction must be non-zero")
+    cross = (
+        tool_up[1] * tool_forward[2]
+        - tool_up[2] * tool_forward[1],
+        tool_up[2] * tool_forward[0]
+        - tool_up[0] * tool_forward[2],
+        tool_up[0] * tool_forward[1]
+        - tool_up[1] * tool_forward[0],
+    )
+    if _vector_norm(cross) < 1e-8 * forward_norm * tool_up_norm:
+        raise ValueError(
+            f"{location}.tool_forward_axis and tool_up_axis "
+            "must not be collinear"
+        )
+    return TrajectoryOrientationConfig(
+        policy=policy,
+        object_position_world_m=(
+            _vector(
+                table["object_position_world_m"],
+                3,
+                f"{location}.object_position_world_m",
+            )
+            if policy == "look_at_fixed_world_point"
+            else None
+        ),
+        tool_forward_axis=tool_forward,
+        tool_up_axis=tool_up,
+        world_up_direction=world_up,
+        object_body=(
+            None
+            if policy == "look_at_fixed_world_point"
+            else _non_empty_string(
+                table["object_body"], f"{location}.object_body"
+            )
+        ),
+    )
+
+
 def _parse_target_trajectory(table, side):
     location = f"targets.{side}.trajectory"
     table = _require_table(table, location)
@@ -725,12 +854,35 @@ def _parse_target_trajectory(table, side):
         _parse_trajectory_segment(item, location, index)
         for index, item in enumerate(raw_segments)
     )
+    orientation = (
+        None
+        if "orientation" not in table
+        else _parse_trajectory_orientation(
+            table["orientation"], location
+        )
+    )
+    reference_frame = _choice(
+        table["reference_frame"],
+        TARGET_FRAMES,
+        f"{location}.reference_frame",
+    )
+    if orientation is not None:
+        if reference_frame != "world":
+            raise ValueError(
+                f"{location}.orientation requires "
+                'reference_frame = "world"'
+            )
+        if any(
+            segment.end_rpy_rad is not None
+            or segment.rpy_rad is not None
+            for segment in segments
+        ):
+            raise ValueError(
+                f"{location}.orientation cannot be combined with "
+                "per-segment end_rpy_rad or rpy_rad"
+            )
     return TargetTrajectoryConfig(
-        reference_frame=_choice(
-            table["reference_frame"],
-            TARGET_FRAMES,
-            f"{location}.reference_frame",
-        ),
+        reference_frame=reference_frame,
         start=_choice(
             table["start"],
             TRAJECTORY_STARTS,
@@ -743,6 +895,7 @@ def _parse_target_trajectory(table, side):
         ),
         constraints=constraints,
         segments=segments,
+        orientation=orientation,
     )
 
 
@@ -1018,8 +1171,15 @@ def _parse_trajectory_segment(table, trajectory_location, index):
 
 
 def _parse_simulation(table):
-    table = _require_table(table, "simulation")
-    _require_exact_keys(table, _SIMULATION_KEYS, "simulation")
+    location = "simulation"
+    table = _require_table(table, location)
+    actual = set(table)
+    missing = sorted(_SIMULATION_REQUIRED_KEYS - actual)
+    extra = sorted(actual - _SIMULATION_ALLOWED_KEYS)
+    if missing or extra:
+        raise ValueError(
+            f"{location} keys differ; missing={missing}, extra={extra}"
+        )
     positions = _require_table(
         table["initial_joint_position_rad"],
         "simulation.initial_joint_position_rad",
@@ -1042,9 +1202,44 @@ def _parse_simulation(table):
         )
         for side in ARMS
     }
+    object_motion = None
+    if "look_at_object_motion" in table:
+        motion_location = f"{location}.look_at_object_motion"
+        motion = _require_table(
+            table["look_at_object_motion"], motion_location
+        )
+        _require_exact_keys(
+            motion, _LOOK_AT_OBJECT_MOTION_KEYS, motion_location
+        )
+        amplitude = _vector(
+            motion["linear_amplitude_m"],
+            3,
+            f"{motion_location}.linear_amplitude_m",
+        )
+        if _vector_norm(amplitude) < 1e-12:
+            raise ValueError(
+                f"{motion_location}.linear_amplitude_m must be non-zero"
+            )
+        object_motion = LookAtObjectMotionConfig(
+            body_name=_non_empty_string(
+                motion["body_name"], f"{motion_location}.body_name"
+            ),
+            home_position_world_m=_vector(
+                motion["home_position_world_m"],
+                3,
+                f"{motion_location}.home_position_world_m",
+            ),
+            linear_amplitude_m=amplitude,
+            linear_frequency_hz=_finite_number(
+                motion["linear_frequency_hz"],
+                f"{motion_location}.linear_frequency_hz",
+                positive=True,
+            ),
+        )
     return SimulationConfig(
         right_initial_joint_position_rad=values["right"],
         left_initial_joint_position_rad=values["left"],
+        look_at_object_motion=object_motion,
     )
 
 

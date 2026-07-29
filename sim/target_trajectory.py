@@ -19,6 +19,7 @@ from controller.trajectory import (
     StaticTargetSource,
 )
 from controller.trajectory_config import materialize_trajectory
+from sim.look_at_object import SimulatedMocapPointSource
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,7 @@ class TargetTrajectorySetup:
     rate_bounds: object
     initial_singular_values: np.ndarray
     initial_joint_margin_rad: float
+    look_at_object: SimulatedMocapPointSource | None
 
 
 def _limited_joint_margin(backend, side, joint_position_rad):
@@ -99,6 +101,7 @@ def _target_source(
     plant,
     calibration,
     static_targets,
+    look_at_object_motion,
 ):
     if not isinstance(static_targets, DualArmFramedTargets):
         raise TypeError("static_targets must be DualArmFramedTargets")
@@ -114,10 +117,33 @@ def _target_source(
         static_targets,
         selected_state.ee_pose_world,
     )
+    look_at_object = None
+    if (
+        trajectory.orientation is not None
+        and trajectory.orientation.policy == "look_at_sim_object"
+    ):
+        if look_at_object_motion is None:
+            raise ValueError(
+                "look_at_sim_object orientation requires "
+                "[simulation.look_at_object_motion]"
+            )
+        if (
+            trajectory.orientation.object_body
+            != look_at_object_motion.body_name
+        ):
+            raise ValueError(
+                "trajectory orientation object_body must match "
+                "simulation.look_at_object_motion.body_name"
+            )
+        look_at_object = SimulatedMocapPointSource(
+            backend, look_at_object_motion
+        )
+        look_at_object.apply(0.0)
     materialized = materialize_trajectory(
-        trajectory, start_reference
+        trajectory,
+        start_reference,
+        world_point_source=look_at_object,
     )
-    program = materialized.program
     selected_source = materialized.source
 
     other = "right" if side == "left" else "left"
@@ -131,7 +157,15 @@ def _target_source(
             right=selected_source, left=other_hold
         )
     )
-    end_reference = program.sample(program.duration_s).pose
+    end_reference = (
+        materialized.program.sample(
+            materialized.duration_s
+        ).pose
+        if look_at_object is not None
+        else selected_source.sample(
+            materialized.duration_s
+        ).pose
+    )
     end_world = frames.resolve_target_world(
         plant,
         side,
@@ -157,6 +191,7 @@ def _target_source(
             side,
             selected_state.joints.position_rad,
         ),
+        look_at_object,
     )
 
 
@@ -167,6 +202,7 @@ def prepare_target_trajectory(
     trajectory,
     initial_joint_position_rad,
     static_targets,
+    look_at_object_motion=None,
 ):
     _set_initial_joint_posture(
         backend, side, initial_joint_position_rad
@@ -184,6 +220,7 @@ def prepare_target_trajectory(
         rate_bounds,
         singular_values,
         joint_margin,
+        look_at_object,
     ) = _target_source(
         backend,
         side,
@@ -191,6 +228,7 @@ def prepare_target_trajectory(
         plant,
         calibration,
         static_targets,
+        look_at_object_motion,
     )
     return TargetTrajectorySetup(
         source=source,
@@ -204,17 +242,41 @@ def prepare_target_trajectory(
         rate_bounds=rate_bounds,
         initial_singular_values=singular_values,
         initial_joint_margin_rad=joint_margin,
+        look_at_object=look_at_object,
     )
 
 
 def print_target_trajectory_setup(side, trajectory, setup):
     print(f"Configured {side} target trajectory:")
+    orientation = (
+        "segment/static"
+        if trajectory.orientation is None
+        else trajectory.orientation.policy
+    )
     print(
         f"reference_frame={trajectory.reference_frame} "
         f"start={trajectory.start} loop={trajectory.loop} "
         f"segments={[item.type for item in trajectory.segments]} "
+        f"orientation={orientation} "
         f"duration_s={setup.duration_s:.6f}"
     )
+    if trajectory.orientation is not None:
+        policy = trajectory.orientation
+        if policy.policy == "look_at_fixed_world_point":
+            print(
+                "look_at_object_world_m="
+                f"{np.array2string(np.asarray(policy.object_position_world_m), precision=9)}"
+            )
+        else:
+            print(f"look_at_sim_object_body={policy.object_body}")
+        print(
+            "tool_forward_axis="
+            f"{np.array2string(np.asarray(policy.tool_forward_axis), precision=6)} "
+            "tool_up_axis="
+            f"{np.array2string(np.asarray(policy.tool_up_axis), precision=6)} "
+            "world_up_direction="
+            f"{np.array2string(np.asarray(policy.world_up_direction), precision=6)}"
+        )
     print(
         "resolved_world_start_m="
         f"{np.array2string(setup.start_pose_world.position_m, precision=9)}"

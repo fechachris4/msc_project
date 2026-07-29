@@ -9,6 +9,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from controller.look_at import (
+    FixedWorldPointSource,
+    LookAtTargetSource,
+    WorldPointSource,
+)
 from controller.state import FramedTarget, Pose, TargetFrame, Twist
 from controller.trajectory import (
     HoldTrajectory,
@@ -165,12 +170,46 @@ def _segment_source(reference_frame, start_pose, segment, limits, index):
     return source, Pose(start_pose.position_m, end_rotation)
 
 
-def materialize_trajectory(config, start_pose):
+def materialize_trajectory(config, start_pose, world_point_source=None):
     """Build and validate one structured trajectory from its start pose."""
     if not isinstance(config, TargetTrajectoryConfig):
         raise TypeError("config must be TargetTrajectoryConfig")
     if not isinstance(start_pose, Pose):
         raise TypeError("start_pose must be a Pose")
+    if config.orientation is not None:
+        if config.orientation.policy not in (
+            "look_at_fixed_world_point",
+            "look_at_sim_object",
+        ):
+            raise ValueError(
+                "unsupported trajectory orientation policy: "
+                f"{config.orientation.policy!r}"
+            )
+        if (
+            config.orientation.policy == "look_at_fixed_world_point"
+            and world_point_source is not None
+        ):
+            raise ValueError(
+                "fixed-world-point orientation does not accept an "
+                "external world_point_source"
+            )
+        if (
+            config.orientation.policy == "look_at_sim_object"
+            and not isinstance(world_point_source, WorldPointSource)
+        ):
+            raise ValueError(
+                "look_at_sim_object orientation requires a validated "
+                "WorldPointSource"
+            )
+        if any(
+            segment.end_rpy_rad is not None
+            or segment.rpy_rad is not None
+            for segment in config.segments
+        ):
+            raise ValueError(
+                "trajectory orientation cannot be combined with "
+                "per-segment end_rpy_rad or rpy_rad"
+            )
     reference_frame = TargetFrame(config.reference_frame)
     limits = _limits(config)
     segments = []
@@ -185,15 +224,36 @@ def materialize_trajectory(config, start_pose):
         )
         segments.append(TargetProgramSegment(source.duration_s, source))
     program = TargetProgram(reference_frame, tuple(segments))
-    bounds = program.maximum_rates()
-    limits.validate(bounds)
-    source = (
+    position_source = (
         PeriodicTargetSource(program, program.duration_s)
         if config.loop
         else program
     )
+    output_source = position_source
+    if config.orientation is not None:
+        orientation = config.orientation
+        point_source = (
+            FixedWorldPointSource(
+                orientation.object_position_world_m
+            )
+            if orientation.policy == "look_at_fixed_world_point"
+            else world_point_source
+        )
+        output_source = LookAtTargetSource(
+            source=position_source,
+            point_source=point_source,
+            tool_forward_axis=orientation.tool_forward_axis,
+            tool_up_axis=orientation.tool_up_axis,
+            world_up_direction=orientation.world_up_direction,
+        )
+        # Validate the initial geometry during materialization. Later samples
+        # are validated in the visible runtime cycle; no trajectory replay is
+        # inserted before simulation.
+        output_source.sample_kinematics(0.0)
+    bounds = output_source.maximum_rates()
+    limits.validate(bounds)
     return MaterializedTrajectory(
-        source=source,
+        source=output_source,
         program=program,
         duration_s=program.duration_s,
         boundary_times_s=program.boundary_times_s,

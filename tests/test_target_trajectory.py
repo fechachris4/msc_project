@@ -70,6 +70,19 @@ class TargetTrajectoryConfigTest(unittest.TestCase):
         self.assertEqual(trajectory.segments[0].duration_s, 10.0)
         self.assertTrue(trajectory.open_live_path_plot)
         self.assertEqual(
+            trajectory.orientation.policy, "look_at_sim_object"
+        )
+        self.assertEqual(
+            trajectory.orientation.object_body, "look_at_object"
+        )
+        self.assertEqual(
+            trajectory.orientation.tool_forward_axis, (0.0, 0.0, 1.0)
+        )
+        self.assertEqual(
+            CONFIG.simulation.look_at_object_motion.body_name,
+            "look_at_object",
+        )
+        self.assertEqual(
             len(CONFIG.simulation.left_initial_joint_position_rad), 7
         )
 
@@ -369,7 +382,9 @@ class TargetTrajectoryIntegrationTest(unittest.TestCase):
             displacement_m=(-0.15, 0.0, 0.0),
         )
         return replace(
-            trajectory, segments=(outward, returning)
+            trajectory,
+            segments=(outward, returning),
+            orientation=None,
         )
 
     def test_configured_source_repeats_exactly_from_measured_start(self):

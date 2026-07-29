@@ -226,6 +226,19 @@ class ReactivePositionRunner:
             raise RuntimeError("runner has not taken over the backend")
         return self._plant_state
 
+    @property
+    def target_elapsed_time_s(self):
+        """Elapsed target time for the next visible control cycle."""
+        if (
+            self._plant_state is None
+            or self._target_time_origin_s is None
+        ):
+            raise RuntimeError("runner has not taken over the backend")
+        return (
+            self._plant_state.sample_time_s
+            - self._target_time_origin_s
+        )
+
     def start(self):
         if self._plant_state is not None:
             raise RuntimeError("runner is already started")
@@ -256,9 +269,7 @@ class ReactivePositionRunner:
         if self._plant_state is None or self._pipeline is None:
             raise RuntimeError("runner must be started before cycling")
         input_state = self._plant_state
-        target_elapsed = (
-            input_state.sample_time_s - self._target_time_origin_s
-        )
+        target_elapsed = self.target_elapsed_time_s
         target_source = (
             self._target_source
             if source_targets is None

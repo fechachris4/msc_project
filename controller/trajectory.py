@@ -439,8 +439,10 @@ class TrajectoryRateBounds:
             "max_angular_acceleration_rad_s2",
         ):
             value = float(getattr(self, name))
-            if not np.isfinite(value) or value < 0.0:
-                raise ValueError(f"{name} must be finite and non-negative")
+            if np.isnan(value) or value < 0.0:
+                raise ValueError(
+                    f"{name} must be non-negative and not NaN"
+                )
             object.__setattr__(self, name, value)
 
 
