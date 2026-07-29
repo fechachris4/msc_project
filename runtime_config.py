@@ -91,6 +91,38 @@ class HumanSafetyConfig:
 
 
 @dataclass(frozen=True)
+class PlanningConfig:
+    """Collision-aware Cartesian path planning above the controller.
+
+    The planner carries no goal of its own: it plans from the measured
+    end-effector pose to the existing ``[targets.<arm>]`` pose, so the
+    goal representation stays in exactly one place.
+    """
+
+    enabled: bool
+    arm: str
+    waypoint_count: int
+    dense_samples: int
+    clearance_margin_m: float
+    smoothness_weight: float
+    obstacle_weight: float
+    max_iterations: int
+    tool_radius_m: float
+    deviation_weight: float
+    reach_allowance_m: float
+    lead_compensation_enabled: bool
+    replan_clearance_trigger_m: float
+    include_floor: bool
+    floor_height_world_m: float
+    include_torso_box: bool
+    torso_box_half_extent_m: tuple[float, float, float]
+    max_linear_speed_m_s: float
+    max_linear_acceleration_m_s2: float
+    max_angular_speed_rad_s: float
+    max_angular_acceleration_rad_s2: float
+
+
+@dataclass(frozen=True)
 class TrajectoryConstraintsConfig:
     max_linear_speed_m_s: float | None
     max_linear_acceleration_m_s2: float | None
@@ -154,6 +186,7 @@ class ProjectConfig:
     limits: LimitConfig
     cylinder_keepout: CylinderKeepoutConfig
     human_safety: HumanSafetyConfig
+    planning: PlanningConfig
     right_target: TargetConfig
     left_target: TargetConfig
     simulation: SimulationConfig
@@ -174,8 +207,32 @@ _ROOT_KEYS = {
     "limits",
     "cylinder_keepout",
     "human_safety",
+    "planning",
     "targets",
     "simulation",
+}
+_PLANNING_KEYS = {
+    "enabled",
+    "arm",
+    "waypoint_count",
+    "dense_samples",
+    "clearance_margin_m",
+    "smoothness_weight",
+    "obstacle_weight",
+    "max_iterations",
+    "tool_radius_m",
+    "deviation_weight",
+    "reach_allowance_m",
+    "lead_compensation_enabled",
+    "replan_clearance_trigger_m",
+    "include_floor",
+    "floor_height_world_m",
+    "include_torso_box",
+    "torso_box_half_extent_m",
+    "max_linear_speed_m_s",
+    "max_linear_acceleration_m_s2",
+    "max_angular_speed_rad_s",
+    "max_angular_acceleration_rad_s2",
 }
 _RUN_KEYS = {"nominal_dt_s", "arm"}
 _CONTROLLER_KEYS = {"reactive_pose"}
@@ -505,6 +562,100 @@ def _parse_human_safety(table):
             "z_min_torso_m"
         )
     return config
+
+
+def _parse_planning(table):
+    location = "planning"
+    table = _require_table(table, location)
+    _require_exact_keys(table, _PLANNING_KEYS, location)
+    return PlanningConfig(
+        enabled=_boolean(table["enabled"], f"{location}.enabled"),
+        arm=_choice(table["arm"], (*ARMS, "both"), f"{location}.arm"),
+        waypoint_count=_positive_integer(
+            table["waypoint_count"], f"{location}.waypoint_count"
+        ),
+        dense_samples=_positive_integer(
+            table["dense_samples"], f"{location}.dense_samples"
+        ),
+        clearance_margin_m=_finite_number(
+            table["clearance_margin_m"],
+            f"{location}.clearance_margin_m",
+            nonnegative=True,
+        ),
+        smoothness_weight=_finite_number(
+            table["smoothness_weight"],
+            f"{location}.smoothness_weight",
+            positive=True,
+        ),
+        obstacle_weight=_finite_number(
+            table["obstacle_weight"],
+            f"{location}.obstacle_weight",
+            positive=True,
+        ),
+        max_iterations=_positive_integer(
+            table["max_iterations"], f"{location}.max_iterations"
+        ),
+        tool_radius_m=_finite_number(
+            table["tool_radius_m"],
+            f"{location}.tool_radius_m",
+            nonnegative=True,
+        ),
+        deviation_weight=_finite_number(
+            table["deviation_weight"],
+            f"{location}.deviation_weight",
+            positive=True,
+        ),
+        reach_allowance_m=_finite_number(
+            table["reach_allowance_m"],
+            f"{location}.reach_allowance_m",
+            positive=True,
+        ),
+        lead_compensation_enabled=_boolean(
+            table["lead_compensation_enabled"],
+            f"{location}.lead_compensation_enabled",
+        ),
+        replan_clearance_trigger_m=_finite_number(
+            table["replan_clearance_trigger_m"],
+            f"{location}.replan_clearance_trigger_m",
+            nonnegative=True,
+        ),
+        include_floor=_boolean(
+            table["include_floor"], f"{location}.include_floor"
+        ),
+        floor_height_world_m=_finite_number(
+            table["floor_height_world_m"],
+            f"{location}.floor_height_world_m",
+        ),
+        include_torso_box=_boolean(
+            table["include_torso_box"], f"{location}.include_torso_box"
+        ),
+        torso_box_half_extent_m=_vector(
+            table["torso_box_half_extent_m"],
+            3,
+            f"{location}.torso_box_half_extent_m",
+            positive=True,
+        ),
+        max_linear_speed_m_s=_finite_number(
+            table["max_linear_speed_m_s"],
+            f"{location}.max_linear_speed_m_s",
+            positive=True,
+        ),
+        max_linear_acceleration_m_s2=_finite_number(
+            table["max_linear_acceleration_m_s2"],
+            f"{location}.max_linear_acceleration_m_s2",
+            positive=True,
+        ),
+        max_angular_speed_rad_s=_finite_number(
+            table["max_angular_speed_rad_s"],
+            f"{location}.max_angular_speed_rad_s",
+            positive=True,
+        ),
+        max_angular_acceleration_rad_s2=_finite_number(
+            table["max_angular_acceleration_rad_s2"],
+            f"{location}.max_angular_acceleration_rad_s2",
+            positive=True,
+        ),
+    )
 
 
 def _parse_target(table, side):
@@ -914,6 +1065,7 @@ def load_config(path=DEFAULT_CONFIG_PATH):
 
     cylinder_keepout = _parse_cylinder_keepout(parsed["cylinder_keepout"])
     human_safety = _parse_human_safety(parsed["human_safety"])
+    planning = _parse_planning(parsed["planning"])
 
     targets = _require_table(parsed["targets"], "targets")
     _require_exact_keys(targets, set(ARMS), "targets")
@@ -941,6 +1093,7 @@ def load_config(path=DEFAULT_CONFIG_PATH):
         ),
         cylinder_keepout=cylinder_keepout,
         human_safety=human_safety,
+        planning=planning,
         right_target=_parse_target(targets["right"], "right"),
         left_target=_parse_target(targets["left"], "left"),
         simulation=_parse_simulation(parsed["simulation"]),
@@ -996,6 +1149,7 @@ def effective_config_dict(config):
         "limits": asdict(config.limits),
         "cylinder_keepout": asdict(config.cylinder_keepout),
         "human_safety": asdict(config.human_safety),
+        "planning": asdict(config.planning),
         "targets": {
             "right": asdict(config.right_target),
             "left": asdict(config.left_target),
