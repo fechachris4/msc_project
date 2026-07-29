@@ -45,6 +45,39 @@ class EntrypointTest(unittest.TestCase):
                 ["--trajectory-plot", "--trajectory-plot"]
             )
 
+    def test_different_arm_sources_are_composed_not_overwritten(self):
+        import main
+        from controller import desired_pos
+        from controller.state import FramedTarget, Pose, TargetFrame, Twist
+        from controller.trajectory import StaticTargetSource
+        import numpy as np
+
+        def source_at(position):
+            return StaticTargetSource(
+                FramedTarget(
+                    TargetFrame.WORLD,
+                    Pose(np.asarray(position, dtype=float), np.eye(3)),
+                    Twist.zero(),
+                )
+            )
+
+        right_plan = source_at((0.1, -0.2, 1.0))
+        left_trajectory = source_at((0.6, 0.3, 1.2))
+        composed = main._compose_target_source(
+            desired_pos.configured_targets(),
+            {"right": right_plan, "left": left_trajectory},
+        )
+        sampled = composed.sample(1.0)
+
+        np.testing.assert_array_equal(
+            sampled.right.pose.position_m,
+            right_plan.target.pose.position_m,
+        )
+        np.testing.assert_array_equal(
+            sampled.left.pose.position_m,
+            left_trajectory.target.pose.position_m,
+        )
+
     def test_scene_path_is_absolute(self):
         from sim import world
 
