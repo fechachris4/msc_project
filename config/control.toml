@@ -124,23 +124,23 @@ start = "measured"
 loop = true
 open_live_path_plot = true
 
-# Trajectory-level orientation policy, independent of the position segments
-# below. The named MuJoCo mocap body's WORLD position is sampled once per
-# visible control cycle, so the local tool-forward axis keeps facing it.
-# This replaces the configured/static RPY along this trajectory. The tool axes
-# are local left_pinch_site axes: tool_forward_axis is the grasping axis that
-# points at the object. Roll is fixed by aligning the projected tool_up_axis
-# with the projected world_up_direction. Verify the local axes for the mounted
-# gripper.
+# Optional trajectory-level orientation policy. This is independent of the
+# position segments below. The moving-object form samples the named MuJoCo
+# mocap body's WORLD position once per visible control cycle.
+# When enabled, it replaces the configured/static RPY along this trajectory.
+# Uncomment the complete block to enable it. The tool axes are local
+# left_pinch_site axes: tool_forward_axis is the grasping axis that points at
+# the object. Roll is fixed by aligning the projected tool_up_axis with the
+# projected world_up_direction. Verify the local axes for the mounted gripper.
 # Look-at requires reference_frame = "world"; do not also use per-segment
 # end_rpy_rad or rpy_rad.
-
-[targets.left.trajectory.orientation]
-policy = "look_at_sim_object"
-object_body = "look_at_object"
-tool_forward_axis = [0.0, 0.0, 1.0]
-tool_up_axis = [0.0, 1.0, 0.0]
-world_up_direction = [0.0, 0.0, 1.0]
+#
+# [targets.left.trajectory.orientation]
+# policy = "look_at_sim_object"
+# object_body = "look_at_object"
+# tool_forward_axis = [0.0, 0.0, 1.0]
+# tool_up_axis = [0.0, 1.0, 0.0]
+# world_up_direction = [0.0, 0.0, 1.0]
 #
 # Fixed-point alternative: replace policy/object_body above with:
 # policy = "look_at_fixed_world_point"
@@ -169,10 +169,10 @@ left = [
 ]
 
 # Motion for the independent blue look_at_object mocap sphere in scene.xml.
-# The sine starts at home:
+# Required only by policy = "look_at_sim_object". The sine starts at home:
 # p(t) = home + linear_amplitude_m * sin(2*pi*frequency*t), all WORLD metres.
-[simulation.look_at_object_motion]
-body_name = "look_at_object"
-home_position_world_m = [0.30, 0.00, 1.10]
-linear_amplitude_m = [0.00, 0.10, 0.00]
-linear_frequency_hz = 0.10
+# [simulation.look_at_object_motion]
+# body_name = "look_at_object"
+# home_position_world_m = [0.30, 0.00, 1.10]
+# linear_amplitude_m = [0.00, 0.10, 0.00]
+# linear_frequency_hz = 0.10
