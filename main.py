@@ -22,7 +22,10 @@ import numpy as np
 
 from controller import desired_pos
 from controller.runner import ReactivePositionRunner
-from controller.trajectory import StaticDualArmTargetSource
+from controller.trajectory import (
+    IndependentArmTargetSource,
+    StaticTargetSource,
+)
 from plotting.live_cartesian_path import (
     DEFAULT_BUFFER_SAMPLES,
     LiveCartesianPathPublisher,
@@ -67,6 +70,22 @@ def _parse_options(argv, default_choice="both"):
     return _parse_args(positional, default_choice), show_trajectory
 
 
+def _compose_target_source(static_targets, overrides):
+    """Combine independently owned per-arm sources without discarding either."""
+    unknown = set(overrides) - set(world.SIDES)
+    if unknown:
+        raise ValueError(f"unknown target-source arms: {sorted(unknown)}")
+    sources = {
+        side: StaticTargetSource(static_targets.for_arm(side))
+        for side in world.SIDES
+    }
+    sources.update(overrides)
+    return IndependentArmTargetSource(
+        right=sources["right"],
+        left=sources["left"],
+    )
+
+
 def main(argv=None):
     import sys
 
@@ -78,6 +97,7 @@ def main(argv=None):
     static_targets = desired_pos.configured_targets()
     world.backend.configure_torso_driver(
         motion.torso_pose_at, motion.torso_twist_at)
+    source_overrides = {}
     active_trajectories = [
         (side, CONFIG.target(side).trajectory)
         for side in arms
@@ -107,7 +127,7 @@ def main(argv=None):
         print_target_trajectory_setup(
             trajectory_side, trajectory, setup
         )
-        target_source = setup.source
+        source_overrides[trajectory_side] = setup.selected_source
         look_at_object = setup.look_at_object
         show_trajectory = (
             show_trajectory or trajectory.open_live_path_plot
@@ -120,9 +140,6 @@ def main(argv=None):
             )
             + 1,
         )
-    else:
-        target_source = StaticDualArmTargetSource(static_targets)
-
     # Collision-aware planning ([planning] in config/control.toml). The plan
     # is built from one plant sample BEFORE the Runner takes over, and is
     # delivered through the ordinary target-source seam, so no controller
@@ -151,9 +168,13 @@ def main(argv=None):
             )
         finally:
             world.backend.release()
-        target_source = planning_outcome.source
+        for side in planned:
+            source_overrides[side] = planning_outcome.source.for_arm(side)
         print(planning_view.describe(CONFIG.planning, planning_outcome))
 
+    target_source = _compose_target_source(
+        static_targets, source_overrides
+    )
     runner = ReactivePositionRunner(
         world.backend,
         world.MOUNT_CALIBRATION,
