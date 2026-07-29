@@ -248,7 +248,12 @@ class _LogBuilder:
                     f"{previous_frame!r} to {frame!r} within one run"
                 )
             self.target_reference_frames[side] = frame
-            target = cycle.resolved_targets.for_arm(side)
+            # The ROUTED target, not the resolved one: when the cylinder
+            # keep-out router substitutes a waypoint it is that waypoint the
+            # controller tracks, so logging the pre-routing target would make
+            # the recorded error disagree with the controller's own e_pos.
+            # Identical to resolved_targets whenever routing is inactive.
+            target = cycle.routed_targets.for_arm(side)
             state = cycle.controller_states.for_arm(side)
             cartesian = {
                 "target_position_world_m": target.pose_world.position_m,
