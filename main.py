@@ -27,8 +27,15 @@ from plotting.live_cartesian_path import (
     DEFAULT_BUFFER_SAMPLES,
     LiveCartesianPathPublisher,
 )
+from planning import planner
 from runtime_config import CONFIG, print_effective_config
-from sim import cylinder_view, human_safety_view, motion, world
+from sim import (
+    cylinder_view,
+    human_safety_view,
+    motion,
+    planning_view,
+    world,
+)
 from sim.target_trajectory import (
     prepare_target_trajectory,
     print_target_trajectory_setup,
@@ -112,12 +119,46 @@ def main(argv=None):
         )
     else:
         target_source = StaticDualArmTargetSource(static_targets)
+
+    # Collision-aware planning ([planning] in config/control.toml). The plan
+    # is built from one plant sample BEFORE the Runner takes over, and is
+    # delivered through the ordinary target-source seam, so no controller
+    # file is involved. The keep-out router is switched off for planned runs
+    # because it would rewrite the planned reference position while passing
+    # the planned twist through unchanged (docs/planning.md).
+    planning_outcome = None
+    runner_keepout = None
+    if CONFIG.planning.enabled:
+        planned = set(planner.planned_sides(CONFIG.planning))
+        clash = planned.intersection(
+            side for side, _ in active_trajectories
+        )
+        if clash:
+            raise ValueError(
+                f"[planning] and [targets.{sorted(clash)[0]}.trajectory] "
+                "both drive that arm; disable one"
+            )
+        runner_keepout = planner.disabled_keepout()
+        plant = world.backend.takeover()
+        try:
+            planning_outcome = planner.plan_from_state(
+                plant,
+                world.MOUNT_CALIBRATION,
+                cylinder_keepout=runner_keepout,
+            )
+        finally:
+            world.backend.release()
+        target_source = planning_outcome.source
+        print(planning_view.describe(CONFIG.planning, planning_outcome))
+
     runner = ReactivePositionRunner(
         world.backend,
         world.MOUNT_CALIBRATION,
         world.PIPELINE_SETUP,
         target_source,
         arms,
+        **({} if runner_keepout is None
+           else {"cylinder_keepout": runner_keepout}),
     )
     runner.start()
     keepout = runner.cylinder_keepout
@@ -150,6 +191,12 @@ def main(argv=None):
                 viewer.user_scn.ngeom = 0
                 cylinder_view.draw(
                     viewer.user_scn, keepout, cycle.cylinder_routes)
+                if planning_outcome is not None:
+                    planning_view.draw(
+                        viewer.user_scn,
+                        planning_outcome,
+                        cycle.input_state.torso_pose_world,
+                    )
                 human_safety_view.draw(
                     viewer.user_scn,
                     cycle.input_state,
