@@ -1,12 +1,17 @@
 """Viewer entry point: world-frame EE pose hold, closed loop.
 
 Per-step data flow (all SI: meters, radians; mm only in the printout):
-  sampled TOML target source + backend PlantState [trajectory, sim/world]
+  per-arm composed reference source + backend PlantState   [arm_flow]
   -> FK EE pose  T_W_E = T_W_T · T_T_K · T_K_E(q)  [controller/frames]
   -> pose + twist errors; PD + DLS qdot          [controller/reactive_controller]
   -> whole-arm human-distance safety projection  [controller/reactive_controller]
   -> integrate joint-position command (rad)      [controller/position_actuation]
   -> backend.exchange: apply command, mj_step, return next state
+
+Each arm's reference is composed independently in arm_flow.py (static
+target, configured trajectory, planned path, or keep-out routed reach);
+the Runner is the thin two-arm layer that samples the composed source
+once per cycle and never rewrites it.
 
 usage: mjpython main.py [right|left|both] [--trajectory-plot]
 
@@ -20,14 +25,13 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
+import arm_flow
 from controller import desired_pos
 from controller.runner import ReactivePositionRunner
-from controller.trajectory import StaticDualArmTargetSource
 from plotting.live_cartesian_path import (
     DEFAULT_BUFFER_SAMPLES,
     LiveCartesianPathPublisher,
 )
-from planning import planner
 from runtime_config import CONFIG, print_effective_config
 from sim import (
     cylinder_view,
@@ -36,10 +40,7 @@ from sim import (
     planning_view,
     world,
 )
-from sim.target_trajectory import (
-    prepare_target_trajectory,
-    print_target_trajectory_setup,
-)
+from sim.target_trajectory import print_target_trajectory_setup
 
 PRINT_EVERY = 250  # steps between error printouts (0.5 s at the 2 ms timestep)
 
@@ -78,94 +79,52 @@ def main(argv=None):
     static_targets = desired_pos.configured_targets()
     world.backend.configure_torso_driver(
         motion.torso_pose_at, motion.torso_twist_at)
-    active_trajectories = [
-        (side, CONFIG.target(side).trajectory)
-        for side in arms
-        if CONFIG.target(side).trajectory is not None
-    ]
-    look_at_object = None
-    if len(active_trajectories) > 1:
-        raise ValueError(
-            "simulation currently supports one configured "
-            "trajectory arm per run"
-        )
+
+    # Each arm's reference is composed independently from its own config
+    # and one shared plant snapshot; planning or routing one arm cannot
+    # replace or freeze the other arm's configured motion.
+    flow = arm_flow.build_flows(
+        world.backend,
+        world.MOUNT_CALIBRATION,
+        static_targets,
+        arms,
+    )
+    for side in world.SIDES:
+        one = flow.for_arm(side)
+        if one.kind == "trajectory":
+            trajectory = CONFIG.target(side).trajectory
+            print_target_trajectory_setup(
+                side, trajectory, one.trajectory_setup
+            )
+            show_trajectory = (
+                show_trajectory or trajectory.open_live_path_plot
+            )
+    if flow.plans:
+        print(planning_view.describe(CONFIG.planning, flow.plans))
+
     trajectory_buffer_samples = DEFAULT_BUFFER_SAMPLES
-    if active_trajectories:
-        trajectory_side, trajectory = active_trajectories[0]
-        initial_joint_position = (
-            CONFIG.simulation.initial_joint_position(trajectory_side)
-        )
-        setup = prepare_target_trajectory(
-            world.backend,
-            world.MOUNT_CALIBRATION,
-            trajectory_side,
-            trajectory,
-            initial_joint_position,
-            static_targets,
-            CONFIG.simulation.look_at_object_motion,
-        )
-        print_target_trajectory_setup(
-            trajectory_side, trajectory, setup
-        )
-        target_source = setup.source
-        look_at_object = setup.look_at_object
-        show_trajectory = (
-            show_trajectory or trajectory.open_live_path_plot
-        )
-        trace_duration = setup.duration_s
+    if flow.duration_s > 0.0:
         trajectory_buffer_samples = max(
             DEFAULT_BUFFER_SAMPLES,
-            math.ceil(
-                trace_duration / world.model.opt.timestep
-            )
-            + 1,
+            math.ceil(flow.duration_s / world.model.opt.timestep) + 1,
         )
-    else:
-        target_source = StaticDualArmTargetSource(static_targets)
-
-    # Collision-aware planning ([planning] in config/control.toml). The plan
-    # is built from one plant sample BEFORE the Runner takes over, and is
-    # delivered through the ordinary target-source seam, so no controller
-    # file is involved. The keep-out router is switched off for planned runs
-    # because it would rewrite the planned reference position while passing
-    # the planned twist through unchanged (docs/planning.md).
-    planning_outcome = None
-    runner_keepout = None
-    if CONFIG.planning.enabled:
-        planned = set(planner.planned_sides(CONFIG.planning))
-        clash = planned.intersection(
-            side for side, _ in active_trajectories
-        )
-        if clash:
-            raise ValueError(
-                f"[planning] and [targets.{sorted(clash)[0]}.trajectory] "
-                "both drive that arm; disable one"
-            )
-        runner_keepout = planner.disabled_keepout()
-        plant = world.backend.takeover()
-        try:
-            planning_outcome = planner.plan_from_state(
-                plant,
-                world.MOUNT_CALIBRATION,
-                cylinder_keepout=runner_keepout,
-            )
-        finally:
-            world.backend.release()
-        target_source = planning_outcome.source
-        print(planning_view.describe(CONFIG.planning, planning_outcome))
 
     runner = ReactivePositionRunner(
         world.backend,
         world.MOUNT_CALIBRATION,
         world.PIPELINE_SETUP,
-        target_source,
+        flow.source,
         arms,
-        **({} if runner_keepout is None
-           else {"cylinder_keepout": runner_keepout}),
     )
     runner.start()
-    keepout = runner.cylinder_keepout
+    keepout = arm_flow.keepout_from_config(CONFIG.cylinder_keepout)
     print(cylinder_view.describe(keepout, arms))
+    for side, route in flow.routes.items():
+        print(
+            f"  {side} reach routed {route.kind} around the keep-out: "
+            f"{len(route.waypoints_world_m)} waypoints, "
+            f"{flow.for_arm(side).duration_s:.2f} s timed path"
+        )
     print(human_safety_view.describe(CONFIG.human_safety))
     path_publisher = None
     path_publication_enabled = False
@@ -187,7 +146,7 @@ def main(argv=None):
         with mujoco.viewer.launch_passive(world.model, world.data) as viewer:
             while viewer.is_running():
                 step_start = time.perf_counter()
-                if look_at_object is not None:
+                for look_at_object in flow.look_at_objects:
                     # The object is moved and then sampled at this same
                     # visible-cycle time by the structured target source.
                     look_at_object.apply(
@@ -199,11 +158,11 @@ def main(argv=None):
                 # arms. The one shared cylinder stays world-aligned.
                 viewer.user_scn.ngeom = 0
                 cylinder_view.draw(
-                    viewer.user_scn, keepout, cycle.cylinder_routes)
-                if planning_outcome is not None:
+                    viewer.user_scn, keepout, flow.routes or None)
+                if flow.plans:
                     planning_view.draw(
                         viewer.user_scn,
-                        planning_outcome,
+                        flow.plans,
                         cycle.input_state.torso_pose_world,
                     )
                 human_safety_view.draw(
@@ -238,14 +197,6 @@ def main(argv=None):
                             f"e_pos=[{e_mm[0]: 7.1f} {e_mm[1]: 7.1f} "
                             f"{e_mm[2]: 7.1f}]  "
                             f"sigma=[{' '.join(f'{s:.3f}' for s in sigma)}]"
-                        )
-                    for side, status in cycle.cylinder_routes.items():
-                        print(
-                            f"        {side:5s} route={status.kind:17s} "
-                            f"waypoint {status.waypoint_index + 1}"
-                            f"/{status.waypoint_count}  "
-                            f"final={status.at_final_waypoint}  "
-                            f"target_adjusted={status.target_adjusted}"
                         )
                     for side, status in (
                         cycle.human_safety_statuses.items()

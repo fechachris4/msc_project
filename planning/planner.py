@@ -1,24 +1,31 @@
-"""Build a planned target source from configuration and plant state.
+"""Plan one arm's collision-aware path from configuration and plant state.
 
-This is the composition root of the planning layer.  It reads the same
-``[targets.<arm>]`` goal the reactive baseline uses, captures the torso
-pose to fix the collision frame, optimises the path, and wraps it in the
-``PlannedDualArmSource`` the Runner already knows how to sample.
+The planner is a feasibility stage inside ONE arm's reference pipeline.
+It reads that arm's ``[targets.<arm>]`` goal, captures the torso pose to
+fix the collision frame, optimises the path, and returns the optimised
+trajectory plus the evidence it was checked.  The optimised trajectory is
+built by the shared trajectory layer (``timed_waypoint_trajectory`` with
+the shared orientation interpolation, ``planning/path_optimizer.py``), so
+a planned path re-enters the same timing, orientation, sampling, and
+controller pipeline as every other motion.
 
-It refuses to build alongside an enabled cylinder keep-out router: that
-router replaces the reference POSITION while passing the planner's TWIST
-through unchanged (``controller/runner.py:201-204``), so the controller's
-P and D terms would reference different points and the executed path
-would be the router's, not the planner's.
+Delivery to the controller happens through the ordinary single-arm
+``TargetSource`` seam in the composition root (``arm_flow.py``).  The
+planner never sees, holds, or replaces the other arm's reference, and it
+does not interact with the cylinder keep-out router: routing is a
+composition-time path transformation for unplanned reaches, not a runtime
+rewrite, so the two can no longer corrupt each other's references.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import numpy as np
 
 from controller import frames
-from controller.cylinder_router import CylinderKeepout
-from controller.runner import keepout_from_config
+from controller.lead_compensation import (
+    LeadCompensatedSource,
+    LeadCompensation,
+)
 from controller.state import (
     FramedTarget,
     MountCalibration,
@@ -29,53 +36,28 @@ from controller.state import (
 )
 from controller.trajectory import TrajectoryLimits
 from controller.transforms import rotation_from_rpy
-from planning.obstacles import Sphere, build_obstacle_set
+from planning.obstacles import build_obstacle_set
 from planning.path_optimizer import OptimizerParams, optimize_path
-from planning.plan_source import (
-    LeadCompensation,
-    PlannedArmPath,
-    PlannedDualArmSource,
-    hold_source,
-)
 from runtime_config import CONFIG, PlanningConfig
 
 
 @dataclass(frozen=True, slots=True)
 class ArmPlan:
-    """One arm's plan plus the evidence it was checked."""
+    """One arm's plan, its delivered source, and the evidence it was checked.
+
+    ``source`` is the reference actually delivered to the controller
+    (lead-conditioned when configured); ``result.trajectory`` is the
+    optimised path BEFORE conditioning — the comparison reference for
+    analysis and visualisation.
+    """
 
     side: str
     result: object
     goal_pose_world: Pose
     start_pose_world: Pose
-
-
-@dataclass(frozen=True, slots=True)
-class PlanningOutcome:
-    """Everything a caller needs to run and to report the plan."""
-
-    source: PlannedDualArmSource
-    plans: tuple
     torso_pose_world: Pose
-
-    def for_side(self, side):
-        for plan in self.plans:
-            if plan.side == side:
-                return plan
-        return None
-
-
-def disabled_keepout(config=None):
-    """The configured keep-out geometry, switched off.
-
-    Planned runs must not go through the cylinder router: it replaces the
-    reference POSITION while passing the planner's TWIST through unchanged,
-    so the controller's P and D terms would reference different points.
-    Flipping only ``enabled`` keeps the diagnostics describing the same
-    cylinder.
-    """
-    source = CONFIG.cylinder_keepout if config is None else config
-    return replace(keepout_from_config(source), enabled=False)
+    source: object
+    lead: LeadCompensation
 
 
 def planned_sides(planning_config):
@@ -124,10 +106,13 @@ def goal_pose_world(plant, side, calibration, target_config):
     ).pose_world
 
 
-def build_obstacles_for(plant, planning_config, other_arm_sphere=None):
+def build_obstacles_for(
+    plant, planning_config, other_arm_sphere=None, human_safety_config=None
+):
     extra = () if other_arm_sphere is None else (other_arm_sphere,)
     return build_obstacle_set(
-        CONFIG.human_safety,
+        CONFIG.human_safety
+        if human_safety_config is None else human_safety_config,
         plant.torso_pose_world,
         floor_height_world_m=(
             planning_config.floor_height_world_m
@@ -141,15 +126,21 @@ def build_obstacles_for(plant, planning_config, other_arm_sphere=None):
     )
 
 
-def plan_from_state(
+def plan_arm(
     plant,
     calibration,
+    side,
     planning_config=None,
     reactive_pose_config=None,
-    cylinder_keepout=None,
-    elapsed_time_s=0.0,
+    target_config=None,
+    human_safety_config=None,
 ):
-    """Optimise a path per planned arm and wrap it for the Runner."""
+    """Optimise one arm's path and package it for per-arm composition.
+
+    Every configuration record can be injected so a caller composing from
+    a non-global config (tests, analysis sweeps) gets a plan consistent
+    with the rest of its flow; omitted records fall back to ``CONFIG``.
+    """
     planning_config = (
         CONFIG.planning if planning_config is None else planning_config
     )
@@ -157,81 +148,55 @@ def plan_from_state(
         CONFIG.reactive_pose
         if reactive_pose_config is None else reactive_pose_config
     )
+    if target_config is None:
+        target_config = CONFIG.target(side)
     if not isinstance(plant, PlantState):
         raise TypeError("plant must be a PlantState")
     if not isinstance(calibration, MountCalibration):
         raise TypeError("calibration must be a MountCalibration")
     if not isinstance(planning_config, PlanningConfig):
         raise TypeError("planning_config must be a PlanningConfig")
-    # Resolve to the LIVE configuration when omitted, so the refusal
-    # this module advertises actually fires on the default call path
-    # (the shipped config enables the router).
-    if cylinder_keepout is None:
-        cylinder_keepout = keepout_from_config(CONFIG.cylinder_keepout)
-    if isinstance(cylinder_keepout, CylinderKeepout):
-        if cylinder_keepout.enabled:
-            raise ValueError(
-                "the cylinder keep-out router rewrites planned reference "
-                "positions while passing the planned twist through "
-                "unchanged; disable [cylinder_keepout] to plan"
-            )
-    else:
-        raise TypeError("cylinder_keepout must be a CylinderKeepout")
-    elapsed_time_s = float(elapsed_time_s)
-    if not np.isfinite(elapsed_time_s) or elapsed_time_s < 0.0:
-        raise ValueError("elapsed_time_s must be finite and non-negative")
+    if side not in ("right", "left"):
+        raise ValueError(f"unknown arm: {side!r}")
 
     states = frames.controller_states(plant, calibration)
+    start_pose = states.for_arm(side).ee_pose_world
+    goal = goal_pose_world(plant, side, calibration, target_config)
+    obstacles = build_obstacles_for(
+        plant, planning_config, human_safety_config=human_safety_config
+    )
+    result = optimize_path(
+        start_pose,
+        goal,
+        plant.torso_pose_world,
+        obstacles,
+        trajectory_limits(planning_config),
+        optimizer_params(planning_config),
+    )
     lead = LeadCompensation.from_config(
         reactive_pose_config,
         enabled=planning_config.lead_compensation_enabled,
     )
-    sides = planned_sides(planning_config)
-    limits = trajectory_limits(planning_config)
-    params = optimizer_params(planning_config)
-
-    paths = {}
-    plans = []
-    for side in ("right", "left"):
-        start_pose = states.for_arm(side).ee_pose_world
-        if side not in sides:
-            paths[side] = PlannedArmPath(hold_source(start_pose), lead)
-            continue
-        goal = goal_pose_world(
-            plant, side, calibration, CONFIG.target(side)
-        )
-        obstacles = build_obstacles_for(plant, planning_config)
-        result = optimize_path(
-            start_pose,
-            goal,
-            plant.torso_pose_world,
-            obstacles,
-            limits,
-            params,
-        )
-        paths[side] = PlannedArmPath(
-            result.trajectory, lead, float(elapsed_time_s)
-        )
-        plans.append(
-            ArmPlan(
-                side=side,
-                result=result,
-                goal_pose_world=goal,
-                start_pose_world=start_pose,
-            )
-        )
-
-    return PlanningOutcome(
-        source=PlannedDualArmSource(paths["right"], paths["left"]),
-        plans=tuple(plans),
+    source = (
+        LeadCompensatedSource(result.trajectory, lead)
+        if lead.enabled
+        else result.trajectory
+    )
+    return ArmPlan(
+        side=side,
+        result=result,
+        goal_pose_world=goal,
+        start_pose_world=start_pose,
         torso_pose_world=plant.torso_pose_world,
+        source=source,
+        lead=lead,
     )
 
 
-def remaining_clearance(outcome, plant, planning_config, samples=40):
-    """Torso-frame clearance of the plan under the CURRENT torso pose.
+def remaining_clearance(plans, plant, planning_config, samples=40):
+    """Torso-frame clearance of the plans under the CURRENT torso pose.
 
-    The plan is world-frame and therefore does not move with the wearer.
+    A plan is world-frame and therefore does not move with the wearer.
     This is the quantity that decays as the torso moves, and it is the
     signal a replan trigger should watch.
     """
@@ -239,8 +204,8 @@ def remaining_clearance(outcome, plant, planning_config, samples=40):
     rotation = plant.torso_pose_world.rotation.T
     origin = plant.torso_pose_world.position_m
     worst = np.inf
-    for plan in outcome.plans:
-        trajectory = outcome.source.for_arm(plan.side).source
+    for plan in plans:
+        trajectory = plan.result.trajectory
         times = np.linspace(0.0, trajectory.duration_s, samples)
         points_world = np.stack([
             trajectory.sample(float(t)).pose.position_m for t in times

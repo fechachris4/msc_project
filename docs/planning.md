@@ -4,23 +4,26 @@
 
 The reactive controller still receives targets through exactly the seam it
 always used: a `DualArmTargetSource` sampled once per cycle. The planning
-layer replaces what is on the other side of that seam.
+layer is a feasibility stage inside ONE arm's reference pipeline, not a
+target source of its own.
 
-At startup `planning.planner.plan_from_state` reads the measured
-end-effector pose of each planned arm, resolves the existing
-`[targets.<arm>]` goal into world coordinates, captures the torso pose,
-and places the knots of the project's existing minimum-jerk C2 spline so
-that the path between start and goal keeps clearance from the wearer. The
-optimised spline is wrapped in a `PlannedDualArmSource` and handed to
-`ReactivePositionRunner` as its `source_targets` argument. No file under
-`controller/` is modified, imported into the control path in a new way, or
-subclassed.
+At composition time (`arm_flow.build_flows`, before the Runner starts)
+`planning.planner.plan_arm` reads the planned arm's measured end-effector
+pose, resolves the existing `[targets.<arm>]` goal into world coordinates,
+captures the torso pose, and places the knots of the project's existing
+minimum-jerk C2 spline so that the path between start and goal keeps
+clearance from the wearer. The optimised spline IS an ordinary
+`CartesianWaypointTrajectory` — same timing law, same geodesic orientation
+interpolation as every configured trajectory — and it is delivered as that
+arm's single-arm `TargetSource` (lead-conditioned when configured). No
+file under `controller/` is modified, imported into the control path in a
+new way, or subclassed.
 
 The planner carries no goal of its own. The goal stays in
 `[targets.<arm>]`, in one place, so the planned and unplanned runs are
 answering the same task.
 
-Per arm, one plan produces:
+Per arm, one `ArmPlan` produces:
 
 - the world-frame trajectory the Runner will sample;
 - the knots in both world and torso coordinates;
@@ -28,8 +31,10 @@ Per arm, one plan produces:
   the trajectory it finished with;
 - the solver's own termination message and success flag.
 
-An arm that is not planned holds its measured pose through a zero-twist
-source, so `arm = "left"` never leaves the right arm undefined.
+An arm that is not planned is untouched: it keeps whatever its own
+configuration says — its static target, its configured trajectory, or a
+keep-out routed reach. The planner cannot see, hold, or replace the other
+arm's reference, by construction.
 
 ## What it deliberately does not do
 
@@ -42,7 +47,7 @@ source, so `arm = "left"` never leaves the right arm undefined.
 - It does not solve smoothness, timing, or Cartesian rate limits. Those
   are already properties of `controller/trajectory.py`, and the optimiser
   only chooses where that spline's knots sit.
-- It does not replan on its own. `plan_from_state` is a function a caller
+- It does not replan on its own. `plan_arm` is a function a caller
   invokes; nothing in the shipped code calls it on a schedule.
 - It does not refuse a goal. A plan that cannot reach the requested
   margin is returned with its measured clearance and a `success` flag,
@@ -196,19 +201,21 @@ on the times the delivered trajectory actually uses. The reported
 clearance is always measured on the final trajectory object
 (`trajectory_min_clearance`), never on the optimiser's internal prediction.
 
-## Delivery: phase ownership and lag compensation
+## Delivery: per-arm composition and lag compensation
 
-`planning/plan_source.py` is the only file that touches the controller
-boundary, and it does so without modifying it.
+Delivery is the composition root's job (`arm_flow.py`): each arm's final
+source is built once, before the Runner takes over, so every plan starts
+at elapsed time zero and no phase bookkeeping exists. (A future replan
+would re-enter through the same composition seam; making that continuous
+is the replanning feature's problem, deliberately not pre-solved here.)
 
-**Phase ownership.** The Runner's `elapsed_time_s` origin is frozen in
-`start()` and can never be reset. A source that owned no phase would, after
-a replan, be sampled at the OLD elapsed time and clamp straight to its
-final waypoint. `PlannedArmPath` therefore treats the Runner's elapsed time
-as a monotonic tick and maps it onto its own plan clock, so adopting a new
-plan is continuous by construction.
-
-**Lag compensation.** The reactive control law is
+**Lag compensation** lives in `controller/lead_compensation.py`, because
+the lag it inverts is a property of the CONTROLLER, not of planned motion
+— any moving reference is tracked with the same systematic lag. It is
+applied to the planned trajectory as a reference-conditioning decorator
+(`LeadCompensatedSource`) and is deliberately left off configured
+trajectories so the measured reactive baseline stays comparable. The
+reactive control law is
 
 ```text
 task_twist = Kp * pose_error + Kd * (twist_ref - twist_measured)
@@ -244,19 +251,19 @@ Two things follow, and the second is the point:
 
 With the shipped gains (`Kp = 2.0 s^-1`) a reference moving at the
 configured `max_linear_speed_m_s = 0.2` is followed 0.1 m behind. A planned
-path is only worth planning if the arm is actually on it, so the layer
+path is only worth planning if the arm is actually on it, so the prefilter
 pre-inverts that lag at the reference instead:
 
 ```text
-r = p_plan + pdot_plan / Kp + (Kd / Kp^2) * pddot_plan
+r = p_plan + pdot_plan / Kp
 ```
 
-The first correction cancels the steady-state lag; the second uses the
-reference ACCELERATION, which the target seam would otherwise discard, to
-correct while the velocity is still changing. The twist delivered alongside
-is deliberately the plan's TRUE twist, not the derivative of the
-prefiltered pose, because the controller's Kd term wants the real reference
-velocity.
+Because the twist delivered alongside is deliberately the plan's TRUE
+twist, not the derivative of the prefiltered pose, this first-order form
+is the EXACT inverse of the closed loop above — an acceleration term would
+be injected error, not a refinement; with the shipped gains it was
+measured making tracking about 30x worse (10.5 mm instead of 0.34 mm on a
+3 s path).
 
 This is a prefilter on the reference, not a change to the controller, and
 it is switchable (`lead_compensation_enabled`) so the uncompensated
@@ -265,27 +272,22 @@ NOT the planned path — it leads it — and both `sim/planning_view.describe`
 and this document say so out loud, because a plot of the commanded target
 will not lie on the planned line.
 
-## Mutual exclusion with the cylinder keep-out router
+## Coexistence with the cylinder keep-out
 
-`plan_from_state` raises `ValueError` if it is handed an enabled
-`[cylinder_keepout]`.
+The old mutual exclusion is gone because the hazard it guarded against is
+gone. The router used to rewrite each sampled reference POSITION at
+runtime while passing the TWIST through unchanged, so a planned path
+would have had its P and D terms referencing different points. Routing is
+now a composition-time path transformation (`arm_flow._routed_reach`):
+when an UNPLANNED arm's static reach would cross the keep-out, the
+router's waypoints are timed by the shared trajectory layer into an
+ordinary C2 path whose position and twist come from the same spline, and
+the Runner never rewrites anything.
 
-The router rewrites the reference POSITION to its current waypoint while
-passing the incoming TWIST through unchanged (`controller/runner.py`, the
-`WorldTarget(Pose(waypoint_world, ...), target.twist_world)` construction).
-That is coherent for a static goal, where the twist is zero. It is not
-coherent for a planned path: the P term would act on the router's waypoint
-while the D term acted on the planner's velocity, so the two halves of the
-control law would reference different points and the executed path would be
-the router's, not the plan's. The reported planned clearance would then
-describe a path the robot never took, which is worse than having no plan.
-
-The layers also overlap in intent. Both are end-effector-level obstacle
-avoidance around the same central volume; the router does it reactively
-with waypoints in the world frame, the planner does it once, in the torso
-frame, with a smooth trajectory. Running both would make it impossible to
-attribute a result to either. So the configuration is exclusive by
-construction rather than by convention.
+A planned arm is never routed — the optimiser already owns that path's
+clearance — and an unplanned arm's routed reach cannot touch the planned
+arm. The two mechanisms now compose per arm instead of excluding each
+other per run, and any result is attributable to exactly one of them.
 
 ## Configuration
 
@@ -294,8 +296,8 @@ into `runtime_config.PlanningConfig`; there is no separate launcher.
 
 | Key | Ships as | Meaning |
 | --- | --- | --- |
-| `enabled` | `false` | Whether a caller should build the planned source. `false` leaves the existing reactive/static path untouched. |
-| `arm` | `"left"` | `"right"`, `"left"`, or `"both"`. Any arm not named holds its measured pose. |
+| `enabled` | `false` | Whether composition builds a plan for the arm(s) named below. `false` leaves the existing reactive/static path untouched. |
+| `arm` | `"right"` | `"right"`, `"left"`, or `"both"`. Any arm not named keeps its own configured motion. |
 | `waypoint_count` | `3` | Number of FREE interior knots. Total knots are `waypoint_count + 2`, including the two fixed endpoints. |
 | `dense_samples` | `60` | Collision samples along the spline per residual evaluation. |
 | `clearance_margin_m` | `0.05` | Hinge activation distance. The obstacle cost is exactly zero beyond it. |
@@ -324,13 +326,13 @@ configured apart.
 `sim/cylinder_view.py`: nothing is added to the MJCF, so the drawn geometry
 has no contacts and cannot influence the arms.
 
-`describe(planning_config, outcome)` prints the startup banner: which arms
+`describe(planning_config, plans)` prints the startup banner: which arms
 were planned, the knot count, the clearance before and after optimisation
 in millimetres, the plan duration, whether lead compensation is on, and, if
 it is, an explicit warning that the delivered reference is prefiltered.
 The reported `iterations` is the solver's function-evaluation count.
 
-`draw(user_scn, outcome, torso_pose_world)` appends a polyline of the
+`draw(user_scn, plans, torso_pose_world)` appends a polyline of the
 planned path, a sphere at every knot with the two fixed endpoints coloured
 distinctly, and — only when the current torso pose differs from the pose
 the plan was made at — a faint second polyline through the same knots
@@ -338,10 +340,7 @@ re-expressed under the current torso pose. That ghost is where the path
 would be if it had followed the wearer, so the gap between the two lines is
 the drift that `remaining_clearance` measures numerically. It respects the
 same `ngeom < maxgeom` bound as the other views and returns the number of
-geoms it added.
-
-It is deliberately not wired into `main.py`, which is fixed. It is
-importable and testable on its own.
+geoms it added. `main.py` wires both in whenever plans exist.
 
 ## Known limitations
 
@@ -361,41 +360,33 @@ detail.
    the tool is a point.
 3. **No arm-arm collision model.** Each arm is planned independently and
    neither sees the other. `obstacles.Sphere` and the `extra_spheres`
-   argument exist as a coarse stand-in, but `plan_from_state` passes none.
+   argument exist as a coarse stand-in, but `plan_arm` passes none.
    Planning `arm = "both"` produces two paths that have not been checked
-   against each other.
+   against each other, and the per-arm composition makes this a permanent
+   blind spot unless the thin two-arm layer one day owns it explicitly.
 4. **The plan is world-frame, so its clearance decays.** The obstacle set
    is built from the torso pose at plan time. As the wearer moves, the
    world-frame path drifts relative to the torso-frame envelope and the
-   guarantee weakens continuously. `remaining_clearance(outcome, plant,
+   guarantee weakens continuously. `remaining_clearance(plans, plant,
    planning_config)` is the signal for that, and
    `replan_clearance_trigger_m` is the configured threshold — but no
    shipped code polls it, so the trigger is a documented intention, not a
    behaviour.
-5. **Replanning latency is unmeasured.** `PlannedArmPath` makes a replan
-   phase-continuous by construction, but the cost of `plan_from_state`
-   (rebuilding the spline basis, then a nonlinear least-squares solve, per
-   arm) has never been timed against the control cycle. It must not be
-   called inline in the loop until it has been; the sibling document
-   already records that the complete Python cycle exceeds its 2 ms nominal
-   budget without any planner in it.
+5. **Replanning does not exist.** Composition happens once, before the
+   Runner starts, so every plan begins at elapsed time zero and no phase
+   bookkeeping is needed. A replan would have to re-enter through the same
+   composition seam with a source continuous at the switch instant, and
+   the cost of `plan_arm` (rebuilding the spline basis, then a nonlinear
+   least-squares solve) has never been timed against the control cycle;
+   the sibling document already records that the complete Python cycle
+   exceeds its 2 ms nominal budget without any planner in it.
 6. **The base-motion amplitudes ship at zero.** `sim/motion.py` has
    `LINEAR_AMPLITUDE` and `ROTATIONAL_AMPLITUDE` set to zero vectors, so
    every result obtained so far is for a STATIC base. The drift this layer
    is designed around — the reason `remaining_clearance` exists at all —
    is therefore currently untested. Raising those amplitudes is the first
    experiment this layer needs, not an optional extra.
-7. **The acceleration term of the prefilter is an approximation.** The
-   `1/Kp` term is the exact inverse of the steady-state lag. The
-   `Kd/Kp^2` term is a second-order correction taken while the reference
-   velocity is changing, and because the delivered twist is deliberately
-   the plan's true twist rather than the derivative of the prefiltered
-   pose, its exact form depends on which of those the controller's D term
-   is fed. It has not been validated against a measured closed-loop run;
-   with the shipped gains it is worth at most `0.3/2.0^2 * 0.5 = 0.0375 m`
-   at full commanded acceleration, and it should be measured before it is
-   trusted.
-8. **`success` is weaker than the margin.** `PlanResult.success` requires
+7. **`success` is weaker than the margin.** `PlanResult.success` requires
    the solver to converge and the final clearance to be non-negative, not
    to reach `clearance_margin_m`. A plan can succeed with less margin than
    was asked for; the reported clearance is the number to read, not the

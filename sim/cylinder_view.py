@@ -128,12 +128,17 @@ def draw(scene, keepout, cylinder_routes=None):
             _add_line(scene, previous, point, ROUTE_RGBA)
         for point in points:
             _add_sphere(scene, point, ROUTE_WAYPOINT_RADIUS_M, ROUTE_RGBA)
-        _add_sphere(
-            scene,
-            status.active_waypoint_world_m,
-            ACTIVE_WAYPOINT_RADIUS_M,
-            ACTIVE_WAYPOINT_RGBA,
-        )
+        # Composed routes are timed paths with no live cursor; only routes
+        # that carry an active waypoint (the legacy follower demo) get the
+        # highlight sphere.
+        active = getattr(status, "active_waypoint_world_m", None)
+        if active is not None:
+            _add_sphere(
+                scene,
+                active,
+                ACTIVE_WAYPOINT_RADIUS_M,
+                ACTIVE_WAYPOINT_RGBA,
+            )
     return scene.ngeom - before
 
 

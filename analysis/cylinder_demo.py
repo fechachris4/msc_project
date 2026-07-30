@@ -2,8 +2,16 @@
 
 Places one world-vertical keep-out cylinder directly between the right arm's
 measured start pose and a target mirrored to the far side of it, so the direct
-path is blocked and the router must go around (or over). This diagnostic uses
-local geometry and never changes the committed central-person configuration.
+path is blocked and the composed route must go around (or over). This
+diagnostic uses local geometry and never changes the committed central-person
+configuration.
+
+Routing is a COMPOSITION-time path transformation (``arm_flow.py``): the
+router builds one timed waypoint spline before the Runner starts, and the
+Runner only samples it, exactly as it samples any other source. There is no
+per-cycle routing left to observe, so this demo reports the composed route
+once (kind, waypoint count, timed duration) and then the tracking error after
+running the timed path to completion.
 
     .venv/bin/mjpython -m analysis.cylinder_demo            # viewer (macOS)
     .venv/bin/python -m analysis.cylinder_demo --headless   # no window
@@ -22,6 +30,7 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
+import arm_flow
 from controller.cylinder_router import CylinderKeepout
 from controller.runner import ReactivePositionRunner
 from controller.state import (
@@ -31,11 +40,13 @@ from controller.state import (
     TargetFrame,
     Twist,
 )
+from controller.trajectory import IndependentArmTargetSource, StaticTargetSource
 from runtime_config import CONFIG
 from sim import cylinder_view, world
 
 
 SIDE = "right"
+OTHER_SIDE = "left"
 # The demo arm starts from a bent, non-singular posture. With MuJoCo's default
 # all-zero joints the Gen3 stands fully extended (1.19 m from base_link along
 # base +z), which is a workspace-boundary singularity: the arm then cannot
@@ -55,6 +66,12 @@ CLEARANCE_M = 0.02
 HALF_HEIGHT_M = 0.50
 WAYPOINT_TOLERANCE_M = 0.02
 PRINT_EVERY = 250
+# The timed route does not wait for the arm, so during transit the PD loop
+# lags the reference by roughly v/Kp (routed reaches carry no lead
+# compensation).  The final report should show the CONVERGED error, which
+# needs several closed-loop time constants tau = (1 + Kd)/Kp ~= 0.65 s
+# after the route ends.
+SETTLE_STEPS = 2500  # 5 s at the 2 ms timestep
 
 
 def set_start_posture():
@@ -117,7 +134,31 @@ def build_scenario():
     return keepout, targets, start_world, target_world
 
 
-def _print_header(keepout, start_world, target_world):
+def build_flow(keepout, targets):
+    """Compose the routed reach the same way ``arm_flow`` does, plus a
+    static hold for the other arm.
+
+    Returns ``(ArmFlow, IndependentArmTargetSource)``: the flow carries the
+    route report (``None`` when the geometry turned out clear), the source
+    is what the Runner samples.
+    """
+    plant = world.read_state(Twist.zero())
+    flow = arm_flow.build_arm_flow(
+        world.backend,
+        world.MOUNT_CALIBRATION,
+        SIDE,
+        plant,
+        targets,
+        keepout,
+    )
+    held = StaticTargetSource(targets.for_arm(OTHER_SIDE))
+    sources = {SIDE: flow.source, OTHER_SIDE: held}
+    source = IndependentArmTargetSource(
+        right=sources["right"], left=sources["left"])
+    return flow, source
+
+
+def _print_header(keepout, start_world, target_world, flow):
     print(cylinder_view.describe(keepout, (SIDE,)))
     separation = float(np.linalg.norm(target_world[:2] - start_world[:2]))
     print(
@@ -132,82 +173,119 @@ def _print_header(keepout, start_world, target_world):
         f"  centre-to-centre separation = {separation:.3f} m across an "
         f"inflated radius of {keepout.obstacle_radius_m:.3f} m"
     )
+    if flow.route is None:
+        print("  composed route: direct (no detour needed)")
+    else:
+        print(
+            f"  composed route: {flow.route.kind}  "
+            f"waypoints={len(flow.route.waypoints_world_m)}  "
+            f"target_adjusted={flow.route.target_adjusted}  "
+            f"timed duration={flow.duration_s:.3f} s"
+        )
 
 
-def _print_status(step, cycle, keepout):
-    status = cycle.cylinder_routes.get(SIDE)
-    if status is None:
-        return
+def _print_status(step, cycle, keepout, flow):
     error_mm = (
         float(np.linalg.norm(cycle.traces[SIDE].e_pos)) * 1000.0
-        if SIDE in cycle.traces
-        else 0.0
+        if SIDE in cycle.traces else 0.0
     )
+    route_kind = flow.route.kind if flow.route is not None else "direct"
     print(
-        f"t={cycle.input_state.sample_time_s:6.2f}s  route={status.kind:17s} "
-        f"waypoint {status.waypoint_index + 1}/{status.waypoint_count}  "
-        f"final={str(status.at_final_waypoint):5s}  "
-        f"adjusted={str(status.target_adjusted):5s}  |e|={error_mm:7.1f} mm"
+        f"t={cycle.input_state.sample_time_s:6.2f}s  "
+        f"target_t={cycle.target_elapsed_time_s:6.2f}/"
+        f"{flow.duration_s:.2f}s  "
+        f"route={route_kind:17s}  |e|={error_mm:7.1f} mm"
     )
     message = cylinder_view.format_link_intersections(
         cylinder_view.link_intersections(
-            world.model, world.data, keepout)
-    )
+            world.model, world.data, keepout))
     if message is not None:
         print(f"    {message}")
 
 
+def _print_final_report(flow, cycle):
+    error_mm = (
+        float(np.linalg.norm(cycle.traces[SIDE].e_pos)) * 1000.0
+        if cycle is not None and SIDE in cycle.traces
+        else float("nan")
+    )
+    route_kind = flow.route.kind if flow.route is not None else "direct"
+    waypoint_count = (
+        len(flow.route.waypoints_world_m) if flow.route is not None else 0
+    )
+    print(
+        f"final report: route={route_kind}  waypoints={waypoint_count}  "
+        f"timed duration={flow.duration_s:.3f} s  "
+        f"final |e|={error_mm:.2f} mm"
+    )
+    status = (
+        cycle.human_safety_statuses.get(SIDE) if cycle is not None else None
+    )
+    if status is not None and status.human_adjusted:
+        # The demo target sits against the wearer envelope, so the
+        # whole-arm safety filter throttles the last approach; the old
+        # follower-paced demo needed minutes of creep to reach 0 mm here.
+        print(
+            "    human safety filter is limiting the approach "
+            f"(clearance={status.minimum_clearance_m * 1000.0:.1f} mm); "
+            "the residual error decays over minutes, not seconds — "
+            "raise --steps to watch it"
+        )
+
+
 def run(headless=False, steps=4000):
     keepout, targets, start_world, target_world = build_scenario()
-    _print_header(keepout, start_world, target_world)
+    flow, source = build_flow(keepout, targets)
+    _print_header(keepout, start_world, target_world, flow)
+    routes = {} if flow.route is None else {SIDE: flow.route}
 
     world.backend.configure_torso_driver(None, None)
     runner = ReactivePositionRunner(
         world.backend,
         world.MOUNT_CALIBRATION,
         world.PIPELINE_SETUP,
-        targets,
+        source,
         arms=(SIDE,),
-        cylinder_keepout=keepout,
     )
     runner.start()
 
-    kinds = set()
+    # The timed path's duration is now fixed at composition time, so make
+    # sure the step budget actually runs past it before the final report.
+    minimum_steps = (
+        int(np.ceil(flow.duration_s / world.model.opt.timestep))
+        + SETTLE_STEPS
+    )
+    steps = max(steps, minimum_steps)
+
+    cycle = None
     try:
         if headless:
             for step in range(steps):
                 cycle = runner.cycle()
-                status = cycle.cylinder_routes.get(SIDE)
-                if status is not None:
-                    kinds.add(status.kind)
                 if step % PRINT_EVERY == 0:
-                    _print_status(step, cycle, keepout)
-            return kinds
-
-        with mujoco.viewer.launch_passive(
-            world.model, world.data
-        ) as viewer:
-            step = 0
-            while viewer.is_running():
-                step_start = time.perf_counter()
-                cycle = runner.cycle()
-                viewer.user_scn.ngeom = 0
-                cylinder_view.draw(
-                    viewer.user_scn, keepout, cycle.cylinder_routes)
-                status = cycle.cylinder_routes.get(SIDE)
-                if status is not None:
-                    kinds.add(status.kind)
-                if step % PRINT_EVERY == 0:
-                    _print_status(step, cycle, keepout)
-                step += 1
-                viewer.sync()
-                remaining = (
-                    world.model.opt.timestep
-                    - (time.perf_counter() - step_start)
-                )
-                if remaining > 0:
-                    time.sleep(remaining)
-        return kinds
+                    _print_status(step, cycle, keepout, flow)
+        else:
+            with mujoco.viewer.launch_passive(
+                world.model, world.data
+            ) as viewer:
+                step = 0
+                while viewer.is_running():
+                    step_start = time.perf_counter()
+                    cycle = runner.cycle()
+                    viewer.user_scn.ngeom = 0
+                    cylinder_view.draw(viewer.user_scn, keepout, routes)
+                    if step % PRINT_EVERY == 0:
+                        _print_status(step, cycle, keepout, flow)
+                    step += 1
+                    viewer.sync()
+                    remaining = (
+                        world.model.opt.timestep
+                        - (time.perf_counter() - step_start)
+                    )
+                    if remaining > 0:
+                        time.sleep(remaining)
+        _print_final_report(flow, cycle)
+        return flow
     finally:
         runner.close()
 
@@ -219,10 +297,11 @@ def main(argv=None):
         help="run without opening the MuJoCo viewer")
     parser.add_argument(
         "--steps", type=int, default=4000,
-        help="headless step count (default 4000 = 8 s at the 2 ms timestep)")
+        help="headless step count (default 4000 = 8 s at the 2 ms "
+             "timestep; extended automatically to clear the composed "
+             "route's timed duration)")
     args = parser.parse_args(argv)
-    kinds = run(headless=args.headless, steps=args.steps)
-    print(f"route kinds used: {sorted(kinds)}")
+    run(headless=args.headless, steps=args.steps)
 
 
 if __name__ == "__main__":

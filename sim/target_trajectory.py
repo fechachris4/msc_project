@@ -14,18 +14,15 @@ from controller.state import (
     TargetFrame,
     Twist,
 )
-from controller.trajectory import (
-    IndependentArmTargetSource,
-    StaticTargetSource,
-)
 from controller.trajectory_config import materialize_trajectory
 from sim.look_at_object import SimulatedMocapPointSource
 
 
 @dataclass(frozen=True, slots=True)
 class TargetTrajectorySetup:
-    source: IndependentArmTargetSource
-    selected_source: object
+    """One arm's materialized trajectory; composition happens in arm_flow."""
+
+    source: object
     start_pose_reference: Pose
     end_pose_reference: Pose
     start_pose_world: Pose
@@ -47,18 +44,22 @@ def _limited_joint_margin(backend, side, joint_position_rad):
     return float(np.min(margins)) if margins.size else math.inf
 
 
-def _set_initial_joint_posture(
-    backend, side, initial_joint_position_rad
-):
+def apply_initial_postures(backend, postures):
+    """Reset the simulation once and set every configured arm posture.
+
+    ``postures`` maps side to a joint vector or ``None``.  A single reset
+    covers all arms so a second arm's initialization cannot wipe the
+    first arm's posture.
+    """
     backend.release()
     backend.reset()
-    if initial_joint_position_rad is None:
-        mujoco.mj_forward(backend.model, backend.data)
-        return
-    joint_position = np.asarray(
-        initial_joint_position_rad, dtype=float
-    )
-    backend.data.qpos[backend.qpos_adrs[side]] = joint_position
+    for side, initial_joint_position_rad in postures.items():
+        if initial_joint_position_rad is None:
+            continue
+        joint_position = np.asarray(
+            initial_joint_position_rad, dtype=float
+        )
+        backend.data.qpos[backend.qpos_adrs[side]] = joint_position
     backend.data.qvel[:] = 0.0
     mujoco.mj_forward(backend.model, backend.data)
 
@@ -145,18 +146,6 @@ def _target_source(
         world_point_source=look_at_object,
     )
     selected_source = materialized.source
-
-    other = "right" if side == "left" else "left"
-    other_hold = StaticTargetSource(static_targets.for_arm(other))
-    source = (
-        IndependentArmTargetSource(
-            right=other_hold, left=selected_source
-        )
-        if side == "left"
-        else IndependentArmTargetSource(
-            right=selected_source, left=other_hold
-        )
-    )
     end_reference = (
         materialized.program.sample(
             materialized.duration_s
@@ -176,7 +165,6 @@ def _target_source(
         selected_state.jacobian_world, compute_uv=False
     )
     return (
-        source,
         selected_source,
         start_reference,
         end_reference,
@@ -200,17 +188,18 @@ def prepare_target_trajectory(
     calibration,
     side,
     trajectory,
-    initial_joint_position_rad,
+    plant,
     static_targets,
     look_at_object_motion=None,
 ):
-    _set_initial_joint_posture(
-        backend, side, initial_joint_position_rad
-    )
-    plant = backend.read_state(Twist.zero())
+    """Materialize ONE arm's configured trajectory from a shared snapshot.
+
+    Posture initialization is a separate composition-time step
+    (``apply_initial_postures``) because it resets the whole simulation
+    and must therefore run once for all arms, before any snapshot.
+    """
     (
         source,
-        selected_source,
         start_reference,
         end_reference,
         start_world,
@@ -232,7 +221,6 @@ def prepare_target_trajectory(
     )
     return TargetTrajectorySetup(
         source=source,
-        selected_source=selected_source,
         start_pose_reference=start_reference,
         end_pose_reference=end_reference,
         start_pose_world=start_world,

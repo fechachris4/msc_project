@@ -56,9 +56,13 @@ approach_velocity_damping = 0.0
 projection_iterations = 50
 constraint_tolerance_m_s = 1e-6
 
-# WORLD-frame end-effector waypoint router around one vertical cylinder.
-# This is not whole-arm/link collision avoidance. During a planned run main.py
-# disables this router so it cannot rewrite the planner's position reference.
+# WORLD-frame end-effector keep-out around one vertical cylinder.
+# This is not whole-arm/link collision avoidance. Routing happens at
+# composition time, BEFORE timing: a static-target reach that would cross the
+# cylinder becomes a timed waypoint trajectory around it (using the [planning]
+# kinematic limits below), so desired position and velocity come from the same
+# path. Configured trajectories and planned paths are not routed: their
+# authors (or the planner) own their clearance.
 [cylinder_keepout]
 cylinder_keepout_enabled = true
 cylinder_keepout_center_x_m = 0.0
@@ -73,11 +77,13 @@ cylinder_waypoint_tolerance_m = 0.01
 # end-effector pose to [targets.<arm>]. Collision costs are evaluated in the
 # TORSO frame; the delivered reference remains WORLD-frame.
 #
-# Source selection in the current main.py:
-#   enabled=true   run this planner source; configured trajectories are replaced
-#   enabled=false  run the configured target/trajectory source below
+# Planning is a per-arm feasibility stage: with enabled=true it drives only
+# the arm(s) named by `arm`; every other arm keeps its own configured
+# static target or trajectory. An arm cannot be both planned and given a
+# [targets.<arm>.trajectory]. The kinematic limits below also time
+# keep-out routed reaches for unplanned arms.
 [planning]
-enabled = true
+enabled = false
 arm = "right"
 waypoint_count = 3
 dense_samples = 60

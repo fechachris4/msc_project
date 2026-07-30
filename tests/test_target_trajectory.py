@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 
 from controller import desired_pos
-from controller.state import Pose
+from controller.state import Pose, Twist
 from controller.trajectory_config import materialize_trajectory
 from runtime_config import (
     CONFIG,
@@ -17,6 +17,7 @@ from runtime_config import (
 )
 from sim import world
 from sim.target_trajectory import (
+    apply_initial_postures,
     prepare_target_trajectory,
 )
 
@@ -349,12 +350,17 @@ class TargetTrajectoryIntegrationTest(unittest.TestCase):
             if trajectory is None
             else trajectory
         )
+        apply_initial_postures(
+            world.backend,
+            {"left": CONFIG.simulation.left_initial_joint_position_rad},
+        )
+        plant = world.backend.read_state(Twist.zero())
         return selected, prepare_target_trajectory(
             world.backend,
             world.MOUNT_CALIBRATION,
             "left",
             selected,
-            CONFIG.simulation.left_initial_joint_position_rad,
+            plant,
             desired_pos.configured_targets(),
         )
 
@@ -377,17 +383,17 @@ class TargetTrajectoryIntegrationTest(unittest.TestCase):
     def test_configured_source_repeats_exactly_from_measured_start(self):
         trajectory = self._safe_out_and_back()
         _, setup = self._prepare(trajectory)
-        start = setup.source.sample(0.0).left
+        start = setup.source.sample(0.0)
         forward = setup.source.sample(
             setup.boundary_times_s[0]
-        ).left
+        )
         returned = setup.source.sample(
             setup.duration_s
-        ).left
+        )
         repeated = setup.source.sample(
             setup.duration_s + 1.0
-        ).left
-        first_leg = setup.source.sample(1.0).left
+        )
+        first_leg = setup.source.sample(1.0)
 
         np.testing.assert_array_equal(
             start.pose.position_m,
@@ -423,10 +429,10 @@ class TargetTrajectoryIntegrationTest(unittest.TestCase):
         _, setup = self._prepare(trajectory)
         at_end = setup.source.sample(
             setup.duration_s
-        ).left
+        )
         held = setup.source.sample(
             10.0 * setup.duration_s
-        ).left
+        )
         np.testing.assert_array_equal(
             at_end.pose.position_m, held.pose.position_m
         )
