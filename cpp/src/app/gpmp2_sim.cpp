@@ -10,6 +10,7 @@
 #include <exception>
 #include <future>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -38,19 +39,30 @@ std::string PythonRoot() { return std::string(SRL_PYTHON_ROOT); }
 
 struct Arguments {
   Side side{Side::Left};
+  std::optional<srl::Vector7> start;
   srl::Vector7 goal{srl::Vector7::Zero()};
 };
 
 Arguments ParseArguments(int argc, char** argv) {
-  if (argc != 9) {
+  if (argc != 9 && (argc != 17 || std::string(argv[2]) != "--start")) {
     throw std::invalid_argument(
         "usage: srl_gpmp2_sim <left|right> "
+        "[--start <start_q1_rad> ... <start_q7_rad>] "
         "<goal_q1_rad> ... <goal_q7_rad>");
   }
   Arguments arguments;
   arguments.side = srl::SideFromName(argv[1]);
+  int goal_offset = 2;
+  if (argc == 17) {
+    srl::Vector7 start;
+    for (int joint = 0; joint < srl::kJoints; ++joint) {
+      start(joint) = std::stod(argv[3 + joint]);
+    }
+    arguments.start = start;
+    goal_offset = 10;
+  }
   for (int joint = 0; joint < srl::kJoints; ++joint) {
-    arguments.goal(joint) = std::stod(argv[2 + joint]);
+    arguments.goal(joint) = std::stod(argv[goal_offset + joint]);
   }
   return arguments;
 }
@@ -120,6 +132,15 @@ int main(int argc, char** argv) {
     srl::kinematics::PinModel control_pin(
         arm_model_path, "base_link", "pinch_site");
 
+    const std::optional<srl::Vector7>& configured_start =
+        config.simulation.initial_joint_position(arguments.side);
+    const std::optional<srl::Vector7>& selected_start =
+        arguments.start ? arguments.start : configured_start;
+    if (selected_start) {
+      backend.SetJointPosition(arguments.side, *selected_start);
+      backend.ZeroVelocities();
+      backend.Forward();
+    }
     srl::PlantState state = backend.Takeover();
     bool hold_backend_active = true;
     srl::JointPositionCommand hold_command = HoldMeasured(state);
@@ -169,15 +190,34 @@ int main(int argc, char** argv) {
           viewer.SetTitle("SRL GPMP2 - planning failed, holding position");
           std::fprintf(stderr, "GPMP2 plan rejected: %s\n",
                        outcome.error.c_str());
+          if (outcome.result.trajectory != nullptr) {
+            std::fprintf(
+                stderr,
+                "rejected_plan_metrics: velocity_ratio=%.9g "
+                "joint_margin_rad=%.9g exact_clearance_m=%.9g "
+                "maximum_acceleration_rad_s2=%.9g "
+                "human_sl_model_clearance_m=%.9g checked_samples=%zu\n",
+                outcome.validation.maximum_velocity_ratio,
+                outcome.validation.minimum_joint_margin_rad,
+                outcome.validation.minimum_human_clearance_m,
+                outcome.validation.maximum_acceleration_rad_s2,
+                outcome.result.minimum_planner_sphere_clearance_m,
+                outcome.validation.checked_samples);
+          }
         } else {
           std::printf(
               "GPMP2 accepted: graph error %.9g -> %.9g, "
-              "HumanSL spheres %zu, output dt %.3f ms, "
-              "exact clearance %.3f mm, %zu validation samples\n",
+              "HumanSL spheres %zu (%zu external-obstacle), "
+              "retimed knot dt %.3f ms, retiming %.3fx, "
+              "velocity ratio %.3f, exact clearance %.3f mm, "
+              "%zu validation samples\n",
               outcome.result.initial_graph_error,
               outcome.result.final_graph_error,
               outcome.result.planning_sphere_count,
+              outcome.result.external_obstacle_sphere_count,
               outcome.result.output_sample_period_s * 1000.0,
+              outcome.result.retiming_scale,
+              outcome.validation.maximum_velocity_ratio,
               outcome.validation.minimum_human_clearance_m * 1000.0,
               outcome.validation.checked_samples);
 

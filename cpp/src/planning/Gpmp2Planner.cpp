@@ -91,7 +91,7 @@ gpmp2::SignedDistanceField MakeHumanSdf(
   return gpmp2::SignedDistanceField(origin, cell_size_m, layers);
 }
 
-gpmp2::BodySphereVector PlanningSpheres() {
+gpmp2::BodySphereVector HumanSlArmSpheres() {
   // Direct selective port of HumanSL_MAIN/TrajectoryGeneration/
   // src/GenerateArmModel.cpp::generateArmSpheres(0, 0.05). HumanSL attaches
   // its collision proxy only to DH frames 0, 2, 4 and 6.
@@ -141,6 +141,17 @@ gpmp2::BodySphereVector PlanningSpheres() {
   };
 }
 
+gpmp2::BodySphereVector ExternalObstacleSpheres() {
+  gpmp2::BodySphereVector spheres = HumanSlArmSpheres();
+  // HumanSL's first four frame-0 spheres cover the fixed base-to-shoulder
+  // interface. That interface necessarily overlaps msc_project's torso
+  // cylinder and is likewise mount-exempt in the exact Pinocchio safety
+  // model. Keep the complete 34-sphere model for HumanSL self-collision, but
+  // do not ask GPMP2 to move a fixed mount away from the wearer.
+  spheres.erase(spheres.begin(), spheres.begin() + 4);
+  return spheres;
+}
+
 gtsam::Matrix HumanSlSelfCollisionData(double sigma) {
   // Directly mirrors OptimizeTrajectory::optimizeJointTrajectory.
   gtsam::Matrix data(3, 4);
@@ -150,7 +161,7 @@ gtsam::Matrix HumanSlSelfCollisionData(double sigma) {
   return data;
 }
 
-gpmp2::ArmModel MakeKinovaModel(const Pose& torso_to_base) {
+gpmp2::Arm MakeKinovaArm(const Pose& torso_to_base) {
   const gtsam::Vector a = gtsam::Vector::Zero(kJoints);
   gtsam::Vector alpha(kJoints);
   alpha << kPi / 2.0, kPi / 2.0, kPi / 2.0, kPi / 2.0,
@@ -163,9 +174,7 @@ gpmp2::ArmModel MakeKinovaModel(const Pose& torso_to_base) {
   const gtsam::Pose3 torso_T_base(
       gtsam::Rot3(torso_to_base.rotation),
       gtsam::Point3(torso_to_base.position_m));
-  return gpmp2::ArmModel(
-      gpmp2::Arm(kJoints, a, alpha, d, torso_T_base, theta_bias),
-      PlanningSpheres());
+  return gpmp2::Arm(kJoints, a, alpha, d, torso_T_base, theta_bias);
 }
 
 std::pair<gtsam::Vector, gtsam::Vector> FiniteJointLimits(
@@ -209,6 +218,27 @@ double MinimumPlannerClearance(
   return minimum;
 }
 
+double MaximumVelocityRatio(
+    const JointTrajectory& trajectory,
+    const control::PositionActuationLimits& limits,
+    double sample_period_s) {
+  const std::size_t intervals = static_cast<std::size_t>(
+      std::ceil(trajectory.duration_s() / sample_period_s));
+  double maximum = 0.0;
+  for (std::size_t index = 0; index <= intervals; ++index) {
+    const double time_s =
+        trajectory.duration_s() * static_cast<double>(index) /
+        static_cast<double>(intervals);
+    const JointTrajectorySample sample = trajectory.Sample(time_s);
+    maximum = std::max(
+        maximum,
+        (sample.velocity_rad_s.array().abs() /
+         limits.velocity_rad_s.array())
+            .maxCoeff());
+  }
+  return maximum;
+}
+
 }  // namespace
 
 void Gpmp2Settings::Validate() const {
@@ -222,6 +252,8 @@ void Gpmp2Settings::Validate() const {
   const double values[] = {
       duration_s,
       output_sample_period_s,
+      velocity_limit_utilization,
+      endpoint_tolerance_rad,
       sdf_cell_size_m,
       required_clearance_m,
       planning_margin_m,
@@ -239,6 +271,10 @@ void Gpmp2Settings::Validate() const {
   }
   if (max_optimizer_iterations == 0) {
     throw std::invalid_argument("max_optimizer_iterations must be positive");
+  }
+  if (velocity_limit_utilization > 1.0) {
+    throw std::invalid_argument(
+        "velocity_limit_utilization must not exceed one");
   }
   const double support_period_s =
       duration_s / static_cast<double>(support_intervals);
@@ -282,8 +318,11 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
   const Gpmp2Settings& settings = request.settings;
   const double delta_t =
       settings.duration_s / static_cast<double>(settings.support_intervals);
-  const gpmp2::ArmModel arm =
-      MakeKinovaModel(request.mount_calibration.for_arm(request.side));
+  const gpmp2::Arm kinematic_arm =
+      MakeKinovaArm(request.mount_calibration.for_arm(request.side));
+  const gpmp2::ArmModel full_arm(kinematic_arm, HumanSlArmSpheres());
+  const gpmp2::ArmModel obstacle_arm(kinematic_arm,
+                                    ExternalObstacleSpheres());
   const gpmp2::SignedDistanceField sdf =
       MakeHumanSdf(request.human_safety, settings.sdf_cell_size_m);
   const auto endpoint_model = gtsam::noiseModel::Isotropic::Sigma(
@@ -298,7 +337,7 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
   const auto qc_model = gtsam::noiseModel::Gaussian::Covariance(
       gtsam::Matrix::Identity(kJoints, kJoints));
   const gtsam::Vector joint_threshold =
-      gtsam::Vector::Constant(kJoints, 0.10);
+      gtsam::Vector::Constant(kJoints, 0.20);
   const gtsam::Vector velocity_threshold =
       gtsam::Vector::Constant(kJoints, 0.05);
   const gtsam::Vector velocity_limits =
@@ -329,8 +368,9 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
     graph.add(gpmp2::VelocityLimitFactorVector(
         v_key, velocity_limit_model, velocity_limits, velocity_threshold));
     graph.add(gpmp2::ObstacleSDFFactorArm(
-        q_key, arm, sdf, settings.obstacle_cost_sigma_m, obstacle_epsilon));
-    graph.add(gpmp2::SelfCollisionArm(q_key, arm, self_collision));
+        q_key, obstacle_arm, sdf, settings.obstacle_cost_sigma_m,
+        obstacle_epsilon));
+    graph.add(gpmp2::SelfCollisionArm(q_key, full_arm, self_collision));
 
     if (index == 0) continue;
     const gtsam::Symbol previous_q('x', index - 1);
@@ -343,7 +383,7 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
           delta_t * static_cast<double>(check) /
           static_cast<double>(settings.collision_checks_per_interval + 1);
       graph.add(gpmp2::ObstacleSDFFactorGPArm(
-          previous_q, previous_v, q_key, v_key, arm, sdf,
+          previous_q, previous_v, q_key, v_key, obstacle_arm, sdf,
           settings.obstacle_cost_sigma_m, obstacle_epsilon, qc_model, delta_t,
           tau));
     }
@@ -361,6 +401,7 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
   parameters.setMaxIterations(settings.max_optimizer_iterations);
   parameters.setlambdaInitial(1e-5);
   parameters.setlambdaFactor(10.0);
+  parameters.setlambdaUpperBound(1e6);
   const gtsam::Values optimized =
       gtsam::LevenbergMarquardtOptimizer(graph, initial, parameters)
           .optimize();
@@ -394,16 +435,61 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
     });
   }
 
-  Gpmp2Result result;
-  result.trajectory =
+  const double maximum_start_error_rad =
+      (points.front().position_rad - request.start_position_rad)
+          .cwiseAbs()
+          .maxCoeff();
+  const double maximum_goal_error_rad =
+      (points.back().position_rad - request.goal_position_rad)
+          .cwiseAbs()
+          .maxCoeff();
+  if (maximum_start_error_rad > settings.endpoint_tolerance_rad ||
+      maximum_goal_error_rad > settings.endpoint_tolerance_rad) {
+    throw std::runtime_error(
+        "GPMP2 endpoint prior was not satisfied within tolerance");
+  }
+
+  auto trajectory =
       std::make_shared<const JointTrajectory>(std::move(points));
+  // HumanSL converts the optimized Values directly at the controller target
+  // period. Its factors are soft, so the simulator adds a uniform timing pass
+  // before that converted path may cross the hard execution boundary. Uniform
+  // scaling preserves every joint-space position while scaling qdot and qddot
+  // consistently.
+  const double unscaled_velocity_ratio =
+      MaximumVelocityRatio(*trajectory, request.limits, 0.5 * dense_dt);
+  const double retiming_scale =
+      std::max(1.0,
+               unscaled_velocity_ratio /
+                   settings.velocity_limit_utilization);
+  if (retiming_scale > 1.0) {
+    std::vector<JointTrajectoryPoint> retimed;
+    retimed.reserve(trajectory->points().size());
+    for (const JointTrajectoryPoint& point : trajectory->points()) {
+      retimed.push_back(JointTrajectoryPoint{
+          point.time_s * retiming_scale,
+          point.position_rad,
+          point.velocity_rad_s / retiming_scale,
+      });
+    }
+    trajectory =
+        std::make_shared<const JointTrajectory>(std::move(retimed));
+  }
+
+  Gpmp2Result result;
+  result.trajectory = std::move(trajectory);
   result.initial_graph_error = graph.error(initial);
   result.final_graph_error = graph.error(optimized);
   result.minimum_planner_sphere_clearance_m =
-      MinimumPlannerClearance(arm, sdf, positions);
-  result.planning_sphere_count = arm.nr_body_spheres();
+      MinimumPlannerClearance(obstacle_arm, sdf, positions);
+  result.planning_sphere_count = full_arm.nr_body_spheres();
+  result.external_obstacle_sphere_count =
+      obstacle_arm.nr_body_spheres();
   result.support_point_count = settings.support_intervals + 1;
-  result.output_sample_period_s = dense_dt;
+  result.output_sample_period_s = dense_dt * retiming_scale;
+  result.retiming_scale = retiming_scale;
+  result.maximum_start_error_rad = maximum_start_error_rad;
+  result.maximum_goal_error_rad = maximum_goal_error_rad;
   return result;
 }
 

@@ -150,9 +150,20 @@ This is a selective port of HumanSL_MAIN's live source chain:
 HumanSL's Kinova DH model, 34-sphere `GenerateArmModel` geometry,
 self-collision pairs, GP priors, joint/velocity limit costs, support-point and
 interpolated SDF factors, Levenberg-Marquardt structure, and separate
-control-rate densification. HumanSL's Vicon/C3D input and hardware execution
-are deliberately replaced at their boundaries by the simulator's measured
-state, torso-cylinder SDF, exact validation, and existing MuJoCo joint runner.
+control-rate densification. The 0.05 m obstacle hinge, 0.20 rad joint-limit
+hinge, and hard limit-factor weights match `OptimizeTrajectory`; the
+collision sigma is relaxed from HumanSL's hardware-scene value for the
+coarser simulator torso SDF. After HumanSL's conversion step, a uniform timing
+pass preserves the optimized joint-space path while scaling its velocities
+and accelerations to 90% of the simulator's Kinova limits. HumanSL's
+Vicon/C3D input and hardware execution are deliberately replaced at their
+boundaries by the simulator's measured state, torso-cylinder SDF, exact
+validation, and existing MuJoCo joint runner.
+The four frame-0 spheres at the fixed base-to-shoulder interface remain in
+the complete model used by HumanSL's self-collision factors, but are excluded
+from external torso-SDF factors. They cannot move away from the wearer and
+match the fixed-mount exemption in the exact Pinocchio safety geometry. The
+remaining 30 HumanSL spheres are evaluated against the torso SDF.
 
 Both applications take seven goal joint angles in radians. Planning happens
 on a background thread while the visible MuJoCo simulation runs at its 2 ms
@@ -162,6 +173,12 @@ to execute unless every interpolated 2 ms sample passes the simulator's real
 joint-limit and 18-sphere human-clearance check, and then hands the accepted
 plan to the live joint controller. The controller is paced toward 500 Hz
 while rendering is limited to roughly 60 Hz.
+
+If `[simulation.initial_joint_position_rad]` contains the selected arm, the
+GPMP2 applications reset that arm to the configured posture before measuring
+the planning start. An explicit `--start` followed by seven radians can
+override it for an isolated demonstration without changing `control.toml`;
+the visible simulator is reset to exactly that posture before planning.
 
 This is one in-simulation planning request from the command-line goal, not
 continuous replanning. The loop targets the configured 2 ms wall-clock period
