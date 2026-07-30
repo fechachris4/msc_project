@@ -12,12 +12,13 @@ Three world-frame position signals are recorded every control cycle and
 they are deliberately kept apart, because the gap between each
 neighbouring pair measures a different thing:
 
-    PLANNED    ``source.planned_targets(elapsed)`` -- the optimiser's
-               path, before any prefilter.  This is the thesis claim.
+    PLANNED    ``plan.result.trajectory.sample(elapsed)`` -- the
+               optimiser's path, before any prefilter.  This is the
+               thesis claim.
     DELIVERED  what the Runner actually sampled and resolved to world.
                It differs from PLANNED by exactly the lead compensation
-               (``planning/plan_source.py``), which is an inverse model
-               of the controller's known steady-state lag.
+               (``controller/lead_compensation.py``), which is an
+               inverse model of the controller's known steady-state lag.
     MEASURED   ``cycle.controller_states.for_arm(side).ee_pose_world``,
                the controller's own forward kinematics.
 
@@ -26,12 +27,11 @@ MEASURED - DELIVERED is the residual the lead compensation could not
 remove.  ``--no-lead`` reruns the identical plan with the prefilter off
 so the two are directly comparable rather than argued about.
 
-The cylinder keep-out router is explicitly DISABLED for every run here.
-That router replaces the reference position while passing the reference
-twist through unchanged, so with it enabled the executed path would be
-the router's and not the planner's -- ``planning/planner.py`` refuses to
-plan alongside it, and this harness must make the same refusal true of
-the execution side.
+The runner source is composed directly from ``planning.planner.plan_arm``
+here, not through ``arm_flow.py``, so the cylinder keep-out router never
+enters the picture: the planned arm(s) get the optimiser's path and any
+other, unplanned arm gets its plain configured ``[targets.<arm>]`` pose,
+un-routed.
 
 Usage (headless, from the repository root)::
 
@@ -56,14 +56,14 @@ import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 
-from controller.cylinder_router import CylinderKeepout
+from controller import desired_pos
 from controller.runner import ReactivePositionRunner
 from controller.state import TargetFrame, Twist
-from planning.planner import (
-    plan_from_state,
-    planned_sides,
-    remaining_clearance,
+from controller.trajectory import (
+    IndependentArmTargetSource,
+    StaticTargetSource,
 )
+from planning.planner import plan_arm, planned_sides, remaining_clearance
 from plotting.style import C_BASE, SIDE_COLOR
 from runtime_config import CONFIG, PlanningConfig, print_effective_config
 from sim import motion, world
@@ -205,30 +205,6 @@ class RunMetrics:
         return tuple(arm.side for arm in self.arms)
 
 
-def disabled_cylinder_keepout(config=None):
-    """Copy the configured keep-out geometry but force it off.
-
-    Field-for-field rather than ``dataclasses.replace`` so this stays
-    readable next to ``controller/runner.py:keepout_from_config``, which
-    is the only other place the TOML record is translated.  Nothing here
-    imports the planning layer: the planner refuses an ENABLED keep-out,
-    so the disabling has to happen before the planner is ever called.
-    """
-    config = CONFIG.cylinder_keepout if config is None else config
-    return CylinderKeepout(
-        enabled=False,
-        center_xy_m=(
-            config.cylinder_keepout_center_x_m,
-            config.cylinder_keepout_center_y_m,
-        ),
-        radius_m=config.cylinder_keepout_radius_m,
-        z_min_m=config.cylinder_keepout_z_min_m,
-        z_max_m=config.cylinder_keepout_z_max_m,
-        clearance_m=config.cylinder_keepout_clearance_m,
-        waypoint_tolerance_m=config.cylinder_waypoint_tolerance_m,
-    )
-
-
 def planning_config_for(arm=None, lead_compensation=True):
     """The configured planning setup with this run's two overrides."""
     if arm is not None and arm not in ("right", "left", "both"):
@@ -309,10 +285,10 @@ def read_plant_for_planning(twist_at=None):
     return world.backend.read_state(torso_twist)
 
 
-def build_plan(plant, planning_config, keepout, plan_samples):
-    """Plan once, then time repeats of the same call.
+def build_plans(plant, planning_config, plan_samples):
+    """Plan every configured side once, then time repeats of the same call.
 
-    Returns ``(outcome, wall_times_s)``.  Only the first outcome is ever
+    Returns ``(plans, wall_times_s)``.  Only the first set of plans is ever
     executed; the repeats are a cost measurement, not a search.
     """
     if not isinstance(planning_config, PlanningConfig):
@@ -321,20 +297,42 @@ def build_plan(plant, planning_config, keepout, plan_samples):
     if samples < 1:
         raise ValueError("plan_samples must be at least 1")
 
-    outcome = None
+    sides = planned_sides(planning_config)
+    plans = None
     wall_times_s = []
     for _ in range(samples):
         started_s = time.perf_counter()
-        result = plan_from_state(
-            plant,
-            world.MOUNT_CALIBRATION,
-            planning_config,
-            cylinder_keepout=keepout,
+        result = tuple(
+            plan_arm(plant, world.MOUNT_CALIBRATION, side, planning_config)
+            for side in sides
         )
         wall_times_s.append(time.perf_counter() - started_s)
-        if outcome is None:
-            outcome = result
-    return outcome, np.asarray(wall_times_s, dtype=float)
+        if plans is None:
+            plans = result
+    return plans, np.asarray(wall_times_s, dtype=float)
+
+
+def build_runner_source(plans, static_targets):
+    """Compose the Runner's per-arm source: plan where planned, else hold.
+
+    A planned side gets its ``ArmPlan.source`` (lead-conditioned when
+    configured).  This deliberately CHANGES the old behaviour for any
+    other, unplanned side: instead of a planner-fabricated hold at the
+    measured start pose, it keeps tracking its own configured
+    ``[targets.<arm>]`` pose.  That side is never in ``arms`` passed to
+    the Runner, so it is not actually commanded either way -- this only
+    changes what gets sampled and recorded for it.
+    """
+    planned = {plan.side: plan.source for plan in plans}
+    sources = {
+        side: planned.get(
+            side, StaticTargetSource(static_targets.for_arm(side))
+        )
+        for side in ("right", "left")
+    }
+    return IndependentArmTargetSource(
+        right=sources["right"], left=sources["left"]
+    )
 
 
 def _rotation_deviation_rad(measured_rotation, planned_rotation):
@@ -360,23 +358,22 @@ def _check_world_frame(sampled_target):
 
 
 def execute(
-    outcome, planning_config, keepout, max_seconds=None, base_motion=False
+    plans, planning_config, static_targets, max_seconds=None,
+    base_motion=False,
 ):
     """Run the real Runner over the plan and record every cycle."""
-    sides = planned_sides(planning_config)
-    duration_s = max(
-        outcome.source.for_arm(side).duration_s for side in sides
-    )
+    sides = tuple(plan.side for plan in plans)
+    duration_s = max(plan.result.duration_s for plan in plans)
     if max_seconds is not None:
         duration_s = min(duration_s, float(max_seconds))
 
+    source = build_runner_source(plans, static_targets)
     runner = ReactivePositionRunner(
         world.backend,
         world.MOUNT_CALIBRATION,
         world.PIPELINE_SETUP,
-        outcome.source,
+        source,
         sides,
-        cylinder_keepout=keepout,
     )
     start_state = runner.start()
     try:
@@ -384,29 +381,27 @@ def execute(
         steps = max(1, int(math.ceil(duration_s / dt_s)) + 1)
         sample_time_s = []
         elapsed_time_s = []
-        records = {side: _blank_record() for side in sides}
+        records = {plan.side: _blank_record() for plan in plans}
 
         for _ in range(steps):
             cycle = runner.cycle()
             elapsed = cycle.target_elapsed_time_s
-            planned = outcome.source.planned_targets(elapsed)
             sample_time_s.append(cycle.input_state.sample_time_s)
             elapsed_time_s.append(elapsed)
-            for side in sides:
-                _append_record(records[side], cycle, planned, side)
+            for plan in plans:
+                _append_record(records[plan.side], cycle, plan, elapsed)
 
         # The plan is world-frame, so it does not follow the wearer; this
         # is what decays under base motion and what a replan trigger
         # would watch (planning/planner.py:remaining_clearance).
         final_clearance_m = remaining_clearance(
-            outcome, runner.current_state, planning_config
+            plans, runner.current_state, planning_config
         )
     finally:
         runner.close()
 
     traces = tuple(
-        _build_trace(side, outcome.for_side(side), records[side])
-        for side in sides
+        _build_trace(plan.side, plan, records[plan.side]) for plan in plans
     )
     log = RunLog(
         sample_time_s=np.asarray(sample_time_s, dtype=float),
@@ -414,7 +409,7 @@ def execute(
         arms=traces,
         lead_compensation=planning_config.lead_compensation_enabled,
         base_motion=bool(base_motion),
-        plan_torso_pose_world=outcome.torso_pose_world,
+        plan_torso_pose_world=plans[0].torso_pose_world,
     )
     return log, final_clearance_m
 
@@ -432,10 +427,12 @@ def _blank_record():
     }
 
 
-def _append_record(record, cycle, planned_targets, side):
-    """Store one cycle for one arm; all three signals share the tick."""
+def _append_record(record, cycle, plan, elapsed_time_s):
+    """Store one cycle for one planned arm; all three signals share the tick.
+    """
+    side = plan.side
     _check_world_frame(cycle.sampled_targets.for_arm(side))
-    planned_target = planned_targets.for_arm(side)
+    planned_target = plan.result.trajectory.sample(elapsed_time_s)
     planned_position = np.asarray(
         planned_target.pose.position_m, dtype=float
     )
@@ -824,19 +821,19 @@ def run(
             raise ValueError("max_seconds must be finite and positive")
 
     planning_config = planning_config_for(arm, lead_compensation)
-    keepout = disabled_cylinder_keepout()
+    static_targets = desired_pos.configured_targets()
     pose_at, twist_at = torso_driver(bool(base_motion))
 
     prepare_simulation(pose_at, twist_at)
     try:
         plant = read_plant_for_planning(twist_at)
-        outcome, plan_wall_times_s = build_plan(
-            plant, planning_config, keepout, plan_samples
+        plans, plan_wall_times_s = build_plans(
+            plant, planning_config, plan_samples
         )
         log, plan_clearance_m = execute(
-            outcome,
+            plans,
             planning_config,
-            keepout,
+            static_targets,
             max_seconds,
             base_motion=bool(base_motion),
         )

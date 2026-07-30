@@ -7,9 +7,9 @@ import mujoco
 import numpy as np
 
 from controller import desired_pos
-from controller.cylinder_router import CylinderKeepout
 from controller.runner import ReactivePositionRunner
-from controller.state import Pose
+from controller.state import Pose, Twist
+from controller.trajectory import IndependentArmTargetSource, StaticTargetSource
 from runtime_config import (
     CONFIG,
     LookAtObjectMotionConfig,
@@ -24,7 +24,10 @@ from sim.look_at_object import (
     SimulatedMocapPointSource,
     sinusoidal_point_kinematics,
 )
-from sim.target_trajectory import prepare_target_trajectory
+from sim.target_trajectory import (
+    apply_initial_postures,
+    prepare_target_trajectory,
+)
 
 
 def _replace_left_trajectory(source, trajectory):
@@ -212,22 +215,32 @@ class SimLookAtObjectSourceTest(unittest.TestCase):
 
     def test_each_runner_cycle_aims_at_the_updated_sim_object(self):
         trajectory = _trajectory_config()
+        apply_initial_postures(
+            world.backend,
+            {"left": CONFIG.simulation.left_initial_joint_position_rad},
+        )
+        plant = world.backend.read_state(Twist.zero())
+        static_targets = desired_pos.configured_targets()
         setup = prepare_target_trajectory(
             world.backend,
             world.MOUNT_CALIBRATION,
             "left",
             trajectory,
-            CONFIG.simulation.left_initial_joint_position_rad,
-            desired_pos.configured_targets(),
+            plant,
+            static_targets,
             _motion_config(),
         )
         runner = ReactivePositionRunner(
             world.backend,
             world.MOUNT_CALIBRATION,
             world.PIPELINE_SETUP,
-            setup.source,
+            IndependentArmTargetSource(
+                right=StaticTargetSource(
+                    static_targets.for_arm("right")
+                ),
+                left=setup.source,
+            ),
             arms=("left",),
-            cylinder_keepout=CylinderKeepout(enabled=False),
         )
         runner.start()
         self.addCleanup(runner.close)
@@ -272,20 +285,25 @@ class SimLookAtObjectSourceTest(unittest.TestCase):
         motion = replace(
             _motion_config(), linear_frequency_hz=0.20
         )
+        apply_initial_postures(
+            world.backend,
+            {"left": CONFIG.simulation.left_initial_joint_position_rad},
+        )
+        plant = world.backend.read_state(Twist.zero())
         setup = prepare_target_trajectory(
             world.backend,
             world.MOUNT_CALIBRATION,
             "left",
             trajectory,
-            CONFIG.simulation.left_initial_joint_position_rad,
+            plant,
             desired_pos.configured_targets(),
             motion,
         )
         offset_s = 0.4
         setup.look_at_object.apply(offset_s)
-        first = setup.selected_source.sample(offset_s)
+        first = setup.source.sample(offset_s)
         setup.look_at_object.apply(setup.duration_s + offset_s)
-        repeated = setup.selected_source.sample(
+        repeated = setup.source.sample(
             setup.duration_s + offset_s
         )
         np.testing.assert_allclose(
@@ -322,13 +340,18 @@ class SimLookAtObjectSourceTest(unittest.TestCase):
             linear_amplitude_m=(0.04, 0.0, 0.0),
             linear_frequency_hz=0.25,
         )
+        apply_initial_postures(
+            world.backend,
+            {"left": CONFIG.simulation.left_initial_joint_position_rad},
+        )
+        plant = world.backend.read_state(Twist.zero())
         with self.assertRaisesRegex(ValueError, "must match"):
             prepare_target_trajectory(
                 world.backend,
                 world.MOUNT_CALIBRATION,
                 "left",
                 trajectory,
-                CONFIG.simulation.left_initial_joint_position_rad,
+                plant,
                 desired_pos.configured_targets(),
                 bad_motion,
             )

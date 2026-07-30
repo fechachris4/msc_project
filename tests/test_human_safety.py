@@ -4,7 +4,6 @@ import mujoco
 import numpy as np
 
 from controller import frames, human_safety
-from controller.cylinder_router import CylinderKeepout
 from controller.link_spheres import LINK_SPHERES
 from controller.reactive_controller import constrain_velocity_for_human
 from controller.runner import ReactivePositionRunner
@@ -365,7 +364,6 @@ class HeadlessHumanAvoidanceTest(unittest.TestCase):
             backend.pipeline_setup,
             source,
             arms=("right",),
-            cylinder_keepout=CylinderKeepout(enabled=False),
             human_safety_config=CONFIG.human_safety,
         )
         minimum_clearance = float("inf")

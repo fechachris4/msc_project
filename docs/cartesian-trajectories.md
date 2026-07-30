@@ -28,8 +28,9 @@ materialized = materialize_trajectory(validated_config, start_pose)
 
 `validated_config` is a `runtime_config.TargetTrajectoryConfig`. The function
 is deterministic and MuJoCo-independent. `sim.target_trajectory` is responsible
-only for establishing the simulation start pose, composing the other arm's
-static target, and preparing the resulting source.
+only for establishing the simulation start pose and preparing ONE arm's
+source; per-arm composition into the dual-arm source the Runner samples
+happens in `arm_flow.py`.
 
 ## Control-loop boundary
 

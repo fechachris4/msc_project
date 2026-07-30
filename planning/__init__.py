@@ -1,10 +1,12 @@
 """Collision-aware Cartesian path planning above the reactive controller.
 
-This package is a planning layer, not a control layer.  It produces a
-world-frame Cartesian path that is delivered to the existing
-``ReactivePositionRunner`` through the existing ``DualArmTargetSource``
-seam (``controller/trajectory.py``).  No file in ``controller/`` is
-modified or imported into the control path by this package.
+This package is a planning layer, not a control layer.  It is a
+feasibility stage inside ONE arm's reference pipeline: ``plan_arm``
+optimises that arm's path and the composition root (``arm_flow.py``)
+delivers it through the ordinary single-arm ``TargetSource`` seam
+(``controller/trajectory.py``).  The planner never holds or replaces the
+other arm's reference, and no file in ``controller/`` imports this
+package into the control path.
 
 Design boundaries, all deliberate:
 

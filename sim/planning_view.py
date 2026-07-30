@@ -3,7 +3,7 @@
 VISUALIZATION ONLY. Nothing here is added to the MJCF, so the drawn knots
 and path have no contype/conaffinity, generate no contacts, and cannot push,
 stop, or destabilize the arms. This module never touches the plan it renders:
-it reads a finished ``PlanningOutcome`` and writes geoms into
+it reads finished per-arm ``ArmPlan`` records and writes geoms into
 ``viewer.user_scn``.
 
 What is drawn is the PLAN, sampled from the optimiser's own trajectory, which
@@ -26,7 +26,7 @@ import mujoco
 import numpy as np
 
 from controller.state import Pose
-from planning.planner import PlanningOutcome
+from planning.planner import ArmPlan
 from runtime_config import PlanningConfig
 
 
@@ -56,7 +56,7 @@ DRIFT_POSITION_TOLERANCE_M = 1e-3
 DRIFT_ROTATION_TOLERANCE = 1e-3
 
 
-def describe(planning_config, outcome):
+def describe(planning_config, plans):
     """Startup banner: what was planned, how close it came, what is delivered.
 
     Clearances are the optimiser's own numbers: the straight-line clearance
@@ -66,14 +66,15 @@ def describe(planning_config, outcome):
     """
     if not isinstance(planning_config, PlanningConfig):
         raise TypeError("planning_config must be a PlanningConfig")
-    if not isinstance(outcome, PlanningOutcome):
-        raise TypeError("outcome must be a PlanningOutcome")
+    plans = _checked_plans(plans)
 
-    planned = tuple(plan.side for plan in outcome.plans)
+    planned = tuple(plan.side for plan in plans)
     state = "ENABLED" if planning_config.enabled else "DISABLED in config"
     if not planning_config.enabled and planned:
-        state = f"{state} (this outcome was built explicitly)"
-    held = tuple(side for side in ("right", "left") if side not in planned)
+        state = f"{state} (these plans were built explicitly)"
+    unplanned = tuple(
+        side for side in ("right", "left") if side not in planned
+    )
     knot_count = planning_config.waypoint_count + 2
 
     lines = [
@@ -85,11 +86,12 @@ def describe(planning_config, outcome):
         "  collision optimised in the TORSO frame; reference delivered in "
         "the WORLD frame",
     ]
-    if held:
+    if unplanned:
         lines.append(
-            f"  holding measured pose: {', '.join(held)} (not planned)"
+            f"  not planned: {', '.join(unplanned)} (that arm keeps its "
+            "own configured motion)"
         )
-    for plan in outcome.plans:
+    for plan in plans:
         result = plan.result
         status = "OK" if result.success else f"FAILED: {result.message}"
         lines.append(
@@ -99,10 +101,10 @@ def describe(planning_config, outcome):
             f"duration={result.duration_s:.2f} s  "
             f"iterations={result.iterations}  {status}"
         )
-    if not outcome.plans:
-        lines.append("  no plan was built; both arms hold their measured pose")
+    if not plans:
+        lines.append("  no plan was built")
 
-    if _lead_enabled(outcome):
+    if any(plan.lead.enabled for plan in plans):
         lines.append("  lead compensation: ENABLED")
         lines.append(
             "  WARNING: the delivered reference is PREFILTERED, not the "
@@ -128,11 +130,11 @@ def describe(planning_config, outcome):
     return "\n".join(lines)
 
 
-def _lead_enabled(outcome):
-    return any(
-        outcome.source.for_arm(side).lead.enabled
-        for side in ("right", "left")
-    )
+def _checked_plans(plans):
+    plans = tuple(plans)
+    if any(not isinstance(plan, ArmPlan) for plan in plans):
+        raise TypeError("plans must contain ArmPlan values")
+    return plans
 
 
 def _add_geom(scene):
@@ -208,23 +210,24 @@ def _torso_moved(current, planned):
     )
 
 
-def draw(user_scn, outcome, torso_pose_world):
+def draw(user_scn, plans, torso_pose_world):
     """Draw each planned path, its knots, and the wearer-frame drift ghost.
 
     ``user_scn`` is ``viewer.user_scn``; ``torso_pose_world`` is the CURRENT
-    torso pose, not the pose the plan was made at. Returns the number of
+    torso pose, not the pose a plan was made at. Returns the number of
     geoms added, so a caller can tell "nothing planned" from "drawn" without
     inspecting the scene.
     """
-    if not isinstance(outcome, PlanningOutcome):
-        raise TypeError("outcome must be a PlanningOutcome")
+    plans = _checked_plans(plans)
     if not isinstance(torso_pose_world, Pose):
         raise TypeError("torso_pose_world must be a Pose")
 
     before = user_scn.ngeom
-    show_drift = _torso_moved(torso_pose_world, outcome.torso_pose_world)
-    for plan in outcome.plans:
+    for plan in plans:
         result = plan.result
+        show_drift = _torso_moved(
+            torso_pose_world, plan.torso_pose_world
+        )
         _add_polyline(
             user_scn,
             _sampled_path_world_m(result.trajectory),
