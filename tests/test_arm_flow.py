@@ -47,7 +47,8 @@ class BuildFlowsCompositionTest(unittest.TestCase):
 
         # Correct slotting: the dual-arm source must deliver each arm's
         # OWN composed source, not the other arm's.
-        flow.left.look_at_object.apply(0.0)
+        if flow.left.look_at_object is not None:
+            flow.left.look_at_object.apply(0.0)
         sampled = flow.source.sample(0.0)
         np.testing.assert_allclose(
             sampled.right.pose.position_m,

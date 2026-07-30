@@ -147,7 +147,8 @@ start = "measured"
 loop = true
 open_live_path_plot = true
 
-# LEFT ORIENTATION POLICY — active for the complete trajectory.
+# LEFT ORIENTATION POLICY — optional; no table keeps the start/segment
+# orientation for the whole trajectory (the current behaviour).
 #
 # Supported policies:
 #   no orientation table             keep the start/segment orientation
@@ -156,15 +157,15 @@ open_live_path_plot = true
 #
 # Look-at replaces segment RPY and cannot be combined with end_rpy_rad/rpy_rad.
 # The tool axes are local left_pinch_site axes. The forward axis faces the
-# object; tool-up and world-up resolve roll.
-[targets.left.trajectory.orientation]
-policy = "look_at_sim_object"
-object_body = "look_at_object"
-tool_forward_axis = [0.0, 0.0, 1.0]
-tool_up_axis = [0.0, 1.0, 0.0]
-world_up_direction = [0.0, 0.0, 1.0]
-
-# To use the fixed-point policy, replace the two fields above with:
+# object; tool-up and world-up resolve roll. To re-enable, uncomment:
+# [targets.left.trajectory.orientation]
+# policy = "look_at_sim_object"
+# object_body = "look_at_object"
+# tool_forward_axis = [0.0, 0.0, 1.0]
+# tool_up_axis = [0.0, 1.0, 0.0]
+# world_up_direction = [0.0, 0.0, 1.0]
+#
+# Or the fixed-point policy: replace the two fields above with:
 # policy = "look_at_fixed_world_point"
 # object_position_world_m = [0.30, 0.00, 1.10]
 
