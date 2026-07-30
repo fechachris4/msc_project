@@ -10,14 +10,14 @@
 [run]
 nominal_dt_s = 0.002
 # Arm choices: "right", "left", "both". A CLI arm argument overrides this.
-arm = "both"
+arm = "right"
 
 [controller.reactive_pose]
-kp_position_s_inv = 2.0
-kp_rotation_s_inv = 2.0
-kd_position = 0.3
-kd_rotation = 0.3
-null_gain_s_inv = 1.0
+kp_position_s_inv = 32.00
+kp_rotation_s_inv = 2.1
+kd_position = 0.9
+kd_rotation = 0.9
+null_gain_s_inv = 2.0
 dls_damping = 0.05
 position_enabled = true
 orientation_enabled = true
@@ -45,12 +45,12 @@ position_lead_rad = 0.2
 [human_safety]
 enabled = true
 center_xy_torso_m = [0.0, 0.0]
-radius_m = 0.25
+radius_m = 0.20
 z_min_torso_m = -1.10
 z_max_torso_m = 0.70
-clearance_m = 0.02
+clearance_m = 0.01
 control_margin_m = 0.02
-activation_distance_m = 0.10
+activation_distance_m = 0.01
 recovery_gain_s_inv = 4.0
 approach_velocity_damping = 0.0
 projection_iterations = 50
@@ -64,7 +64,7 @@ constraint_tolerance_m_s = 1e-6
 # path. Configured trajectories and planned paths are not routed: their
 # authors (or the planner) own their clearance.
 [cylinder_keepout]
-cylinder_keepout_enabled = true
+cylinder_keepout_enabled = false
 cylinder_keepout_center_x_m = 0.0
 cylinder_keepout_center_y_m = 0.0
 cylinder_keepout_radius_m = 0.25
@@ -83,15 +83,15 @@ cylinder_waypoint_tolerance_m = 0.01
 # [targets.<arm>.trajectory]. The kinematic limits below also time
 # keep-out routed reaches for unplanned arms.
 [planning]
-enabled = false
+enabled = true
 arm = "right"
 waypoint_count = 3
 dense_samples = 60
 clearance_margin_m = 0.05
-smoothness_weight = 1.0
+smoothness_weight = 10.0
 obstacle_weight = 40.0
 max_iterations = 200
-tool_radius_m = 0.0
+tool_radius_m = 0.05
 # Weak pull toward the straight line: without it the obstacle hinge has
 # no finite basin and can route the path outside the arm's workspace.
 deviation_weight = 0.5
@@ -103,10 +103,10 @@ include_floor = true
 floor_height_world_m = 0.0
 include_torso_box = true
 torso_box_half_extent_m = [0.12, 0.18, 0.28]
-max_linear_speed_m_s = 0.2
-max_linear_acceleration_m_s2 = 0.5
-max_angular_speed_rad_s = 0.5
-max_angular_acceleration_rad_s2 = 1.0
+max_linear_speed_m_s = 3.0
+max_linear_acceleration_m_s2 = 1.0
+max_angular_speed_rad_s = 2.0
+max_angular_acceleration_rad_s2 = 1.5
 
 # ---------------------------------------------------------------------------
 # Targets and motion plans
@@ -117,8 +117,8 @@ max_angular_acceleration_rad_s2 = 1.0
 [targets.right]
 reference_frame = "world"
 # Active right-arm planner goal.
-position_m = [0.20, 0.40, 1.10]
-rpy_rad = [0.0, 1.6, 0.8]
+position_m = [0.3, -0.04, 1.4]
+rpy_rad = [0.0, 1.6, 1.3]
 
 [targets.left]
 reference_frame = "world"
@@ -141,12 +141,6 @@ rpy_rad = [0.0, 0.0, 0.0]
 # Optional [targets.left.trajectory.constraints] fields:
 #   max_linear_speed_m_s, max_linear_acceleration_m_s2,
 #   max_angular_speed_rad_s, max_angular_acceleration_rad_s2
-[targets.left.trajectory]
-reference_frame = "world"
-start = "measured"
-loop = true
-open_live_path_plot = true
-
 # LEFT ORIENTATION POLICY — optional; no table keeps the start/segment
 # orientation for the whole trajectory (the current behaviour).
 #
@@ -168,16 +162,6 @@ open_live_path_plot = true
 # Or the fixed-point policy: replace the two fields above with:
 # policy = "look_at_fixed_world_point"
 # object_position_world_m = [0.30, 0.00, 1.10]
-
-[[targets.left.trajectory.segments]]
-type = "line"
-displacement_m = [0.40, 0.0, 0.0]
-duration_s = 10.0
-
-[[targets.left.trajectory.segments]]
-type = "line"
-displacement_m = [-0.40, 0.0, 0.0]
-duration_s = 10.0
 
 # ---------------------------------------------------------------------------
 # Simulation-only inputs

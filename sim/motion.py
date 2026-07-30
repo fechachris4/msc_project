@@ -23,7 +23,7 @@ from sim import world
 # --- research levers ---------------------------------------------------
 # Edit these SI values to change the default base-motion scenario used by
 # the main viewer and general-purpose analysis views.
-LINEAR_AMPLITUDE = np.array([0.0, 0.00, 0.0])
+LINEAR_AMPLITUDE = np.array([0.0, 0.0, 0.0])
 ROTATIONAL_AMPLITUDE = np.array([0.0, 0.0, 0.0])
 LINEAR_FREQUENCY = 0.5
 ROTATIONAL_FREQUENCY = 0.5
