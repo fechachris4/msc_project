@@ -17,6 +17,7 @@ struct Gpmp2Settings {
   std::size_t support_intervals{20};
   std::size_t collision_checks_per_interval{4};
   double duration_s{6.0};
+  double output_sample_period_s{0.002};
   double sdf_cell_size_m{0.04};
   double required_clearance_m{0.02};
   double planning_margin_m{0.02};
@@ -47,6 +48,9 @@ struct Gpmp2Result {
   double initial_graph_error{0.0};
   double final_graph_error{0.0};
   double minimum_planner_sphere_clearance_m{0.0};
+  std::size_t planning_sphere_count{0};
+  std::size_t support_point_count{0};
+  double output_sample_period_s{0.0};
 };
 
 // Runs synchronously. Call outside the real-time control loop.

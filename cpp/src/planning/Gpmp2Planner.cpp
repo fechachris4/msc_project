@@ -7,6 +7,7 @@
 #include <gpmp2/kinematics/VelocityLimitFactorVector.h>
 #include <gpmp2/obstacle/ObstacleSDFFactorArm.h>
 #include <gpmp2/obstacle/ObstacleSDFFactorGPArm.h>
+#include <gpmp2/obstacle/SelfCollisionArm.h>
 #include <gpmp2/obstacle/SignedDistanceField.h>
 #include <gpmp2/planner/TrajUtils.h>
 
@@ -91,14 +92,62 @@ gpmp2::SignedDistanceField MakeHumanSdf(
 }
 
 gpmp2::BodySphereVector PlanningSpheres() {
-  // Deliberately small, non-mount planning proxy. The exact 18-sphere
-  // Pinocchio model is checked by ValidateForExecution after optimization and
-  // by the safety filter during execution.
+  // Direct selective port of HumanSL_MAIN/TrajectoryGeneration/
+  // src/GenerateArmModel.cpp::generateArmSpheres(0, 0.05). HumanSL attaches
+  // its collision proxy only to DH frames 0, 2, 4 and 6.
+  constexpr double radius = 0.05;
   return {
-      gpmp2::BodySphere(2, 0.02, gtsam::Point3(0.0, 0.0, 0.0)),
-      gpmp2::BodySphere(4, 0.02, gtsam::Point3(0.0, 0.0, 0.0)),
-      gpmp2::BodySphere(6, 0.02, gtsam::Point3(0.0, 0.0, 0.0)),
+      gpmp2::BodySphere(0, radius, gtsam::Point3(0.0, 0.0, 0.0)),
+      gpmp2::BodySphere(0, radius * 0.7, gtsam::Point3(0.0, 0.07, 0.0)),
+      gpmp2::BodySphere(0, radius * 0.6, gtsam::Point3(0.0, 0.12, 0.0)),
+      gpmp2::BodySphere(0, radius * 0.5, gtsam::Point3(0.0, 0.17, 0.0)),
+
+      gpmp2::BodySphere(2, radius * 1.3, gtsam::Point3(0.0, 0.0, 0.0)),
+      gpmp2::BodySphere(2, radius, gtsam::Point3(0.0, 0.05, 0.0)),
+      gpmp2::BodySphere(2, radius, gtsam::Point3(0.0, 0.10, 0.0)),
+      gpmp2::BodySphere(2, radius, gtsam::Point3(0.0, 0.18, 0.0)),
+      gpmp2::BodySphere(2, radius, gtsam::Point3(0.0, 0.26, 0.0)),
+      gpmp2::BodySphere(2, radius, gtsam::Point3(0.0, 0.34, 0.0)),
+      gpmp2::BodySphere(2, radius, gtsam::Point3(0.0, 0.42, 0.0)),
+
+      gpmp2::BodySphere(4, radius * 1.3, gtsam::Point3(0.0, 0.0, 0.0)),
+      gpmp2::BodySphere(4, radius, gtsam::Point3(0.0, 0.08, 0.0)),
+      gpmp2::BodySphere(4, radius, gtsam::Point3(0.0, 0.16, 0.0)),
+      gpmp2::BodySphere(4, radius, gtsam::Point3(0.0, 0.24, 0.0)),
+      gpmp2::BodySphere(4, radius, gtsam::Point3(0.0, 0.31, 0.0)),
+      gpmp2::BodySphere(4, radius, gtsam::Point3(0.0, 0.0, 0.08)),
+      gpmp2::BodySphere(4, radius, gtsam::Point3(0.0, 0.0, -0.08)),
+      gpmp2::BodySphere(4, radius, gtsam::Point3(0.08, 0.0, 0.0)),
+      gpmp2::BodySphere(4, radius, gtsam::Point3(-0.08, 0.0, 0.0)),
+
+      gpmp2::BodySphere(6, radius, gtsam::Point3(0.0, 0.0, -0.14)),
+      gpmp2::BodySphere(6, radius, gtsam::Point3(0.0, 0.0, -0.20)),
+      gpmp2::BodySphere(6, radius, gtsam::Point3(0.0, 0.0, -0.25)),
+      gpmp2::BodySphere(6, radius * 0.6, gtsam::Point3(0.05, 0.0, 0.0)),
+      gpmp2::BodySphere(6, radius * 0.6, gtsam::Point3(-0.05, 0.0, 0.0)),
+      gpmp2::BodySphere(6, radius * 0.6, gtsam::Point3(0.05, 0.0, -0.04)),
+      gpmp2::BodySphere(6, radius * 0.6,
+                        gtsam::Point3(-0.05, 0.0, -0.04)),
+      gpmp2::BodySphere(6, radius * 0.6, gtsam::Point3(0.07, 0.0, -0.08)),
+      gpmp2::BodySphere(6, radius * 0.6,
+                        gtsam::Point3(-0.07, 0.0, -0.08)),
+      gpmp2::BodySphere(6, radius * 0.6, gtsam::Point3(0.07, 0.0, -0.12)),
+      gpmp2::BodySphere(6, radius * 0.6,
+                        gtsam::Point3(-0.07, 0.0, -0.12)),
+      gpmp2::BodySphere(6, radius * 0.6, gtsam::Point3(0.05, 0.0, -0.14)),
+      gpmp2::BodySphere(6, radius * 0.6,
+                        gtsam::Point3(-0.05, 0.0, -0.14)),
+      gpmp2::BodySphere(6, radius * 0.8, gtsam::Point3(0.0, 0.05, -0.15)),
   };
+}
+
+gtsam::Matrix HumanSlSelfCollisionData(double sigma) {
+  // Directly mirrors OptimizeTrajectory::optimizeJointTrajectory.
+  gtsam::Matrix data(3, 4);
+  data << 0, 4, 0.03, sigma,
+      0, 6, 0.03, sigma,
+      2, 6, 0.03, sigma;
+  return data;
 }
 
 gpmp2::ArmModel MakeKinovaModel(const Pose& torso_to_base) {
@@ -172,6 +221,7 @@ void Gpmp2Settings::Validate() const {
   }
   const double values[] = {
       duration_s,
+      output_sample_period_s,
       sdf_cell_size_m,
       required_clearance_m,
       planning_margin_m,
@@ -189,6 +239,19 @@ void Gpmp2Settings::Validate() const {
   }
   if (max_optimizer_iterations == 0) {
     throw std::invalid_argument("max_optimizer_iterations must be positive");
+  }
+  const double support_period_s =
+      duration_s / static_cast<double>(support_intervals);
+  const double output_intervals = support_period_s / output_sample_period_s;
+  const auto rounded_intervals =
+      static_cast<std::size_t>(std::llround(output_intervals));
+  if (rounded_intervals == 0 ||
+      std::abs(static_cast<double>(rounded_intervals) *
+                   output_sample_period_s -
+               support_period_s) >
+          std::max(1e-12, support_period_s * 1e-9)) {
+    throw std::invalid_argument(
+        "output_sample_period_s must divide the GPMP2 support period");
   }
 }
 
@@ -242,6 +305,8 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
       ToGtsam(request.limits.velocity_rad_s);
   const double obstacle_epsilon =
       settings.required_clearance_m + settings.planning_margin_m;
+  const gtsam::Matrix self_collision =
+      HumanSlSelfCollisionData(settings.obstacle_cost_sigma_m);
 
   gtsam::NonlinearFactorGraph graph;
   for (std::size_t index = 0; index <= settings.support_intervals; ++index) {
@@ -265,6 +330,7 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
         v_key, velocity_limit_model, velocity_limits, velocity_threshold));
     graph.add(gpmp2::ObstacleSDFFactorArm(
         q_key, arm, sdf, settings.obstacle_cost_sigma_m, obstacle_epsilon));
+    graph.add(gpmp2::SelfCollisionArm(q_key, arm, self_collision));
 
     if (index == 0) continue;
     const gtsam::Symbol previous_q('x', index - 1);
@@ -283,6 +349,9 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
     }
   }
 
+  // HumanSL's TrajectoryInitiation stage produces the initial x(i), v(i)
+  // Values before OptimizeTrajectory builds the graph. The joint-goal mode
+  // uses GPMP2's equivalent straight-line initializer.
   const gtsam::Values initial = gpmp2::initArmTrajStraightLine(
       start, goal, settings.support_intervals);
   gtsam::LevenbergMarquardtParams parameters;
@@ -295,9 +364,12 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
   const gtsam::Values optimized =
       gtsam::LevenbergMarquardtOptimizer(graph, initial, parameters)
           .optimize();
+  // HumanSL densifies separately from its between-support collision checks,
+  // using the controller target period. Keep those two resolutions distinct.
+  const auto output_intervals = static_cast<std::size_t>(
+      std::llround(delta_t / settings.output_sample_period_s));
   const gtsam::Values dense = gpmp2::interpolateArmTraj(
-      optimized, qc_model, delta_t,
-      settings.collision_checks_per_interval);
+      optimized, qc_model, delta_t, output_intervals - 1);
 
   const auto positions = Sequence(dense, 'x');
   const auto velocities = Sequence(dense, 'v');
@@ -329,6 +401,9 @@ Gpmp2Result PlanWithGpmp2(const Gpmp2Request& request) {
   result.final_graph_error = graph.error(optimized);
   result.minimum_planner_sphere_clearance_m =
       MinimumPlannerClearance(arm, sdf, positions);
+  result.planning_sphere_count = arm.nr_body_spheres();
+  result.support_point_count = settings.support_intervals + 1;
+  result.output_sample_period_s = dense_dt;
   return result;
 }
 

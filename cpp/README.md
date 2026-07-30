@@ -110,8 +110,10 @@ The planner is an optional layer and is off by default. Its execution flow is:
 
 ```text
 measured q, qdot + joint goal + torso-frame human SDF
-    -> GPMP2 factor-graph optimization
-    -> time-stamped q, qdot samples
+    -> HumanSL straight-line TrajectoryInitiation equivalent
+    -> HumanSL GPMP2 factor graph (GP, limits, SDF, self-collision)
+    -> control-rate interpolateArmTraj densification
+    -> time-stamped q, qdot JointTrajectory conversion
     -> exact Pinocchio/joint-limit post-validation
     -> qdot_ref + Kp(q_ref - q_measured)
     -> existing whole-arm safety projection
@@ -137,6 +139,16 @@ cmake --build cpp/build -j
   -0.70 0.45 -0.20 1.20 -0.20 0.75 0.30
 ```
 
+This is a selective port of HumanSL_MAIN's live source chain:
+`Gen3Arm::plan_joint` -> `TrajectoryInitiation` -> `OptimizeTrajectory` ->
+`densifyTrajectory`/`interpolateArmTraj` -> `convertTrajectory`. It reuses
+HumanSL's Kinova DH model, 34-sphere `GenerateArmModel` geometry,
+self-collision pairs, GP priors, joint/velocity limit costs, support-point and
+interpolated SDF factors, Levenberg-Marquardt structure, and separate
+control-rate densification. HumanSL's Vicon/C3D input and hardware execution
+are deliberately replaced at their boundaries by the simulator's measured
+state, torso-cylinder SDF, exact validation, and existing MuJoCo joint runner.
+
 Both applications take seven goal joint angles in radians. Planning happens
 on a background thread while the visible MuJoCo simulation runs at its 2 ms
 control period and holds the measured joints. `srl_gpmp2_plan` remains a
@@ -151,12 +163,11 @@ continuous replanning. The loop targets the configured 2 ms wall-clock period
 but is not a hard real-time scheduler; an over-budget cycle runs late rather
 than skipping physics.
 
-The GPMP2 cost currently uses a three-sphere DH proxy inherited from the
-prototype. It is useful for optimization but is not accepted as collision
-proof. `PlanValidation` uses the current Pinocchio model after planning, and
-`PlannedJointRunner` applies the existing safety filter again online. A future
-milestone should replace the proxy with a GPMP2 sphere model numerically
-matched against all non-exempt Pinocchio spheres.
+The GPMP2 cost uses HumanSL's 34-sphere DH model, but that historical model is
+still not accepted as collision proof for this simulator. `PlanValidation`
+independently checks the current Pinocchio 18-sphere model at every 2 ms
+sample, and `PlannedJointRunner` applies the existing safety filter again
+online. Any disagreement therefore rejects or stops the plan safely.
 
 ## Run
 
