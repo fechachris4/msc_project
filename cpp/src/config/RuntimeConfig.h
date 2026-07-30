@@ -65,6 +65,33 @@ struct HumanSafetyConfig {
   double constraint_tolerance_m_s{};
 };
 
+// Shared configuration for the native Cartesian planning stage. srl_sim
+// validates every field, plans the selected arm(s) at startup, and gives each
+// resulting WORLD-frame source to the unchanged reactive controller.
+struct PlanningConfig {
+  bool enabled{};
+  std::string arm;
+  int waypoint_count{};
+  int dense_samples{};
+  double clearance_margin_m{};
+  double smoothness_weight{};
+  double obstacle_weight{};
+  int max_iterations{};
+  double tool_radius_m{};
+  double deviation_weight{};
+  double reach_allowance_m{};
+  bool lead_compensation_enabled{};
+  double replan_clearance_trigger_m{};
+  bool include_floor{};
+  double floor_height_world_m{};
+  bool include_torso_box{};
+  Eigen::Vector3d torso_box_half_extent_m{Eigen::Vector3d::Zero()};
+  double max_linear_speed_m_s{};
+  double max_linear_acceleration_m_s2{};
+  double max_angular_speed_rad_s{};
+  double max_angular_acceleration_rad_s2{};
+};
+
 struct TrajectoryConstraintsConfig {
   std::optional<double> max_linear_speed_m_s;
   std::optional<double> max_linear_acceleration_m_s2;
@@ -112,9 +139,17 @@ struct TargetConfig {
   std::optional<TargetTrajectoryConfig> trajectory;
 };
 
+struct LookAtObjectMotionConfig {
+  std::string body_name;
+  Eigen::Vector3d home_position_world_m{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d linear_amplitude_m{Eigen::Vector3d::Zero()};
+  double linear_frequency_hz{};
+};
+
 struct SimulationConfig {
   std::optional<Vector7> right_initial_joint_position_rad;
   std::optional<Vector7> left_initial_joint_position_rad;
+  std::optional<LookAtObjectMotionConfig> look_at_object_motion;
 
   const std::optional<Vector7>& initial_joint_position(Side side) const {
     return side == Side::Right ? right_initial_joint_position_rad
@@ -128,6 +163,7 @@ struct ProjectConfig {
   LimitConfig limits;
   CylinderKeepoutConfig cylinder_keepout;
   HumanSafetyConfig human_safety;
+  PlanningConfig planning;
   TargetConfig right_target;
   TargetConfig left_target;
   SimulationConfig simulation;

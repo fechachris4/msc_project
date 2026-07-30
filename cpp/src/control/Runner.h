@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -60,7 +61,8 @@ class ReactivePositionRunner {
                          std::vector<Side> arms,
                          config::ReactivePoseConfig controller_config,
                          CylinderKeepout cylinder_keepout,
-                         config::HumanSafetyConfig human_safety_config);
+                         config::HumanSafetyConfig human_safety_config,
+                         std::vector<Side> cylinder_routing_bypass = {});
 
   const CylinderKeepout& cylinder_keepout() const { return keepout_; }
   const PlantState& current_state() const;
@@ -99,6 +101,7 @@ class ReactivePositionRunner {
   config::ReactivePoseConfig controller_config_;
   config::HumanSafetyConfig human_safety_config_;
   CylinderKeepout keepout_;
+  std::set<Side> cylinder_routing_bypass_;
 
   DualArm<std::optional<CylinderRouteFollower>> followers_;
   DualArm<AcceptedTarget> accepted_target_;

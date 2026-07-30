@@ -18,6 +18,7 @@
 #include "control/CylinderRouter.h"
 #include "control/Runner.h"
 #include "core/Types.h"
+#include "planning/CartesianPlanner.h"
 
 namespace srl::render {
 
@@ -32,6 +33,13 @@ int DrawKeepout(
     mjvScene* scene, const control::CylinderKeepout& keepout,
     const DualArm<std::optional<control::CylinderRouteStatus>>& routes,
     const std::vector<Side>& sides);
+
+// Draw each native Cartesian plan as the sampled delivered spline plus its
+// fixed/interior knots. This is presentation only; the runner consumes the
+// retained plan source independently.
+int DrawCartesianPlans(
+    mjvScene* scene,
+    const std::vector<planning::CartesianArmPlan>& plans);
 
 // Draw the exact moving envelope and every conservative arm sphere.
 int DrawHumanSafety(mjvScene* scene, const PlantState& plant,

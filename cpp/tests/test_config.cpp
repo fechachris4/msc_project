@@ -41,54 +41,127 @@ std::string MutatedConfig(const std::string& from, const std::string& to) {
   return WriteTemp(text);
 }
 
-void LoadsTheCommittedConfig() {
+void RewriteAssignment(std::string& text, const std::string& section,
+                       const std::string& key,
+                       const std::string& replacement) {
+  const std::string header = "\n[" + section + "]\n";
+  const std::size_t header_start = text.find(header);
+  if (header_start == std::string::npos) {
+    std::fprintf(stderr, "test setup: section [%s] not found\n",
+                 section.c_str());
+    std::abort();
+  }
+  const std::size_t section_start = header_start + 1;
+  const std::size_t section_end =
+      text.find("\n[", section_start + header.size() - 2);
+  const std::string assignment_prefix = "\n" + key + " =";
+  const std::size_t assignment =
+      text.find(assignment_prefix, section_start + header.size() - 2);
+  if (assignment == std::string::npos ||
+      (section_end != std::string::npos && assignment >= section_end)) {
+    std::fprintf(stderr, "test setup: '%s' not found in [%s]\n", key.c_str(),
+                 section.c_str());
+    std::abort();
+  }
+  const std::size_t line_start = assignment + 1;
+  const std::size_t line_end = text.find('\n', line_start);
+  text.replace(line_start, line_end - line_start, replacement);
+}
+
+std::string MutatedAssignment(const std::string& section,
+                              const std::string& key,
+                              const std::string& literal) {
+  std::string text = ReadAll(DefaultConfigPath());
+  RewriteAssignment(text, section, key, key + " = " + literal);
+  return WriteTemp(text);
+}
+
+std::string RemovedAssignment(const std::string& section,
+                              const std::string& key) {
+  std::string text = ReadAll(DefaultConfigPath());
+  RewriteAssignment(text, section, key, "");
+  return WriteTemp(text);
+}
+
+void LoadsTheCurrentConfigIncludingPlanning() {
   const ProjectConfig config = LoadConfig(DefaultConfigPath());
   CHECK_CLOSE(config.run.nominal_dt_s, 0.002, 0.0, "nominal timestep");
-  CHECK_TRUE(config.run.arm == "both", "configured arm");
+  CHECK_TRUE(config.run.arm == "right" || config.run.arm == "left" ||
+                 config.run.arm == "both",
+             "configured arm");
   CHECK_CLOSE(config.reactive_pose.dls_damping, 0.05, 0.0, "DLS damping");
-  CHECK_TRUE(config.human_safety.enabled, "human safety enabled by default");
-  CHECK_TRUE(config.cylinder_keepout.cylinder_keepout_enabled,
-             "cylinder keep-out enabled by default");
+  CHECK_TRUE(config.planning.arm == "right" ||
+                 config.planning.arm == "left" ||
+                 config.planning.arm == "both",
+             "planning arm is parsed and stored");
+  CHECK_TRUE(config.planning.waypoint_count > 0,
+             "planning waypoint count is validated");
+  CHECK_TRUE(config.planning.torso_box_half_extent_m.minCoeff() > 0.0,
+             "planning torso dimensions are validated");
+  CHECK_TRUE(EffectiveConfigJson(config).find("\"planning\":") !=
+                 std::string::npos,
+             "effective config records the planning section");
+  CHECK_TRUE(config.simulation.look_at_object_motion.has_value(),
+             "the current simulation object-motion section is parsed");
   CHECK_TRUE(config.source_sha256.size() == 64, "sha256 is 64 hex characters");
-  CHECK_TRUE(config.left_target.trajectory.has_value(),
-             "the left arm has a configured trajectory");
 }
 
 void RejectsUnknownAndMissingKeys() {
   // Clause I1: exact key sets, both directions.
   CHECK_THROWS(LoadConfig(MutatedConfig("[run]", "[run]\nunexpected = 1")),
                "an unknown key in [run] is rejected");
-  CHECK_THROWS(LoadConfig(MutatedConfig("nominal_dt_s = 0.002\n", "")),
+  CHECK_THROWS(LoadConfig(RemovedAssignment("run", "nominal_dt_s")),
                "a missing required key is rejected");
   CHECK_THROWS(
       LoadConfig(MutatedConfig("[limits]", "[limits]\nextra_limit = 2.0")),
       "an unknown key in [limits] is rejected");
+  CHECK_THROWS(
+      LoadConfig(MutatedConfig("\n[planning]\n",
+                               "\n[planning]\nunexpected_planner_key = 1\n")),
+      "an unknown key in [planning] is rejected");
+  CHECK_THROWS(LoadConfig(RemovedAssignment("planning", "waypoint_count")),
+               "a missing required planning key is rejected");
+  CHECK_THROWS(
+      LoadConfig(MutatedConfig(
+          "\n[simulation.look_at_object_motion]\n",
+          "\n[simulation.look_at_object_motion]\nunexpected_motion_key = 1\n")),
+      "an unknown look-at object-motion key is rejected");
 }
 
 void RejectsOutOfRangeValues() {
   CHECK_THROWS(
-      LoadConfig(MutatedConfig("nominal_dt_s = 0.002", "nominal_dt_s = 0.0")),
+      LoadConfig(MutatedAssignment("run", "nominal_dt_s", "0.0")),
       "a non-positive timestep is rejected");
-  CHECK_THROWS(LoadConfig(MutatedConfig("dls_damping = 0.05",
-                                        "dls_damping = -0.05")),
+  CHECK_THROWS(LoadConfig(MutatedAssignment(
+                   "controller.reactive_pose", "dls_damping", "-0.05")),
                "a negative DLS damping is rejected");
-  CHECK_THROWS(LoadConfig(MutatedConfig("arm = \"both\"", "arm = \"middle\"")),
+  CHECK_THROWS(LoadConfig(MutatedAssignment("run", "arm", "\"middle\"")),
                "an unknown arm selection is rejected");
+  CHECK_THROWS(
+      LoadConfig(MutatedAssignment("planning", "dense_samples", "0")),
+      "a non-positive planning sample count is rejected");
+  CHECK_THROWS(
+      LoadConfig(MutatedAssignment("planning", "arm", "\"middle\"")),
+      "an unknown planning arm selection is rejected");
+  CHECK_THROWS(LoadConfig(MutatedAssignment(
+                   "simulation.look_at_object_motion",
+                   "linear_amplitude_m", "[0.0, 0.0, 0.0]")),
+               "a zero object-motion amplitude is rejected");
 }
 
 void EnforcesCrossFieldRules() {
   // Clause I2.
-  CHECK_THROWS(LoadConfig(MutatedConfig("kp_position_s_inv = 2.0",
-                                        "kp_position_s_inv = 0.0")),
+  CHECK_THROWS(LoadConfig(MutatedAssignment(
+                   "controller.reactive_pose", "kp_position_s_inv", "0.0")),
                "zero position gain with position control enabled is rejected");
-  CHECK_THROWS(LoadConfig(MutatedConfig("kd_position = 0.3",
-                                        "kd_position = 1.5")),
+  CHECK_THROWS(LoadConfig(MutatedAssignment(
+                   "controller.reactive_pose", "kd_position", "1.5")),
                "a Kd >= 1 with velocity feedback enabled is rejected");
-  CHECK_THROWS(LoadConfig(MutatedConfig("z_max_torso_m = 0.70",
-                                        "z_max_torso_m = -2.0")),
+  CHECK_THROWS(LoadConfig(MutatedAssignment(
+                   "human_safety", "z_max_torso_m", "-2.0")),
                "an inverted human-safety height band is rejected");
-  CHECK_THROWS(LoadConfig(MutatedConfig("cylinder_keepout_z_max_m = 1.8",
-                                        "cylinder_keepout_z_max_m = -1.0")),
+  CHECK_THROWS(LoadConfig(MutatedAssignment(
+                   "cylinder_keepout", "cylinder_keepout_z_max_m", "-1.0")),
                "an inverted keep-out height band is rejected");
 }
 
@@ -96,14 +169,19 @@ void ValidatesDisabledFeaturesToo() {
   // Clause I2: the cylinder bounds are checked even when it is switched off,
   // so a disabled-but-wrong config fails loudly rather than lying in wait.
   std::string text = ReadAll(DefaultConfigPath());
-  const std::size_t enabled = text.find("cylinder_keepout_enabled = true");
-  text.replace(enabled, std::string("cylinder_keepout_enabled = true").size(),
-               "cylinder_keepout_enabled = false");
-  const std::size_t bound = text.find("cylinder_keepout_z_max_m = 1.8");
-  text.replace(bound, std::string("cylinder_keepout_z_max_m = 1.8").size(),
-               "cylinder_keepout_z_max_m = -5.0");
+  RewriteAssignment(text, "cylinder_keepout", "cylinder_keepout_enabled",
+                    "cylinder_keepout_enabled = false");
+  RewriteAssignment(text, "cylinder_keepout", "cylinder_keepout_z_max_m",
+                    "cylinder_keepout_z_max_m = -5.0");
   CHECK_THROWS(LoadConfig(WriteTemp(text)),
                "a disabled keep-out with bad bounds is still rejected");
+
+  text = ReadAll(DefaultConfigPath());
+  RewriteAssignment(text, "planning", "enabled", "enabled = false");
+  RewriteAssignment(text, "planning", "smoothness_weight",
+                    "smoothness_weight = 0.0");
+  CHECK_THROWS(LoadConfig(WriteTemp(text)),
+               "disabled planning settings remain strictly validated");
 }
 
 void PythonFloatReprMatchesCPython() {
@@ -127,8 +205,8 @@ void ProvenanceIsStable() {
              "the effective-config JSON is deterministic");
 
   // A one-character change must move the hash.
-  const ProjectConfig mutated =
-      LoadConfig(MutatedConfig("kd_rotation = 0.3", "kd_rotation = 0.4"));
+  const ProjectConfig mutated = LoadConfig(
+      MutatedAssignment("controller.reactive_pose", "kd_rotation", "0.4"));
   CHECK_TRUE(mutated.source_sha256 != first.source_sha256,
              "editing the file changes the recorded hash");
 }
@@ -136,7 +214,7 @@ void ProvenanceIsStable() {
 }  // namespace
 
 int main() {
-  LoadsTheCommittedConfig();
+  LoadsTheCurrentConfigIncludingPlanning();
   RejectsUnknownAndMissingKeys();
   RejectsOutOfRangeValues();
   EnforcesCrossFieldRules();

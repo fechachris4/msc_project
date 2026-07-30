@@ -205,6 +205,16 @@ std::string Choice(const toml::node& node,
   return value;
 }
 
+std::string NonEmptyString(const toml::node& node,
+                           const std::string& location) {
+  if (!node.is_string()) Fail(location + " must be a non-empty string");
+  const std::string value = node.as_string()->get();
+  if (value.find_first_not_of(" \t\n\r\f\v") == std::string::npos) {
+    Fail(location + " must be a non-empty string");
+  }
+  return value;
+}
+
 std::vector<double> Vector(const toml::node& node, std::size_t size,
                            const std::string& location, bool positive = false) {
   if (!node.is_array() || node.as_array()->size() != size) {
@@ -271,7 +281,7 @@ const toml::node& Require(const toml::table& table, const std::string& key,
 
 const std::set<std::string> kRootKeys = {
     "run", "controller", "limits", "cylinder_keepout",
-    "human_safety", "targets", "simulation"};
+    "human_safety", "planning", "targets", "simulation"};
 const std::set<std::string> kRunKeys = {"nominal_dt_s", "arm"};
 const std::set<std::string> kControllerKeys = {"reactive_pose"};
 const std::set<std::string> kReactiveKeys = {
@@ -291,6 +301,28 @@ const std::set<std::string> kHumanSafetyKeys = {
     "activation_distance_m", "recovery_gain_s_inv",
     "approach_velocity_damping", "projection_iterations",
     "constraint_tolerance_m_s"};
+const std::set<std::string> kPlanningKeys = {
+    "enabled",
+    "arm",
+    "waypoint_count",
+    "dense_samples",
+    "clearance_margin_m",
+    "smoothness_weight",
+    "obstacle_weight",
+    "max_iterations",
+    "tool_radius_m",
+    "deviation_weight",
+    "reach_allowance_m",
+    "lead_compensation_enabled",
+    "replan_clearance_trigger_m",
+    "include_floor",
+    "floor_height_world_m",
+    "include_torso_box",
+    "torso_box_half_extent_m",
+    "max_linear_speed_m_s",
+    "max_linear_acceleration_m_s2",
+    "max_angular_speed_rad_s",
+    "max_angular_acceleration_rad_s2"};
 const std::set<std::string> kTargetKeys = {"reference_frame", "position_m",
                                            "rpy_rad"};
 const std::set<std::string> kTrajectoryRequiredKeys = {
@@ -298,7 +330,13 @@ const std::set<std::string> kTrajectoryRequiredKeys = {
 const std::set<std::string> kTrajectoryConstraintKeys = {
     "max_linear_speed_m_s", "max_linear_acceleration_m_s2",
     "max_angular_speed_rad_s", "max_angular_acceleration_rad_s2"};
-const std::set<std::string> kSimulationKeys = {"initial_joint_position_rad"};
+const std::set<std::string> kSimulationRequiredKeys = {
+    "initial_joint_position_rad"};
+const std::set<std::string> kSimulationAllowedKeys = {
+    "initial_joint_position_rad", "look_at_object_motion"};
+const std::set<std::string> kLookAtObjectMotionKeys = {
+    "body_name", "home_position_world_m", "linear_amplitude_m",
+    "linear_frequency_hz"};
 
 const std::vector<std::string> kTargetFrames = {"world", "base", "torso"};
 const std::vector<std::string> kTrajectoryStarts = {"measured",
@@ -451,6 +489,81 @@ HumanSafetyConfig ParseHumanSafety(const toml::node& node) {
   if (config.z_max_torso_m <= config.z_min_torso_m) {
     Fail(location + ".z_max_torso_m must be greater than z_min_torso_m");
   }
+  return config;
+}
+
+PlanningConfig ParsePlanning(const toml::node& node) {
+  const std::string location = "planning";
+  const toml::table& table = RequireTable(node, location);
+  RequireExactKeys(table, kPlanningKeys, location);
+
+  PlanningConfig config;
+  config.enabled = Boolean(*table.get("enabled"), location + ".enabled");
+  config.arm =
+      Choice(*table.get("arm"), {"right", "left", "both"}, location + ".arm");
+  config.waypoint_count =
+      PositiveInteger(*table.get("waypoint_count"),
+                      location + ".waypoint_count");
+  config.dense_samples =
+      PositiveInteger(*table.get("dense_samples"),
+                      location + ".dense_samples");
+  config.clearance_margin_m =
+      FiniteNumber(*table.get("clearance_margin_m"),
+                   location + ".clearance_margin_m", {false, true});
+  config.smoothness_weight =
+      FiniteNumber(*table.get("smoothness_weight"),
+                   location + ".smoothness_weight", {true, false});
+  config.obstacle_weight =
+      FiniteNumber(*table.get("obstacle_weight"),
+                   location + ".obstacle_weight", {true, false});
+  config.max_iterations =
+      PositiveInteger(*table.get("max_iterations"),
+                      location + ".max_iterations");
+  config.tool_radius_m =
+      FiniteNumber(*table.get("tool_radius_m"),
+                   location + ".tool_radius_m", {false, true});
+  config.deviation_weight =
+      FiniteNumber(*table.get("deviation_weight"),
+                   location + ".deviation_weight", {true, false});
+  config.reach_allowance_m =
+      FiniteNumber(*table.get("reach_allowance_m"),
+                   location + ".reach_allowance_m", {true, false});
+  config.lead_compensation_enabled =
+      Boolean(*table.get("lead_compensation_enabled"),
+              location + ".lead_compensation_enabled");
+  config.replan_clearance_trigger_m =
+      FiniteNumber(*table.get("replan_clearance_trigger_m"),
+                   location + ".replan_clearance_trigger_m", {false, true});
+  config.include_floor =
+      Boolean(*table.get("include_floor"), location + ".include_floor");
+  config.floor_height_world_m =
+      FiniteNumber(*table.get("floor_height_world_m"),
+                   location + ".floor_height_world_m");
+  config.include_torso_box =
+      Boolean(*table.get("include_torso_box"),
+              location + ".include_torso_box");
+  config.torso_box_half_extent_m =
+      Vector3(*table.get("torso_box_half_extent_m"),
+              location + ".torso_box_half_extent_m");
+  for (int index = 0; index < 3; ++index) {
+    if (config.torso_box_half_extent_m(index) <= 0.0) {
+      Fail(location + ".torso_box_half_extent_m[" +
+           std::to_string(index) + "] must be greater than zero");
+    }
+  }
+  config.max_linear_speed_m_s =
+      FiniteNumber(*table.get("max_linear_speed_m_s"),
+                   location + ".max_linear_speed_m_s", {true, false});
+  config.max_linear_acceleration_m_s2 =
+      FiniteNumber(*table.get("max_linear_acceleration_m_s2"),
+                   location + ".max_linear_acceleration_m_s2", {true, false});
+  config.max_angular_speed_rad_s =
+      FiniteNumber(*table.get("max_angular_speed_rad_s"),
+                   location + ".max_angular_speed_rad_s", {true, false});
+  config.max_angular_acceleration_rad_s2 =
+      FiniteNumber(*table.get("max_angular_acceleration_rad_s2"),
+                   location + ".max_angular_acceleration_rad_s2",
+                   {true, false});
   return config;
 }
 
@@ -688,7 +801,8 @@ TargetConfig ParseTarget(const toml::node& node, const std::string& side) {
 
 SimulationConfig ParseSimulation(const toml::node& node) {
   const toml::table& table = RequireTable(node, "simulation");
-  RequireExactKeys(table, kSimulationKeys, "simulation");
+  CheckMissingExtra(KeysOf(table), kSimulationRequiredKeys,
+                    kSimulationAllowedKeys, "simulation");
   const toml::table& positions =
       RequireTable(Require(table, "initial_joint_position_rad", "simulation"),
                    "simulation.initial_joint_position_rad");
@@ -712,6 +826,28 @@ SimulationConfig ParseSimulation(const toml::node& node) {
     for (int index = 0; index < kJoints; ++index) joints(index) = values[index];
     (side == Side::Right ? config.right_initial_joint_position_rad
                          : config.left_initial_joint_position_rad) = joints;
+  }
+  if (table.get("look_at_object_motion") != nullptr) {
+    const std::string location = "simulation.look_at_object_motion";
+    const toml::table& motion =
+        RequireTable(*table.get("look_at_object_motion"), location);
+    RequireExactKeys(motion, kLookAtObjectMotionKeys, location);
+    LookAtObjectMotionConfig parsed;
+    parsed.body_name =
+        NonEmptyString(*motion.get("body_name"), location + ".body_name");
+    parsed.home_position_world_m =
+        Vector3(*motion.get("home_position_world_m"),
+                location + ".home_position_world_m");
+    parsed.linear_amplitude_m =
+        Vector3(*motion.get("linear_amplitude_m"),
+                location + ".linear_amplitude_m");
+    if (parsed.linear_amplitude_m.norm() < 1e-12) {
+      Fail(location + ".linear_amplitude_m must be non-zero");
+    }
+    parsed.linear_frequency_hz =
+        FiniteNumber(*motion.get("linear_frequency_hz"),
+                     location + ".linear_frequency_hz", {true, false});
+    config.look_at_object_motion = std::move(parsed);
   }
   return config;
 }
@@ -820,6 +956,7 @@ ProjectConfig LoadConfig(const std::string& path) {
 
   config.cylinder_keepout = ParseCylinderKeepout(*parsed.get("cylinder_keepout"));
   config.human_safety = ParseHumanSafety(*parsed.get("human_safety"));
+  config.planning = ParsePlanning(*parsed.get("planning"));
   config.right_target = ParseTarget(*targets.get("right"), "right");
   config.left_target = ParseTarget(*targets.get("left"), "left");
   config.simulation = ParseSimulation(*parsed.get("simulation"));
@@ -987,6 +1124,20 @@ std::string JsonJoints(const std::optional<Vector7>& joints, int level) {
   return JsonVector(values, level);
 }
 
+std::string JsonLookAtObjectMotion(
+    const std::optional<LookAtObjectMotionConfig>& motion, int level) {
+  if (!motion) return "null";
+  std::string text = "{\n";
+  text += Indent(level + 1) + "\"body_name\": \"" + motion->body_name + "\",\n";
+  text += Indent(level + 1) + "\"home_position_world_m\": " +
+          JsonVector(ToVector(motion->home_position_world_m), level + 1) + ",\n";
+  text += Indent(level + 1) + "\"linear_amplitude_m\": " +
+          JsonVector(ToVector(motion->linear_amplitude_m), level + 1) + ",\n";
+  text += Indent(level + 1) + "\"linear_frequency_hz\": " +
+          PythonFloatRepr(motion->linear_frequency_hz) + "\n";
+  return text + Indent(level) + "}";
+}
+
 }  // namespace
 
 std::string EffectiveConfigJson(const ProjectConfig& config) {
@@ -1042,6 +1193,32 @@ std::string EffectiveConfigJson(const ProjectConfig& config) {
   out << "    \"position_lead_rad\": " << PythonFloatRepr(config.limits.position_lead_rad) << "\n";
   out << "  },\n";
 
+  const auto& planning = config.planning;
+  out << "  \"planning\": {\n";
+  out << "    \"arm\": \"" << planning.arm << "\",\n";
+  out << "    \"clearance_margin_m\": " << PythonFloatRepr(planning.clearance_margin_m) << ",\n";
+  out << "    \"dense_samples\": " << planning.dense_samples << ",\n";
+  out << "    \"deviation_weight\": " << PythonFloatRepr(planning.deviation_weight) << ",\n";
+  out << "    \"enabled\": " << JsonBool(planning.enabled) << ",\n";
+  out << "    \"floor_height_world_m\": " << PythonFloatRepr(planning.floor_height_world_m) << ",\n";
+  out << "    \"include_floor\": " << JsonBool(planning.include_floor) << ",\n";
+  out << "    \"include_torso_box\": " << JsonBool(planning.include_torso_box) << ",\n";
+  out << "    \"lead_compensation_enabled\": " << JsonBool(planning.lead_compensation_enabled) << ",\n";
+  out << "    \"max_angular_acceleration_rad_s2\": " << PythonFloatRepr(planning.max_angular_acceleration_rad_s2) << ",\n";
+  out << "    \"max_angular_speed_rad_s\": " << PythonFloatRepr(planning.max_angular_speed_rad_s) << ",\n";
+  out << "    \"max_iterations\": " << planning.max_iterations << ",\n";
+  out << "    \"max_linear_acceleration_m_s2\": " << PythonFloatRepr(planning.max_linear_acceleration_m_s2) << ",\n";
+  out << "    \"max_linear_speed_m_s\": " << PythonFloatRepr(planning.max_linear_speed_m_s) << ",\n";
+  out << "    \"obstacle_weight\": " << PythonFloatRepr(planning.obstacle_weight) << ",\n";
+  out << "    \"reach_allowance_m\": " << PythonFloatRepr(planning.reach_allowance_m) << ",\n";
+  out << "    \"replan_clearance_trigger_m\": " << PythonFloatRepr(planning.replan_clearance_trigger_m) << ",\n";
+  out << "    \"smoothness_weight\": " << PythonFloatRepr(planning.smoothness_weight) << ",\n";
+  out << "    \"tool_radius_m\": " << PythonFloatRepr(planning.tool_radius_m) << ",\n";
+  out << "    \"torso_box_half_extent_m\": "
+      << JsonVector(ToVector(planning.torso_box_half_extent_m), 2) << ",\n";
+  out << "    \"waypoint_count\": " << planning.waypoint_count << "\n";
+  out << "  },\n";
+
   out << "  \"run\": {\n";
   out << "    \"arm\": \"" << config.run.arm << "\",\n";
   out << "    \"nominal_dt_s\": " << PythonFloatRepr(config.run.nominal_dt_s) << "\n";
@@ -1050,6 +1227,9 @@ std::string EffectiveConfigJson(const ProjectConfig& config) {
   out << "  \"simulation\": {\n";
   out << "    \"left_initial_joint_position_rad\": "
       << JsonJoints(config.simulation.left_initial_joint_position_rad, 2) << ",\n";
+  out << "    \"look_at_object_motion\": "
+      << JsonLookAtObjectMotion(config.simulation.look_at_object_motion, 2)
+      << ",\n";
   out << "    \"right_initial_joint_position_rad\": "
       << JsonJoints(config.simulation.right_initial_joint_position_rad, 2) << "\n";
   out << "  },\n";

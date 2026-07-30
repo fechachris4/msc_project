@@ -18,6 +18,15 @@ constexpr double kRouteWaypointRadiusM = 0.018;
 constexpr double kActiveWaypointRadiusM = 0.030;
 constexpr double kRouteLineWidthM = 0.006;
 
+constexpr std::array<float, 4> kPlanPathRgba{0.20f, 0.85f, 1.00f, 0.90f};
+constexpr std::array<float, 4> kPlanKnotRgba{1.00f, 0.85f, 0.10f, 0.95f};
+constexpr std::array<float, 4> kPlanStartRgba{0.10f, 1.00f, 0.35f, 0.95f};
+constexpr std::array<float, 4> kPlanGoalRgba{1.00f, 0.30f, 0.75f, 0.95f};
+constexpr double kPlanKnotRadiusM = 0.018;
+constexpr double kPlanEndpointRadiusM = 0.028;
+constexpr double kPlanLineWidthM = 0.006;
+constexpr int kPlanPathSamples = 24;
+
 constexpr std::array<float, 4> kHumanRgba{0.95f, 0.30f, 0.15f, 0.22f};
 constexpr std::array<float, 4> kSafetyClearanceRgba{0.20f, 0.65f, 1.00f, 0.09f};
 constexpr std::array<float, 4> kSafeSphereRgba{0.15f, 0.95f, 0.35f, 0.13f};
@@ -50,7 +59,8 @@ void AddSphere(mjvScene* scene, const Eigen::Vector3d& position, double radius,
 }
 
 void AddLine(mjvScene* scene, const Eigen::Vector3d& start,
-             const Eigen::Vector3d& end, const std::array<float, 4>& rgba) {
+             const Eigen::Vector3d& end, double width_m,
+             const std::array<float, 4>& rgba) {
   mjvGeom* geom = AddGeom(scene);
   if (geom == nullptr) return;
   const mjtNum zero[3] = {0.0, 0.0, 0.0};
@@ -59,7 +69,7 @@ void AddLine(mjvScene* scene, const Eigen::Vector3d& start,
   mjv_initGeom(geom, mjGEOM_CAPSULE, zero, zero, identity, rgba.data());
   const mjtNum from[3] = {start(0), start(1), start(2)};
   const mjtNum to[3] = {end(0), end(1), end(2)};
-  mjv_connector(geom, mjGEOM_CAPSULE, kRouteLineWidthM, from, to);
+  mjv_connector(geom, mjGEOM_CAPSULE, width_m, from, to);
 }
 
 void AddCylinderSized(mjvScene* scene, const Eigen::Vector2d& center_xy,
@@ -161,13 +171,43 @@ int DrawKeepout(
     if (!status) continue;
     const auto& points = status->waypoints_world_m;
     for (std::size_t index = 0; index + 1 < points.size(); ++index) {
-      AddLine(scene, points[index], points[index + 1], kRouteRgba);
+      AddLine(scene, points[index], points[index + 1],
+              kRouteLineWidthM, kRouteRgba);
     }
     for (const auto& point : points) {
       AddSphere(scene, point, kRouteWaypointRadiusM, kRouteRgba);
     }
     AddSphere(scene, status->active_waypoint_world_m, kActiveWaypointRadiusM,
               kActiveWaypointRgba);
+  }
+  return scene->ngeom - before;
+}
+
+int DrawCartesianPlans(
+    mjvScene* scene,
+    const std::vector<planning::CartesianArmPlan>& plans) {
+  const int before = scene->ngeom;
+  for (const planning::CartesianArmPlan& plan : plans) {
+    Eigen::Vector3d previous =
+        plan.result.trajectory->Sample(0.0).pose.position_m;
+    for (int index = 1; index < kPlanPathSamples; ++index) {
+      const double time =
+          plan.result.duration_s() * static_cast<double>(index) /
+          static_cast<double>(kPlanPathSamples - 1);
+      const Eigen::Vector3d point =
+          plan.result.trajectory->Sample(time).pose.position_m;
+      AddLine(scene, previous, point, kPlanLineWidthM, kPlanPathRgba);
+      previous = point;
+    }
+    for (std::size_t index = 0;
+         index < plan.result.knots_world_m.size(); ++index) {
+      const bool first = index == 0;
+      const bool last = index + 1 == plan.result.knots_world_m.size();
+      AddSphere(scene, plan.result.knots_world_m[index],
+                first || last ? kPlanEndpointRadiusM : kPlanKnotRadiusM,
+                first ? kPlanStartRgba
+                      : (last ? kPlanGoalRgba : kPlanKnotRgba));
+    }
   }
   return scene->ngeom - before;
 }

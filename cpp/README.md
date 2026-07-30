@@ -163,6 +163,7 @@ matched against all non-exempt Pinocchio spheres.
 ```bash
 ./cpp/build/srl_sim                 # viewer; arm selection from control.toml
 ./cpp/build/srl_sim right           # or left / both
+./cpp/build/srl_sim --planning-smoke # plan + 50 closed-loop cycles, no viewer
 ./cpp/build/srl_print_config        # effective configuration + sha256
 ./cpp/build/srl_smoke               # dependency/linkage check
 
@@ -176,6 +177,15 @@ Tests:
 ```bash
 ctest --test-dir cpp/build --output-on-failure
 ```
+
+When `[planning].enabled = true`, `srl_sim` runs the native C++ equivalent of
+the Python Cartesian planner at startup. It captures the current torso and
+end-effector poses, optimises dense samples of the shared minimum-jerk spline
+against the torso-frame human/box and world-floor distances, retimes the
+result through the configured Cartesian limits, applies the optional lead
+prefilter, and gives that WORLD-frame per-arm source to the unchanged reactive
+runner. The planned spline and knots are drawn in the viewer. This path is
+separate from the optional GPMP2 joint-space applications above.
 
 ## How behavioural parity was verified
 
