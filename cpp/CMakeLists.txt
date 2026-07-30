@@ -201,12 +201,22 @@ srl_add_app(srl_headless_trace src/app/headless_trace.cpp)
 if(SRL_WITH_GPMP2)
   add_executable(srl_gpmp2_plan src/app/gpmp2_plan.cpp)
   target_link_libraries(srl_gpmp2_plan PRIVATE srl_gpmp2)
+  if(UNIX AND NOT APPLE)
+    # HumanSL's GTSAM depends on sibling libmetis-gtsam/libcephes-gtsam
+    # libraries. DT_RUNPATH is not inherited for those indirect dependencies;
+    # emit DT_RPATH while preserving the venv Pinocchio paths ahead of the
+    # older Pinocchio copy bundled in HumanSL.
+    target_link_options(srl_gpmp2_plan PRIVATE "-Wl,--disable-new-dtags")
+  endif()
   set_target_properties(srl_gpmp2_plan PROPERTIES
     BUILD_RPATH "${SRL_RPATHS}" INSTALL_RPATH "${SRL_RPATHS}")
   if(SRL_WITH_VIEWER)
     find_package(Threads REQUIRED)
     add_executable(srl_gpmp2_sim src/app/gpmp2_sim.cpp)
     target_link_libraries(srl_gpmp2_sim PRIVATE srl_gpmp2 Threads::Threads)
+    if(UNIX AND NOT APPLE)
+      target_link_options(srl_gpmp2_sim PRIVATE "-Wl,--disable-new-dtags")
+    endif()
     set_target_properties(srl_gpmp2_sim PROPERTIES
       BUILD_RPATH "${SRL_RPATHS}" INSTALL_RPATH "${SRL_RPATHS}")
   else()
