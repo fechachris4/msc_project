@@ -172,9 +172,12 @@ int main(int argc, char** argv) {
         } else {
           std::printf(
               "GPMP2 accepted: graph error %.9g -> %.9g, "
+              "HumanSL spheres %zu, output dt %.3f ms, "
               "exact clearance %.3f mm, %zu validation samples\n",
               outcome.result.initial_graph_error,
               outcome.result.final_graph_error,
+              outcome.result.planning_sphere_count,
+              outcome.result.output_sample_period_s * 1000.0,
               outcome.validation.minimum_human_clearance_m * 1000.0,
               outcome.validation.checked_samples);
 

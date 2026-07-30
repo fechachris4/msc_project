@@ -80,9 +80,13 @@ int main(int argc, char** argv) {
     std::printf("samples=%zu duration_s=%.6f\n",
                 result.trajectory->points().size(),
                 result.trajectory->duration_s());
+    std::printf(
+        "human_sl_model_spheres=%zu support_points=%zu output_dt_s=%.9g\n",
+        result.planning_sphere_count, result.support_point_count,
+        result.output_sample_period_s);
     std::printf("graph_error=%.9g -> %.9g\n", result.initial_graph_error,
                 result.final_graph_error);
-    std::printf("planner_proxy_clearance_m=%.9g\n",
+    std::printf("human_sl_model_clearance_m=%.9g\n",
                 result.minimum_planner_sphere_clearance_m);
     std::printf("exact_minimum_clearance_m=%.9g checked_samples=%zu\n",
                 validation.minimum_human_clearance_m,
