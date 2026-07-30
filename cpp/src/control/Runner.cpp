@@ -32,7 +32,8 @@ ReactivePositionRunner::ReactivePositionRunner(
     std::shared_ptr<DualArmTargetSource> source_targets, std::vector<Side> arms,
     config::ReactivePoseConfig controller_config,
     CylinderKeepout cylinder_keepout,
-    config::HumanSafetyConfig human_safety_config)
+    config::HumanSafetyConfig human_safety_config,
+    std::vector<Side> cylinder_routing_bypass)
     : backend_(backend),
       pin_(pin),
       calibration_(std::move(calibration)),
@@ -41,7 +42,9 @@ ReactivePositionRunner::ReactivePositionRunner(
       arms_(std::move(arms)),
       controller_config_(controller_config),
       human_safety_config_(human_safety_config),
-      keepout_(std::move(cylinder_keepout)) {
+      keepout_(std::move(cylinder_keepout)),
+      cylinder_routing_bypass_(cylinder_routing_bypass.begin(),
+                               cylinder_routing_bypass.end()) {
   if (arms_.empty()) {
     throw std::invalid_argument("arms must be a non-empty subset of right/left");
   }
@@ -83,6 +86,7 @@ PlantState ReactivePositionRunner::Start() {
     const DualArmControllerStates states =
         kinematics::ControllerStates(pin_, plant_state, calibration_);
     for (Side side : arms_) {
+      if (cylinder_routing_bypass_.contains(side)) continue;
       followers_.for_arm(side)->Reset(
           states.for_arm(side).ee_pose_world.position_m);
       accepted_target_.for_arm(side) = AcceptedTarget{};
@@ -100,6 +104,7 @@ void ReactivePositionRunner::RouteTargets(
   if (!keepout_.enabled) return;
 
   for (Side side : arms_) {
+    if (cylinder_routing_bypass_.contains(side)) continue;
     CylinderRouteFollower& follower = *followers_.for_arm(side);
     const Eigen::Vector3d ee_world =
         controller_states.for_arm(side).ee_pose_world.position_m;

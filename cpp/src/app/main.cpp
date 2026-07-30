@@ -25,6 +25,7 @@
 #include "control/TargetSource.h"
 #include "kinematics/PinModel.h"
 #include "math/LinAlg.h"
+#include "planning/CartesianPlanner.h"
 #include "render/Overlays.h"
 #include "render/Viewer.h"
 #include "sim/DesiredPos.h"
@@ -39,10 +40,20 @@ using srl::Side;
 // Steps between error printouts (0.5 s at the 2 ms timestep).
 constexpr int kPrintEvery = 250;
 
-std::vector<Side> ParseArms(int argc, char** argv, const std::string& fallback) {
+struct AppOptions {
+  std::vector<Side> arms;
+  bool planning_smoke{false};
+};
+
+AppOptions ParseOptions(int argc, char** argv, const std::string& fallback) {
   std::string choice = fallback;
+  bool planning_smoke = false;
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
+    if (argument == "--planning-smoke") {
+      planning_smoke = true;
+      continue;
+    }
     if (argument == "--trajectory-plot") {
       // Accepted for command-line compatibility with main.py. The live
       // matplotlib path plot is not part of the C++ port; use
@@ -56,11 +67,12 @@ std::vector<Side> ParseArms(int argc, char** argv, const std::string& fallback) 
       choice = argument;
       continue;
     }
-    throw std::invalid_argument("usage: srl_sim [right|left|both]");
+    throw std::invalid_argument(
+        "usage: srl_sim [right|left|both] [--planning-smoke]");
   }
-  if (choice == "right") return {Side::Right};
-  if (choice == "left") return {Side::Left};
-  return {Side::Right, Side::Left};
+  if (choice == "right") return {{Side::Right}, planning_smoke};
+  if (choice == "left") return {{Side::Left}, planning_smoke};
+  return {{Side::Right, Side::Left}, planning_smoke};
 }
 
 std::string PythonRoot() { return std::string(SRL_PYTHON_ROOT); }
@@ -71,7 +83,8 @@ int main(int argc, char** argv) {
   try {
     const srl::config::ProjectConfig config =
         srl::config::LoadConfig(srl::config::DefaultConfigPath());
-    const std::vector<Side> arms = ParseArms(argc, argv, config.run.arm);
+    const AppOptions options = ParseOptions(argc, argv, config.run.arm);
+    const std::vector<Side>& arms = options.arms;
     srl::config::PrintEffectiveConfig(config);
 
     srl::sim::MujocoBackend backend(PythonRoot() + "/sim/scene.xml", config);
@@ -85,9 +98,16 @@ int main(int argc, char** argv) {
     // Module-default amplitudes are all zero: a static torso unless edited.
     srl::sim::TorsoMotion torso = srl::sim::CaptureTorsoHome(backend);
 
-    // At most one configured trajectory arm per run.
+    srl::DualArm<std::shared_ptr<srl::control::TargetSource>> arm_sources{
+        std::make_shared<srl::control::StaticTargetSource>(
+            static_targets.right),
+        std::make_shared<srl::control::StaticTargetSource>(
+            static_targets.left)};
+
+    // At most one configured trajectory arm is supported by the current C++
+    // trajectory initialisation path.
     std::vector<Side> trajectory_arms;
-    for (Side side : arms) {
+    for (Side side : srl::kSides) {
       if (config.target(side).trajectory) trajectory_arms.push_back(side);
     }
     if (trajectory_arms.size() > 1) {
@@ -95,7 +115,7 @@ int main(int argc, char** argv) {
           "simulation currently supports one configured trajectory arm per run");
     }
 
-    std::shared_ptr<srl::control::DualArmTargetSource> target_source;
+    std::vector<Side> cylinder_routing_bypass;
     if (!trajectory_arms.empty()) {
       const Side side = trajectory_arms.front();
       const srl::sim::TargetTrajectorySetup setup =
@@ -105,12 +125,41 @@ int main(int argc, char** argv) {
               config.simulation.initial_joint_position(side), static_targets);
       srl::sim::PrintTargetTrajectorySetup(side, *config.target(side).trajectory,
                                            setup);
-      target_source = setup.source;
-    } else {
-      target_source =
-          std::make_shared<srl::control::StaticDualArmTargetSource>(
-              static_targets);
+      arm_sources.for_arm(side) = setup.selected_source;
+      cylinder_routing_bypass.push_back(side);
     }
+
+    const srl::PlantState planning_state =
+        backend.ReadState(srl::Twist::Zero());
+    std::vector<srl::planning::CartesianArmPlan> plans;
+    if (config.planning.enabled) {
+      for (Side side : srl::kSides) {
+        if (!srl::planning::PlanningIncludesSide(config.planning, side)) {
+          continue;
+        }
+        if (config.target(side).trajectory) {
+          throw std::invalid_argument(
+              "[planning] and [targets." + std::string(SideName(side)) +
+              ".trajectory] both drive the " +
+              std::string(SideName(side)) + " arm; disable one");
+        }
+        plans.push_back(srl::planning::PlanCartesianArm(
+            pin, planning_state, backend.mount_calibration(), side, config));
+        arm_sources.for_arm(side) = plans.back().source;
+        cylinder_routing_bypass.push_back(side);
+      }
+      srl::planning::PrintCartesianPlans(config.planning, plans);
+    }
+    if (options.planning_smoke) {
+      if (!config.planning.enabled || plans.empty()) {
+        throw std::invalid_argument(
+            "--planning-smoke requires an enabled [planning] arm");
+      }
+    }
+
+    std::shared_ptr<srl::control::DualArmTargetSource> target_source =
+        std::make_shared<srl::control::IndependentArmTargetSource>(
+            arm_sources.right, arm_sources.left);
 
     // Installed after any trajectory preparation, which resets the backend.
     srl::sim::InstallTorsoDriver(backend, torso);
@@ -119,7 +168,7 @@ int main(int argc, char** argv) {
         backend, pin, backend.mount_calibration(), backend.pipeline_setup(),
         target_source, arms, config.reactive_pose,
         srl::control::KeepoutFromConfig(config.cylinder_keepout),
-        config.human_safety);
+        config.human_safety, cylinder_routing_bypass);
     runner.Start();
 
     std::printf("%s\n", srl::render::DescribeKeepout(runner.cylinder_keepout(),
@@ -127,6 +176,21 @@ int main(int argc, char** argv) {
                             .c_str());
     std::printf("%s\n",
                 srl::render::DescribeHumanSafety(config.human_safety).c_str());
+
+    if (options.planning_smoke) {
+      constexpr int kPlanningSmokeCycles = 50;
+      srl::control::RunnerCycle cycle;
+      for (int index = 0; index < kPlanningSmokeCycles; ++index) {
+        cycle = runner.Cycle();
+      }
+      runner.Close();
+      backend.ConfigureTorsoDriver(nullptr, nullptr);
+      std::printf(
+          "PLANNING SMOKE OK: native Cartesian plan executed for %d "
+          "closed-loop srl_sim cycles; final simulation time=%.3f s\n",
+          kPlanningSmokeCycles, cycle.next_state.sample_time_s);
+      return 0;
+    }
 
     srl::render::Viewer viewer(backend.model(), backend.data(),
                                "SRL dual Gen3 - reactive pose hold");
@@ -142,6 +206,7 @@ int main(int argc, char** argv) {
       // Visualisation only: overlay geometry never contacts the arms.
       srl::render::DrawKeepout(viewer.scene(), runner.cylinder_keepout(),
                                cycle.cylinder_routes, arms);
+      srl::render::DrawCartesianPlans(viewer.scene(), plans);
       srl::render::DrawHumanSafety(viewer.scene(), cycle.input_state,
                                    cycle.controller_states,
                                    cycle.human_safety_states,

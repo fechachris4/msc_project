@@ -3,6 +3,7 @@
 // If this binary runs clean, every later parity claim rests on real ground.
 
 #include <array>
+#include <cinttypes>
 #include <cstdio>
 #include <string>
 
@@ -35,8 +36,10 @@ int main() {
   }
   mjData* data = mj_makeData(model);
   mj_forward(model, data);
-  std::printf("scene   : nq=%d nv=%d nu=%d nbody=%d timestep=%g\n", model->nq,
-              model->nv, model->nu, model->nbody, model->opt.timestep);
+  std::printf(
+      "scene   : nq=%" PRId64 " nv=%" PRId64 " nu=%" PRId64
+      " nbody=%" PRId64 " timestep=%g\n",
+      model->nq, model->nv, model->nu, model->nbody, model->opt.timestep);
 
   // --- Pinocchio arm model --------------------------------------------
   const std::string gen3 = kPythonRoot + "/sim/assets/kinova_gen3/gen3.xml";
