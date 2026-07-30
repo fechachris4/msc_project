@@ -139,6 +139,11 @@ cmake --build cpp/build -j
   -0.70 0.45 -0.20 1.20 -0.20 0.75 0.30
 ```
 
+The Linux executables embed the dependency order they need. Do not prepend
+the whole HumanSL `third_party/lib` directory to `LD_LIBRARY_PATH`: that
+bundle also contains an older Pinocchio build which would override the
+simulator venv's Pinocchio and cause an ABI mismatch.
+
 This is a selective port of HumanSL_MAIN's live source chain:
 `Gen3Arm::plan_joint` -> `TrajectoryInitiation` -> `OptimizeTrajectory` ->
 `densifyTrajectory`/`interpolateArmTraj` -> `convertTrajectory`. It reuses
