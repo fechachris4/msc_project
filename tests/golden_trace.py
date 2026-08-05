@@ -152,15 +152,15 @@ def _cycle_rows(cycle, dt, plant, traces):
             trace.J @ trace.J.T + servo.CONTROL.dls_damping**2 * np.eye(6),
             trace.task_twist,
         )
-        qdot_null_objective = (
-            -(
-                world.PIPELINE_SETUP.for_arm(side).centering.enabled
-                * servo.CONTROL.null_gain_s_inv
-            )
-            * (
-                trace.q
-                - world.PIPELINE_SETUP.for_arm(side).centering.midpoint_rad
-            )
+        avoidance = world.PIPELINE_SETUP.for_arm(side).avoidance
+        limit = avoidance.limit_rad
+        zone = avoidance.zone_rad
+        signed = np.remainder(trace.q + np.pi, 2.0 * np.pi) - np.pi
+        excess = np.abs(signed) - (limit - zone)
+        qdot_null_objective = np.where(
+            (limit > 0.0) & (excess > 0.0),
+            -servo.CONTROL.null_gain_s_inv * excess * np.sign(signed),
+            0.0,
         )
         qdot_null_projected = (
             np.eye(7) - np.linalg.pinv(trace.J) @ trace.J

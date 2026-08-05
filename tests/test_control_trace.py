@@ -26,27 +26,27 @@ BASE_TWIST = (
     np.array([0.11, -0.06, 0.04]),
 )
 EXPECTED_CTRL = np.array([
-    0.0015717317045702117,
-    0.2614111738319953,
-    3.1410046283914332,
+    0.0015242110872019034,
+    0.2614095111360465,
+    3.1410616992516527,
     -2.266149465830825,
     0.0024399702942880727,
     0.9574911197057119,
     1.568356359705712,
 ])
 EXPECTED_QDOT_RAW = np.array([
-    0.7858658522851059,
-    -0.19410808400234925,
-    -0.2940108042835781,
-    2.6904378270960234,
-    2.1473300318227477,
-    -3.1003725820379477,
-    -1.731501236854941,
+    0.7621055436009517,
+    -0.19493943197677877,
+    -0.2654753741737172,
+    2.689646126582577,
+    2.1519723937049466,
+    -3.10041222947685,
+    -1.7415494990582279,
 ])
 EXPECTED_QDOT_SPEED_CLIPPED = np.array([
-    0.7858658522851059,
-    -0.19410808400234925,
-    -0.2940108042835781,
+    0.7621055436009517,
+    -0.19493943197677877,
+    -0.2654753741737172,
     1.3892820845874863,
     1.2199851471440364,
     -1.2199851471440364,
@@ -284,10 +284,17 @@ class ControlTraceTest(unittest.TestCase):
             trace.task_twist,
         )
         projector = np.eye(7) - np.linalg.pinv(trace.J) @ trace.J
-        centering = world.PIPELINE_SETUP.right.centering
-        null_gain = centering.enabled * servo.CONTROL.null_gain_s_inv
-        qdot_null = -null_gain * (
-            trace.q - centering.midpoint_rad)
+        avoidance = world.PIPELINE_SETUP.right.avoidance
+        null_gain = servo.CONTROL.null_gain_s_inv
+        limit = avoidance.limit_rad
+        zone = avoidance.zone_rad
+        signed = np.remainder(trace.q + np.pi, 2.0 * np.pi) - np.pi
+        excess = np.abs(signed) - (limit - zone)
+        qdot_null = np.where(
+            (limit > 0.0) & (excess > 0.0),
+            -null_gain * excess * np.sign(signed),
+            0.0,
+        )
         np.testing.assert_allclose(
             trace.qdot_raw, qdot_task + projector @ qdot_null,
             atol=1e-12, rtol=0.0)
@@ -296,7 +303,7 @@ class ControlTraceTest(unittest.TestCase):
             trace.qdot_raw,
             reactive_controller.solve_reactive_velocity(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
-                trace.q, centering.midpoint_rad, null_gain,
+                trace.q, avoidance.limit_rad, avoidance.zone_rad, null_gain,
                 servo.CONTROL,
             ).qdot_raw,
             atol=1e-12, rtol=0.0)
@@ -308,12 +315,12 @@ class ControlTraceTest(unittest.TestCase):
             self.pipeline, 1.0, BASE_TWIST, arms=("right",))["right"]
         expected_ctrl = np.array([
             0.2,
-            0.06769130599765076,
+            0.06685995802322126,
             2.94159265,
             -2.06892803,
             0.2,
             0.75993109,
-            1.37079633,
+            1.3707963300000001,
         ])
         expected_lead_clamped = np.array(
             [True, False, True, True, True, True, True]
@@ -418,13 +425,13 @@ class ComponentTogglesTest(unittest.TestCase):
             BASE_TWIST,
             arms=("right",),
         )["right"]
-        centering = world.PIPELINE_SETUP.right.centering
-        null_gain = centering.enabled * self.control.null_gain_s_inv
+        avoidance = world.PIPELINE_SETUP.right.avoidance
+        null_gain = self.control.null_gain_s_inv
         np.testing.assert_allclose(
             trace.qdot_raw,
             reactive_controller.solve_reactive_velocity(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
-                trace.q, centering.midpoint_rad, null_gain,
+                trace.q, avoidance.limit_rad, avoidance.zone_rad, null_gain,
                 self.control,
             ).qdot_raw,
             atol=1e-12, rtol=0.0)

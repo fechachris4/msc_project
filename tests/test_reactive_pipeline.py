@@ -29,7 +29,7 @@ class PureControlBoundaryTest(unittest.TestCase):
         world_targets = targets.world_targets()
 
         controller = reactive_controller.ReactiveController(
-            servo.CONTROL, world.PIPELINE_SETUP.right.centering)
+            servo.CONTROL, world.PIPELINE_SETUP.right.avoidance)
         expected = controller.compute(states.right, world_targets.right)
         command, traces = pipeline.step(
             states, world_targets, plant.nominal_dt_s, arms=("right",))

@@ -13,7 +13,7 @@ from controller.position_actuation import (
     PositionIntegrator,
 )
 from controller.reactive_controller import (
-    JointCentering,
+    JointLimitAvoidance,
     ReactiveController,
     SafetyVelocityProjector,
     SafetyVelocitySolve,
@@ -108,12 +108,12 @@ class DualArmControlTraces:
 class ArmPipelineSetup:
     """Fixed kinematic/actuator facts needed by one arm pipeline."""
 
-    centering: JointCentering
+    avoidance: JointLimitAvoidance
     actuation_limits: PositionActuationLimits
 
     def __post_init__(self):
-        if not isinstance(self.centering, JointCentering):
-            raise TypeError("centering must be JointCentering")
+        if not isinstance(self.avoidance, JointLimitAvoidance):
+            raise TypeError("avoidance must be JointLimitAvoidance")
         if not isinstance(self.actuation_limits, PositionActuationLimits):
             raise TypeError(
                 "actuation_limits must be PositionActuationLimits"
@@ -151,7 +151,7 @@ class ArmControlPipeline:
         if not isinstance(arm_setup, ArmPipelineSetup):
             raise TypeError("arm_setup must be an ArmPipelineSetup")
         self._controller = ReactiveController(
-            controller_config, arm_setup.centering
+            controller_config, arm_setup.avoidance
         )
         self._integrator = PositionIntegrator(
             initial_joint_position_rad,

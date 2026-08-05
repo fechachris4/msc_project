@@ -36,7 +36,7 @@
   },
   "controller_output_field": "qdot_raw",
   "csv": "reactive_current.csv",
-  "csv_sha256": "26c9ac94c5f0825a86b0706110ec7792f56e51eb1ea3e9d8ae9506cb1a7b7030",
+  "csv_sha256": "367f5ae4e7232da4c5129af1d50017005d055e7cc1a91da137a2808b0db6cf65",
   "cycles": 250,
   "dt_s": 0.002,
   "duration_s": 0.5,

@@ -30,7 +30,8 @@ def _solve_qdot(
     e_v,
     e_w,
     q,
-    q_mid,
+    joint_limit_rad,
+    joint_zone_rad,
     null_gain,
     control,
     damping=None,
@@ -42,7 +43,8 @@ def _solve_qdot(
         e_v,
         e_w,
         q,
-        q_mid,
+        joint_limit_rad,
+        joint_zone_rad,
         null_gain,
         control,
         damping=damping,
@@ -135,10 +137,13 @@ class QdotFromErrorTest(unittest.TestCase):
         e_rot = rng.uniform(-0.5, 0.5, 3)
         return J, e_pos, e_rot
 
-    # q = q_mid makes the null-space term exactly zero, and zero
-    # velocity errors make the D term exactly zero, so the DLS
-    # properties are tested on the P task term alone.
+    # An all-unbounded limit array makes the null-space term exactly
+    # zero regardless of q, and zero velocity errors make the D term
+    # exactly zero, so the DLS properties are tested on the P task
+    # term alone.
     _Q0 = np.zeros(7)
+    _LIMIT0 = np.zeros(7)
+    _ZONE0 = 0.5
     _V0 = np.zeros(3)
 
     def test_tracks_task_velocity_at_small_damping(self):
@@ -153,7 +158,7 @@ class QdotFromErrorTest(unittest.TestCase):
             ])
             qdot = _solve_qdot(
                 J, e_pos, e_rot, self._V0, self._V0,
-                self._Q0, self._Q0,
+                self._Q0, self._LIMIT0, self._ZONE0,
                 servo.CONTROL.null_gain_s_inv,
                 servo.CONTROL,
                 damping=1e-6,
@@ -172,7 +177,7 @@ class QdotFromErrorTest(unittest.TestCase):
             ])
             qdot = _solve_qdot(
                 J, e_pos, e_rot, self._V0, self._V0,
-                self._Q0, self._Q0,
+                self._Q0, self._LIMIT0, self._ZONE0,
                 servo.CONTROL.null_gain_s_inv,
                 servo.CONTROL,
                 damping=1e-9,
@@ -181,33 +186,43 @@ class QdotFromErrorTest(unittest.TestCase):
                 qdot, np.linalg.pinv(J) @ v, atol=1e-6
             )
 
-    def test_null_space_centering(self):
-        """Centering must not disturb the task and must drive the
-        centered joints toward q_mid within the null space."""
+    def test_null_space_limit_avoidance(self):
+        """The deadband push must not disturb the task, and the
+        projected push must point the same way as the raw objective
+        (P = I - J+J is a symmetric idempotent projector, so
+        objective . (P @ objective) = ||P @ objective||^2 >= 0)."""
         from controller import servo
 
         rng = np.random.default_rng(13)
-        k_vec = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0])
+        limit = np.array([0.0, 2.0, 0.0, 2.0, 0.0, 2.0, 0.0])
+        zone = 0.5
+        zero_v = np.zeros(3)
+        saw_nonzero_push = False
         for _ in range(N_SAMPLES):
             J, e_pos, e_rot = self._random_case(rng)
             q = rng.uniform(-2.0, 2.0, 7)
-            q_mid = rng.uniform(-1.0, 1.0, 7)
 
-            zero_v = np.zeros(3)
-            qdot_plain = _solve_qdot(
-                J, e_pos, e_rot, zero_v, zero_v, q_mid, q_mid,
-                k_vec, servo.CONTROL, damping=1e-6)
-            qdot_cent = _solve_qdot(
-                J, e_pos, e_rot, zero_v, zero_v, q, q_mid,
-                k_vec, servo.CONTROL, damping=1e-6)
-            null_part = qdot_cent - qdot_plain
+            solve = reactive_controller.solve_reactive_velocity(
+                J, e_pos, e_rot, zero_v, zero_v, q,
+                limit, zone, 1.0, servo.CONTROL, damping=1e-6,
+            )
 
             # (a) null motion produces no task velocity
-            np.testing.assert_allclose(J @ null_part, np.zeros(6),
-                                       atol=1e-8)
-            # (b) it points toward q_mid on the centered joints
-            drive = k_vec * (q - q_mid)
-            self.assertLess(float(drive @ null_part), 0.0)
+            np.testing.assert_allclose(
+                J @ solve.qdot_null_projected, np.zeros(6), atol=1e-8)
+            # (b) the projected push points the same way as the raw
+            # deadband objective.
+            dotted = float(
+                solve.qdot_null_objective @ solve.qdot_null_projected
+            )
+            self.assertGreaterEqual(dotted, -1e-10)
+            if np.any(solve.qdot_null_objective != 0.0):
+                saw_nonzero_push = True
+
+        self.assertTrue(
+            saw_nonzero_push,
+            "no sample entered the activation zone; test is vacuous",
+        )
 
 
 class TwistErrorTest(unittest.TestCase):
@@ -479,29 +494,29 @@ class ImmutableControllerConfigTest(unittest.TestCase):
         e_rot = rng.uniform(-0.5, 0.5, 3)
         zero_v = np.zeros(3)
         q = rng.uniform(-1.0, 1.0, 7)
-        q_mid = np.zeros(7)
+        limit = np.zeros(7)
+        zone = 0.5
 
         control_a = replace(servo.CONTROL, dls_damping=0.05)
         qdot_a = _solve_qdot(
-            J, e_pos, e_rot, zero_v, zero_v, q, q_mid,
+            J, e_pos, e_rot, zero_v, zero_v, q, limit, zone,
             control_a.null_gain_s_inv, control_a)
         control_b = replace(servo.CONTROL, dls_damping=0.2)
         qdot_b = _solve_qdot(
-            J, e_pos, e_rot, zero_v, zero_v, q, q_mid,
+            J, e_pos, e_rot, zero_v, zero_v, q, limit, zone,
             control_b.null_gain_s_inv, control_b)
         self.assertFalse(np.allclose(qdot_a, qdot_b))
 
-    def test_null_gain_vector_preserves_limited_joint_pattern(self):
-        from controller import servo
+    def test_limit_pattern_matches_bounded_joints(self):
+        """The avoidance limit array's nonzero entries must be exactly
+        the joints that actually carry a MuJoCo joint-range limit."""
         from sim import world
 
-        control = replace(servo.CONTROL, null_gain_s_inv=3.0)
         for side in world.SIDES:
-            mask = world.PIPELINE_SETUP.for_arm(side).centering.enabled
-            vec = mask * control.null_gain_s_inv
+            _, _, limited = world.jnt_range(side)
+            avoidance = world.PIPELINE_SETUP.for_arm(side).avoidance
             np.testing.assert_array_equal(
-                vec != 0.0, mask)
-            np.testing.assert_allclose(vec[mask], 3.0)
+                avoidance.limit_rad != 0.0, limited)
 
 
 if __name__ == "__main__":

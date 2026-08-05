@@ -45,6 +45,7 @@ class ReactivePoseConfig:
     kd_position: float
     kd_rotation: float
     null_gain_s_inv: float
+    limit_avoid_zone_rad: float
     dls_damping: float
     position_enabled: bool
     orientation_enabled: bool
@@ -266,6 +267,7 @@ _REACTIVE_KEYS = {
     "kd_position",
     "kd_rotation",
     "null_gain_s_inv",
+    "limit_avoid_zone_rad",
     "dls_damping",
     "position_enabled",
     "orientation_enabled",
@@ -456,6 +458,11 @@ def _parse_reactive_pose(table):
             table["null_gain_s_inv"],
             "controller.reactive_pose.null_gain_s_inv",
             nonnegative=True,
+        ),
+        limit_avoid_zone_rad=_finite_number(
+            table["limit_avoid_zone_rad"],
+            "controller.reactive_pose.limit_avoid_zone_rad",
+            positive=True,
         ),
         dls_damping=_finite_number(
             table["dls_damping"],

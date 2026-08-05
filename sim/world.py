@@ -11,7 +11,7 @@ import mujoco
 import numpy as np
 
 from controller.position_actuation import PositionActuationLimits
-from controller.reactive_controller import JointCentering
+from controller.reactive_controller import JointLimitAvoidance
 from controller.servo import ArmPipelineSetup, DualArmPipelineSetup
 from controller.state import (
     ArmJointState,
@@ -121,12 +121,15 @@ class MujocoBackend:
 
     def _arm_pipeline_setup(self, side, config):
         joint_low, joint_high, limited = self.jnt_range(side)
-        midpoint = np.zeros(7)
-        midpoint[limited] = 0.5 * (
-            joint_low[limited] + joint_high[limited])
+        limit = np.zeros(7)
+        limit[limited] = np.maximum(
+            np.abs(joint_low[limited]), np.abs(joint_high[limited])
+        )
         command_low, command_high = self._actuator_ctrl_bounds(side)
         return ArmPipelineSetup(
-            centering=JointCentering(midpoint, limited),
+            avoidance=JointLimitAvoidance(
+                limit, config.reactive_pose.limit_avoid_zone_rad
+            ),
             actuation_limits=PositionActuationLimits(
                 velocity_rad_s=np.asarray(
                     config.limits.joint_velocity_rad_s),

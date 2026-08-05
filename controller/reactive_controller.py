@@ -6,7 +6,7 @@ Read the functions below in order:
 2. world-frame twist error,
 3. proportional and derivative task twist,
 4. damped least-squares inverse kinematics,
-5. null-space joint centering,
+5. null-space joint-limit avoidance (deadband),
 6. requested joint velocity.
 7. safety-priority projection of that velocity.
 
@@ -164,7 +164,8 @@ def solve_reactive_velocity(
     e_v,
     e_w,
     joint_position_rad,
-    joint_midpoint_rad,
+    joint_limit_rad,
+    joint_zone_rad,
     null_gain_s_inv,
     config,
     damping=None,
@@ -184,13 +185,21 @@ def solve_reactive_velocity(
         task_twist,
     )
 
-    # Equation 5: joint-centering objective.
-    qdot_null_objective = (
-        -np.asarray(null_gain_s_inv)
-        * (joint_position_rad - np.asarray(joint_midpoint_rad))
+    # Equation 5: deadband joint-limit avoidance. Zero across the whole
+    # working range; a linear inward push once a bounded joint enters the
+    # activation zone [limit - zone, limit]. Unbounded joints have limit 0.
+    limit = np.asarray(joint_limit_rad, dtype=float)
+    signed = np.remainder(
+        np.asarray(joint_position_rad, dtype=float) + np.pi, 2.0 * np.pi
+    ) - np.pi
+    excess = np.abs(signed) - (limit - float(joint_zone_rad))
+    qdot_null_objective = np.where(
+        (limit > 0.0) & (excess > 0.0),
+        -np.asarray(null_gain_s_inv) * excess * np.sign(signed),
+        0.0,
     )
 
-    # Equation 6: project centering into the Jacobian null space.
+    # Equation 6: project the push into the Jacobian null space.
     qdot_null_projected = (
         np.eye(7) - np.linalg.pinv(jacobian_world) @ jacobian_world
     ) @ qdot_null_objective
@@ -463,13 +472,13 @@ def _repair_constraint_feasibility(
 class ReactiveController:
     """Pure controller policy; it has no state that persists between cycles."""
 
-    def __init__(self, config, centering):
+    def __init__(self, config, avoidance):
         if not isinstance(config, ReactivePoseConfig):
             raise TypeError("config must be a ReactivePoseConfig")
-        if not isinstance(centering, JointCentering):
-            raise TypeError("centering must be JointCentering")
+        if not isinstance(avoidance, JointLimitAvoidance):
+            raise TypeError("avoidance must be JointLimitAvoidance")
         self._config = config
-        self._centering = centering
+        self._avoidance = avoidance
 
     def compute(self, state, target):
         e_pos, e_rot = pose_error(state, target)
@@ -481,8 +490,9 @@ class ReactiveController:
             e_v,
             e_w,
             state.joints.position_rad,
-            self._centering.midpoint_rad,
-            self._centering.enabled * self._config.null_gain_s_inv,
+            self._avoidance.limit_rad,
+            self._avoidance.zone_rad,
+            self._config.null_gain_s_inv,
             self._config,
         )
         return ReactiveOutput(e_pos, e_rot, e_v, e_w, solve)
@@ -500,19 +510,19 @@ def _read_only(value):
 
 
 @dataclass(frozen=True, slots=True)
-class JointCentering:
-    midpoint_rad: np.ndarray
-    enabled: np.ndarray
+class JointLimitAvoidance:
+    limit_rad: np.ndarray  # shape (7,), 0 = unbounded joint
+    zone_rad: float
 
     def __post_init__(self):
-        midpoint = np.asarray(self.midpoint_rad, dtype=float)
-        enabled = np.asarray(self.enabled, dtype=bool)
-        if midpoint.shape != (7,) or not np.all(np.isfinite(midpoint)):
-            raise ValueError("midpoint_rad must be a finite shape-(7,) array")
-        if enabled.shape != (7,):
-            raise ValueError("enabled must be a shape-(7,) boolean array")
-        object.__setattr__(self, "midpoint_rad", _read_only(midpoint))
-        object.__setattr__(self, "enabled", _read_only(enabled))
+        limit = np.asarray(self.limit_rad, dtype=float)
+        if limit.shape != (7,) or not np.all(np.isfinite(limit)) or np.any(limit < 0.0):
+            raise ValueError("limit_rad must be a finite non-negative shape-(7,) array")
+        zone = float(self.zone_rad)
+        if not np.isfinite(zone) or zone <= 0.0:
+            raise ValueError("zone_rad must be a finite positive float")
+        object.__setattr__(self, "limit_rad", _read_only(limit))
+        object.__setattr__(self, "zone_rad", zone)
 
 
 @dataclass(frozen=True, slots=True)

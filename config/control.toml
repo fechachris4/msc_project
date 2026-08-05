@@ -18,6 +18,8 @@ kp_rotation_s_inv = 2.0
 kd_position = 0.3
 kd_rotation = 0.3
 null_gain_s_inv = 1.0
+# activation zone below each software joint limit, rad
+limit_avoid_zone_rad = 0.349
 dls_damping = 0.05
 position_enabled = true
 orientation_enabled = true
