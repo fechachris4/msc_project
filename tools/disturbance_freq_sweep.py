@@ -46,6 +46,18 @@ def fixed_amplitude_params(scale=walk_sim.GAIT_SCALE, speed=None):
     return p
 
 
+def _per_period_rms(t, series, period_s, dt=0.002):
+    """RMS over each complete pattern period; the last sample sits one step
+    before the end of the window, hence the one-step tolerance."""
+    out = []
+    k = 0
+    while (k + 1) * period_s <= t.max() + dt + 1e-9:
+        m = (t >= k * period_s) & (t < (k + 1) * period_s)
+        out.append(np.sqrt(np.mean(series[m] ** 2)))
+        k += 1
+    return np.array(out)
+
+
 def run_one(f_hz, arms):
     _fundamental_hz[0] = f_hz
     walk_sim.walk_params = fixed_amplitude_params
@@ -59,11 +71,16 @@ def run_one(f_hz, arms):
     # Worst arm. Value = RMS over the whole 8 s; *_sd = SD of the RMS of each
     # complete pattern period (2/f), n_periods of them.
     period_s = 2.0 / f_hz
-    out = dict(f_hz=f_hz, settled=int(settled), n_periods=0)
+    out = dict(f_hz=f_hz, settled=int(settled), n_periods=0,
+               saturated_pct=0.0, qdot_peak_deg_s=0.0)
     for key in ("pos", "pos_free", "rot", "rot_free"):
         out[key] = 0.0
         out[key + "_sd"] = 0.0
     for side in arms:
+        out["saturated_pct"] = max(out["saturated_pct"], 100.0 * float(np.mean(
+            walk_report._stack(rows, "speed_saturated", side)[on])))
+        out["qdot_peak_deg_s"] = max(out["qdot_peak_deg_s"], float(np.degrees(
+            walk_report._stack(rows, "qdot_max", side)[on].max())))
         series = dict(
             pos=1e3 * np.linalg.norm(
                 walk_report._stack(rows, "e_pos", side), axis=1),
@@ -75,7 +92,7 @@ def run_one(f_hz, arms):
         for key, v in series.items():
             rms = float(np.sqrt(np.mean(v[on] ** 2)))
             if rms > out[key]:
-                per = walk_report._per_stride_rms(t[on], v[on], period_s)
+                per = _per_period_rms(t[on], v[on], period_s)
                 out[key] = rms
                 out[key + "_sd"] = float(per.std(ddof=1))
                 out["n_periods"] = len(per)
@@ -113,6 +130,11 @@ def figure(rows, path):
         ax.errorbar(f, ctrl, yerr=[r[key + "_sd"] for r in rows], marker="o",
                     capsize=2, label=report_style.REACTIVE_LABEL,
                     **report_style.REACTIVE)
+        sat = np.array([r["saturated_pct"] > 0.0 for r in rows])
+        ax.plot(f[sat], ctrl[sat], linestyle="none", marker="o",
+                markerfacecolor="white", zorder=3,
+                markeredgecolor=report_style.REACTIVE["color"],
+                label="joint-speed limit reached" if sat.any() else None)
         ax.set_xlabel("mount disturbance frequency f [Hz]")
         ax.set_ylabel(f"end-effector {name}\nerror RMS [{unit}]")
         ax.set_ylim(bottom=0)
@@ -128,7 +150,8 @@ def write_report_text(rows, path):
     lin = 1e3 * p["linear_amplitude"]
     rot = np.degrees(p["rotational_amplitude"])
     md = ["| f [Hz] | position RMS [mm] | removed | orientation RMS [deg] "
-          "| removed |", "|---|---|---|---|---|"]
+          "| removed | peak joint speed [deg/s] | samples at speed limit |",
+          "|---|---|---|---|---|---|---|"]
     tex = ["\\begin{tabular}{rrrrr}", "\\toprule",
            "$f$ [Hz] & pos.\\ RMS [mm] & removed & ori.\\ RMS [deg] & "
            "removed \\\\", "\\midrule"]
@@ -136,7 +159,8 @@ def write_report_text(rows, path):
         rp = 100 * (1 - r["pos"] / r["pos_free"])
         rr = 100 * (1 - r["rot"] / r["rot_free"])
         md.append(f"| {r['f_hz']:g} | {r['pos']:.1f} | {rp:.0f}% | "
-                  f"{r['rot']:.2f} | {rr:.0f}% |")
+                  f"{r['rot']:.2f} | {rr:.0f}% | {r['qdot_peak_deg_s']:.0f} | "
+                  f"{r['saturated_pct']:.0f}% |")
         tex.append(f"{r['f_hz']:g} & {r['pos']:.1f} & {rp:.0f}\\% & "
                    f"{r['rot']:.2f} & {rr:.0f}\\% \\\\")
     tex += ["\\bottomrule", "\\end{tabular}"]
@@ -194,7 +218,9 @@ if __name__ == "__main__":
     for f_hz in freqs:
         rows.append(run_one(f_hz, walk_report.world.SIDES))
         r = rows[-1]
-        print(f"f = {f_hz:g} Hz: pos {r['pos']:.1f} / {r['pos_free']:.1f} mm, "
+        print(f"f = {f_hz:g} Hz: sat {r['saturated_pct']:.1f}%, qdot peak "
+              f"{r['qdot_peak_deg_s']:.1f} deg/s, "
+              f"pos {r['pos']:.1f} / {r['pos_free']:.1f} mm, "
               f"rot {r['rot']:.2f} / {r['rot_free']:.2f} deg "
               f"(control / none), settled {r['settled']}")
     if freqs:
