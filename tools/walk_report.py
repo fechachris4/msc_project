@@ -40,7 +40,6 @@ SETTLE_DWELL_S = 0.5
 GIF_LEAD_S = 1.0          # static torso shown before the disturbance starts
 GIF_FRAME_S = 0.04        # 25 fps
 GIF_SIZE = (640, 480)
-FILMSTRIP_CROP = (190, 130, 570, 415)   # px box around the arms in a GIF frame
 
 OI = {"x": "#D55E00", "y": "#009E73", "z": "#0072B2"}
 ARM_STYLE = {"right": dict(color="black", linestyle="-"),
@@ -407,22 +406,6 @@ def comparison_figure(results, arms, path):
     plt.close(fig)
 
 
-def filmstrip(frames_out, speed, path, start_periods=2):
-    """Static stand-in for the GIF in a PDF report: five frames a quarter
-    pattern period (2/f) apart, from the steady-state part of the run."""
-    period_s = 1.0 / walk_sim.walk_params(speed=speed)["linear_frequency"][1]
-    times = (start_periods + 0.25 * np.arange(5)) * period_s
-    fig, axes = plt.subplots(1, 5, figsize=(10, 1.85), layout="constrained")
-    for ax, t in zip(axes, times):
-        k = min(int(round((GIF_LEAD_S + t) / GIF_FRAME_S)), len(frames_out) - 1)
-        ax.imshow(frames_out[k].crop(FILMSTRIP_CROP))
-        ax.set_title(f"t = {t:.2f} s", fontsize=9)
-        ax.axis("off")
-    fig.savefig(path, dpi=300)
-    fig.savefig(Path(path).with_suffix(".pdf"))
-    plt.close(fig)
-
-
 def _report_one(arms, scale, speed, record_gif):
     print(walk_sim.describe(scale, speed))
     tag = f"v{speed:g}" + (f"_scale{scale:g}" if scale != 1.0 else "")
@@ -437,8 +420,6 @@ def _report_one(arms, scale, speed, record_gif):
             append_images=frames_out[1:],
             duration=int(1000 * GIF_FRAME_S), loop=0, optimize=True)
         print(f"gif: {len(frames_out)} frames -> {OUT / f'disturbance_{tag}.gif'}")
-    if frames_out:
-        filmstrip(frames_out, speed, OUT / f"disturbance_filmstrip_{tag}.png")
     for side, s in summary.items():
         print(f"{side:5s} controlled |e| RMS {s['rms']:.1f} mm, peak "
               f"{s['peak']:.1f} mm | rigid RMS {s['rigid_rms']:.1f} mm, "
