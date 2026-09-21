@@ -81,10 +81,12 @@ def compare_one_speed(arms, scale, speed, record_gif):
         rows = results[name]
         e = 1e3 * np.linalg.norm(_stack(rows, "e_pos", side), axis=1)
         e_rot = np.degrees(np.linalg.norm(_stack(rows, "e_rot", side), axis=1))
+        label = ("reactive control only" if name == "baseline"
+                 else "reactive control + mount-velocity feedforward")
+        rms = np.sqrt(np.mean(e[walking] ** 2))
         axes[0].plot(t, e, color=color, linestyle=style, linewidth=1.5,
-                     label=name)
-        axes[1].plot(t, e_rot, color=color, linestyle=style, linewidth=1.5,
-                     label=name)
+                     label=f"{label} ({rms:.1f} mm RMS)")
+        axes[1].plot(t, e_rot, color=color, linestyle=style, linewidth=1.5)
         summary[name] = dict(
             rms=np.sqrt(np.mean(e[walking] ** 2)),
             peak=e[walking].max(),
@@ -93,7 +95,7 @@ def compare_one_speed(arms, scale, speed, record_gif):
     axes[0].set_ylabel(f"{side} EE position error [mm]")
     axes[0].set_ylim(bottom=0)
     axes[0].legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2,
-                   frameon=False)
+                   frameon=False, fontsize=9)
     axes[1].set_ylabel(f"{side} EE orientation error [deg]")
     axes[1].set_ylim(bottom=0)
     axes[1].set_xlabel("time since disturbance onset [s]")
@@ -104,10 +106,9 @@ def compare_one_speed(arms, scale, speed, record_gif):
     ff_rms = summary["velocity_feedforward"]["rms"]
     change = 100.0 * (1.0 - ff_rms / base_rms) if base_rms else 0.0
     fig.suptitle(
-        f"Level {walk_sim.level_label(speed)}: mount-disturbance feedforward changes "
-        f"{side} RMS position error {base_rms:.1f} -> {ff_rms:.1f} mm "
-        f"({change:+.0f}%)"
-    )
+        f"Knowing the mount velocity removes {change:.0f}% of the remaining "
+        f"position error\n(mount disturbance {walk_sim.level_label(speed)}, "
+        f"{side} arm, world-fixed target)", fontsize=10.5)
     path = OUT / f"disturbance_ff_compare_{tag}.png"
     fig.savefig(path, dpi=200)
     plt.close(fig)

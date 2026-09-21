@@ -134,6 +134,55 @@ def figure(rows, path):
     plt.close(fig)
 
 
+
+def write_report_text(rows, path):
+    """Markdown table, LaTeX tabular and caption for the report."""
+    p = _table_params(speed=AMPLITUDE_KEY)
+    lin = 1e3 * p["linear_amplitude"]
+    rot = np.degrees(p["rotational_amplitude"])
+    md = ["| f [Hz] | position RMS [mm] | removed | orientation RMS [deg] "
+          "| removed |", "|---|---|---|---|---|"]
+    tex = ["\\begin{tabular}{rrrrr}", "\\toprule",
+           "$f$ [Hz] & pos.\\ RMS [mm] & removed & ori.\\ RMS [deg] & "
+           "removed \\\\", "\\midrule"]
+    for r in rows:
+        rp = 100 * (1 - r["pos"] / r["pos_free"])
+        rr = 100 * (1 - r["rot"] / r["rot_free"])
+        md.append(f"| {r['f_hz']:g} | {r['pos']:.1f} | {rp:.0f}% | "
+                  f"{r['rot']:.2f} | {rr:.0f}% |")
+        tex.append(f"{r['f_hz']:g} & {r['pos']:.1f} & {rp:.0f}\\% & "
+                   f"{r['rot']:.2f} & {rr:.0f}\\% \\\\")
+    tex += ["\\bottomrule", "\\end{tabular}"]
+    free = rows[0]
+    text = [
+        "# Disturbance frequency sweep", "",
+        "## Disturbance definition (identical in every run)", "",
+        "Each mount axis follows A sin(2 pi f_axis t) about the rest pose; "
+        "no net translation. Only f changes between runs.", "",
+        "| axis | amplitude | frequency |", "|---|---|---|",
+        f"| x (forward) | {lin[0]:g} mm | f |",
+        f"| y (left) | {lin[1]:g} mm | f/2 |",
+        f"| z (up) | {lin[2]:g} mm | f |",
+        f"| roll | {rot[0]:g} deg | f/2 |",
+        f"| pitch | {rot[1]:g} deg | f |",
+        f"| yaw | {rot[2]:g} deg | f/2 |", "",
+        f"With no control (arm rigid on the mount) this gives "
+        f"{free['pos_free']:.1f} mm position and {free['rot_free']:.2f} deg "
+        "orientation error RMS at the end-effector, at every frequency.", "",
+        "## Results (worst arm, RMS over 8 s after onset)", "", *md, "",
+        "## LaTeX", "", "```latex", *tex, "```", "",
+        "## Caption", "",
+        "Reactive disturbance rejection against mount disturbance frequency. "
+        "The same scripted six-axis mount motion is applied in every run and "
+        "only its frequency f is varied (top: slowest and fastest run, "
+        "vertical axis). Bottom: end-effector position and orientation error "
+        "RMS over 8 s with the arm rigid on the mount (no control, dashed) and "
+        "with the reactive controller (solid); labels give the share of the "
+        "uncontrolled error removed. Worst of the two arms is shown; the "
+        "world-frame target is fixed. Residual error grows with frequency "
+        "because the controller acts only after error appears.", ""]
+    Path(path).write_text("\n".join(text))
+
 if __name__ == "__main__":
     freqs = FREQS_HZ
     for a in sys.argv[1:]:
@@ -159,4 +208,5 @@ if __name__ == "__main__":
             w.writeheader()
             w.writerows(rows)
     figure(rows, OUT / "freq_sweep.png")
+    write_report_text(rows, OUT / "freq_sweep_report.md")
     print(f"figure: {OUT / 'freq_sweep.png'}")

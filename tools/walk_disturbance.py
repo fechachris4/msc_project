@@ -74,7 +74,7 @@ def write_table(rows, path):
         rot = ", ".join(f"{a:.1f}° ({f:.2g} Hz)"
                         for a, f in zip(r["amp_deg"], r["rot_hz"]))
         lines.append(
-            f"| {walk_sim.LEVEL_NAMES.get(r['speed'], r['speed'])} | {r['step_hz']:.2g} / {r['stride_hz']:.2g} Hz "
+            f"| {f"key {r['speed']:g}"} | {r['step_hz']:.2g} / {r['stride_hz']:.2g} Hz "
             f"| {lin} | {rot} | {r['peak_disp']:.0f} mm | "
             f"{r['peak_v']:.2f} m/s | {r['peak_w']:.0f} °/s |")
     lines += [
@@ -101,7 +101,7 @@ def figure(speeds, path):
                 ("x (forward)", "y (left)", "z (up)"), AXIS_STYLE)):
             ax.plot(stride, 1e3 * d[:, i], color=col, linestyle=ls,
                     linewidth=1.5, label=lab)
-        ax.set_title(f"level {walk_sim.LEVEL_NAMES.get(speed, speed)}\n"
+        ax.set_title(f"table key {speed:g}\n"
                      f"f = {p['linear_frequency'][0]:.2g} Hz, "
                      f"f/2 = {p['linear_frequency'][1]:.2g} Hz", fontsize=9.5)
         axes[1, j].plot(stride, np.linalg.norm(v, axis=1), color="black",

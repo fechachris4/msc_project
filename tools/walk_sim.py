@@ -4,8 +4,9 @@ Disturbance model: each mount axis is A*sin(2*pi*f*t), at either a
 fundamental frequency f or its sub-harmonic f/2; no net translation. This is
 NOT a gait simulation and claims no biomechanical validity: amplitudes and
 frequencies are hand-chosen (_SPEED_TABLE) to give three reproducible
-disturbance levels of increasing severity. Reports label them L1/L2/L3 via
-level_label(); --speed= is only the legacy key into that table. --scale=
+disturbance conditions. Report figures hold the key-1.0 amplitudes fixed and
+vary only frequency (tools/disturbance_freq_sweep.py); --speed= is only the
+legacy key into that table. --scale=
 exaggerates the amplitudes for on-screen visibility only. Frame: torso home
 is identity, so x = forward, y = left, z = up.
 
@@ -63,14 +64,12 @@ def walk_params(scale=GAIT_SCALE, speed=DEFAULT_SPEED_M_S):
     )
 
 
-LEVEL_NAMES = {0.5: "L1", 1.0: "L2", 1.5: "L3"}
-
-
 def level_label(speed):
-    """Report-facing name of a disturbance level, e.g. 'L2 (f = 1.8 Hz)'."""
+    """Report-facing name of a disturbance condition: its frequency only.
+    Report figures use the key-1.0 amplitude row (see
+    tools/disturbance_freq_sweep.py); other keys also change amplitude."""
     f = walk_params(speed=speed)["linear_frequency"][0]
-    name = LEVEL_NAMES.get(speed)
-    return f"{name} (f = {f:.2g} Hz)" if name else f"f = {f:.2g} Hz"
+    return f"f = {f:.2g} Hz"
 
 
 def torso_pose_at(t, scale=GAIT_SCALE, speed=DEFAULT_SPEED_M_S):

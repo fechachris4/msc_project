@@ -398,11 +398,10 @@ def comparison_figure(results, arms, path):
                           "per-period mean $\\pm$ SD")
     ax_rot_rms.legend(loc="upper left", frameon=False)
     for ax in (ax_rms, ax_rot_rms):
-        ax.set_xlabel("disturbance level (fundamental frequency)")
+        ax.set_xlabel("disturbance condition")
         ax.set_ylim(bottom=0)
         ax.set_xticks(speeds)
-        ax.set_xticklabels([walk_sim.level_label(v).replace(" (", "\n(")
-                            for v in speeds])
+        ax.set_xticklabels([walk_sim.level_label(v) for v in speeds])
     fig.savefig(path, dpi=200)
     fig.savefig(Path(path).with_suffix(".pdf"))
     plt.close(fig)
