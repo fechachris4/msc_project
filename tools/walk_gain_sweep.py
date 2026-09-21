@@ -265,11 +265,11 @@ def qdot_curves(rows, speed, path):
                 color=cmap(i / max(1, len(KD_POS_GRID) - 1)),
                 label=f"$K_d$ = {kd:g}")
     ax.axhline(HW_QDOT_CAP_DEG_S, color="red", linewidth=1.2,
-               label=f"robot clip as configured now, {HW_QDOT_CAP_DEG_S:g} deg/s")
+               label=f"development reference, {HW_QDOT_CAP_DEG_S:g} deg/s")
     ax.axhline(SIM_QDOT_CAP_DEG_S[0], color="red", linewidth=0.8,
                linestyle="--",
-               label=f"Gen3 limits {SIM_QDOT_CAP_DEG_S[1]:g} / "
-                     f"{SIM_QDOT_CAP_DEG_S[0]:g} deg/s (sim clip; rig runs 79.2)")
+               label=f"actuator limits {SIM_QDOT_CAP_DEG_S[1]:g} / "
+                     f"{SIM_QDOT_CAP_DEG_S[0]:g} deg/s")
     ax.axhline(SIM_QDOT_CAP_DEG_S[1], color="red", linewidth=0.8,
                linestyle="--")
     ax.set_xscale("log")
