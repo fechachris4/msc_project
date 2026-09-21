@@ -27,6 +27,7 @@ import numpy as np  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import report_style  # noqa: E402
 import walk_report  # noqa: E402
 import walk_sim  # noqa: E402
 from controller import servo  # noqa: E402
@@ -34,8 +35,9 @@ from sim import world  # noqa: E402
 
 OUT = Path("analysis/output/disturbance")
 VARIANTS = (
-    ("baseline", False, "0.35", "-"),
-    ("velocity_feedforward", True, "black", "-"),
+    ("baseline", False, report_style.REACTIVE, report_style.REACTIVE_LABEL),
+    ("velocity_feedforward", True, report_style.FEEDFORWARD,
+     report_style.FEEDFORWARD_LABEL),
 )
 
 
@@ -62,7 +64,7 @@ def compare_one_speed(arms, scale, speed, record_gif):
     print(walk_sim.describe(scale, speed))
     tag = f"v{speed:g}" + (f"_scale{scale:g}" if scale != 1.0 else "")
     results = {}
-    for name, enabled, color, style in VARIANTS:
+    for name, enabled, style, label in VARIANTS:
         settled, settle_s, rows, frames_out = _run_variant(
             arms, scale, speed, enabled, record_gif)
         print(f"  [{name}] settled: {settled} after {settle_s:.2f} s")
@@ -74,29 +76,27 @@ def compare_one_speed(arms, scale, speed, record_gif):
     t = np.array([r["t"] for r in results["baseline"]])
     walking = t >= 0.0
 
-    fig, axes = plt.subplots(2, 1, sharex=True, figsize=(8, 6),
+    report_style.apply()
+    fig, axes = plt.subplots(2, 1, sharex=True,
+                             figsize=(report_style.FULL_WIDTH_IN, 4.2),
                              layout="constrained")
     summary = {}
-    for name, enabled, color, style in VARIANTS:
+    for name, enabled, style, label in VARIANTS:
         rows = results[name]
         e = 1e3 * np.linalg.norm(_stack(rows, "e_pos", side), axis=1)
         e_rot = np.degrees(np.linalg.norm(_stack(rows, "e_rot", side), axis=1))
-        label = ("reactive control only" if name == "baseline"
-                 else "reactive control + mount-velocity feedforward")
-        rms = np.sqrt(np.mean(e[walking] ** 2))
-        axes[0].plot(t, e, color=color, linestyle=style, linewidth=1.5,
-                     label=f"{label} ({rms:.1f} mm RMS)")
-        axes[1].plot(t, e_rot, color=color, linestyle=style, linewidth=1.5)
+        axes[0].plot(t, e, label=label, **style)
+        axes[1].plot(t, e_rot, **style)
         summary[name] = dict(
             rms=np.sqrt(np.mean(e[walking] ** 2)),
             peak=e[walking].max(),
             rot_rms=np.sqrt(np.mean(e_rot[walking] ** 2)),
         )
-    axes[0].set_ylabel(f"{side} EE position error [mm]")
+    axes[0].set_ylabel("end-effector position\nerror [mm]")
     axes[0].set_ylim(bottom=0)
-    axes[0].legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2,
-                   frameon=False, fontsize=9)
-    axes[1].set_ylabel(f"{side} EE orientation error [deg]")
+    axes[0].legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2)
+    report_style.panel_letters(axes, x=-0.1)
+    axes[1].set_ylabel("end-effector orientation\nerror [deg]")
     axes[1].set_ylim(bottom=0)
     axes[1].set_xlabel("time since disturbance onset [s]")
     for ax in axes:
@@ -105,13 +105,10 @@ def compare_one_speed(arms, scale, speed, record_gif):
     base_rms = summary["baseline"]["rms"]
     ff_rms = summary["velocity_feedforward"]["rms"]
     change = 100.0 * (1.0 - ff_rms / base_rms) if base_rms else 0.0
-    fig.suptitle(
-        f"Knowing the mount velocity removes {change:.0f}% of the remaining "
-        f"position error\n(mount disturbance {walk_sim.level_label(speed)}, "
-        f"{side} arm, world-fixed target)", fontsize=10.5)
     path = OUT / f"disturbance_ff_compare_{tag}.png"
-    fig.savefig(path, dpi=200)
-    plt.close(fig)
+    report_style.save(fig, path)
+    print(f"  caption facts: {side} arm, {walk_sim.level_label(speed)}, position "
+          f"RMS {base_rms:.1f} -> {ff_rms:.1f} mm ({change:.0f}% lower)")
     print(f"  baseline  |e| RMS {summary['baseline']['rms']:.1f} mm, peak "
           f"{summary['baseline']['peak']:.1f} mm, rot RMS "
           f"{summary['baseline']['rot_rms']:.2f} deg")

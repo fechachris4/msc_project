@@ -131,7 +131,10 @@ def heatmaps(rows, speed, path):
               ("rot_rms_deg", "orientation error RMS [deg]", "viridis_r"),
               ("qdot_max_deg_s", "peak commanded joint speed [deg/s]",
                "magma_r")]
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.2), layout="constrained")
+    import report_style
+    report_style.apply()
+    fig, axes = plt.subplots(3, 1, figsize=(report_style.FULL_WIDTH_IN, 6.6),
+                             layout="constrained")
     settled = grid(rows, "settled")
     for ax, (key, label, cmap) in zip(axes, panels):
         table = grid(rows, key)
@@ -142,8 +145,7 @@ def heatmaps(rows, speed, path):
                       [f"{v:g}" for v in KD_POS_GRID])
         ax.set_xlabel("Kp position [1/s]")
         ax.set_ylabel("Kd position [-]")
-        ax.set_title(label, fontsize=10)
-        fig.colorbar(im, ax=ax, shrink=0.85)
+        fig.colorbar(im, ax=ax, shrink=0.9, label=label)
         for i in range(len(KD_POS_GRID)):
             for j in range(len(KP_POS_GRID)):
                 v = table[i, j]
@@ -157,13 +159,11 @@ def heatmaps(rows, speed, path):
                         else "black")
     best = min((r for r in rows if r["settled"]),
                key=lambda r: r["pos_rms_mm"])
-    fig.suptitle(
-        f"Reactive gains under disturbance {_level(speed)}: best position RMS "
-        f"{best['pos_rms_mm']:.1f} mm at Kp={best['kp_pos']:g}, "
-        f"Kd={best['kd_pos']:g}  (* = did not settle before disturbance onset)")
-    fig.savefig(path, dpi=200)
-    fig.savefig(Path(path).with_suffix(".pdf"))
-    plt.close(fig)
+    report_style.panel_letters(axes, x=-0.06)
+    print(f"caption facts: disturbance {_level(speed)}; best position RMS "
+          f"{best['pos_rms_mm']:.1f} mm at Kp={best['kp_pos']:g}, "
+          f"Kd={best['kd_pos']:g}; * = did not settle before disturbance onset")
+    report_style.save(fig, path)
     return best
 
 
@@ -185,7 +185,10 @@ def _conditions(speed):
 def kp_curves(rows, speed, path):
     import walk_sim
     p = walk_sim.walk_params(speed=speed)
-    fig, ax = plt.subplots(figsize=(8, 5), layout="constrained")
+    import report_style
+    report_style.apply()
+    fig, ax = plt.subplots(figsize=(report_style.FULL_WIDTH_IN, 3.9),
+                           layout="constrained")
     cmap = plt.get_cmap("viridis")
     for i, kd in enumerate(KD_POS_GRID):
         pts = sorted((r["kp_pos"], r["pos_rms_mm"], r["settled"])
@@ -231,26 +234,27 @@ def kp_curves(rows, speed, path):
                 label=("lag model $(1+K_d)\\,\\dot e + K_p e = -v_{mount}(EE)$"
                        ", dashed per $K_d$") if i == 0 else None)
     rigid_rms = max(r["rigid_rms_mm"] for r in rows)
-    ax.axhline(rigid_rms, color="red", linewidth=0.8, linestyle=":",
-               label=f"rigid arm, EE fixed to mount ({rigid_rms:.0f} mm RMS)")
+    ax.axhline(rigid_rms, label=report_style.NO_CONTROL_LABEL,
+               **report_style.NO_CONTROL)
     ax.set_xscale("log")
     ax.set_xticks(KP_POS_GRID, [f"{v:g}" for v in KP_POS_GRID])
     ax.minorticks_off()
     ax.set_xlabel("position gain $K_p$ [1/s]  (log scale)")
-    ax.set_ylabel("EE position error RMS over 8 s disturbance,\n"
-                  "worse of the two arms [mm]")
-    ax.set_ylim(0, 1.12 * rigid_rms)
-    ax.legend(frameon=False, fontsize=9, title=_conditions(speed),
-              title_fontsize=8.5, alignment="left", loc="upper right")
-    fig.savefig(path, dpi=200)
-    fig.savefig(Path(path).with_suffix(".pdf"))
+    ax.set_ylabel("end-effector position\nerror RMS [mm]")
+    ax.set_ylim(0, 1.5 * rigid_rms)
+    ax.legend(loc="upper right", fontsize=7.5, ncol=2)
+    print("caption facts: " + _conditions(speed).replace("\n", "; "))
+    report_style.save(fig, path)
     plt.close(fig)
 
 
 def qdot_curves(rows, speed, path):
     """Steady-state peak commanded joint speed vs Kp, per Kd, against the
     robot and simulation joint-speed caps."""
-    fig, ax = plt.subplots(figsize=(8, 5.8), layout="constrained")
+    import report_style
+    report_style.apply()
+    fig, ax = plt.subplots(figsize=(report_style.FULL_WIDTH_IN, 4.4),
+                           layout="constrained")
     cmap = plt.get_cmap("viridis")
     for i, kd in enumerate(KD_POS_GRID):
         pts = sorted((r["kp_pos"], r["qdot_max_deg_s"])
@@ -275,10 +279,9 @@ def qdot_curves(rows, speed, path):
     ax.set_ylabel("peak commanded joint speed [deg/s]\n"
                   f"(max over joints and arms, t > {ONSET_S:g} s)")
     ax.set_ylim(bottom=0)
-    ax.legend(frameon=False, fontsize=8.5, ncol=3, loc="upper center",
-              bbox_to_anchor=(0.5, -0.14))
-    fig.savefig(path, dpi=200)
-    fig.savefig(Path(path).with_suffix(".pdf"))
+    ax.legend(fontsize=7.5, ncol=2, loc="upper center",
+              bbox_to_anchor=(0.5, -0.17))
+    report_style.save(fig, path)
     plt.close(fig)
 
 

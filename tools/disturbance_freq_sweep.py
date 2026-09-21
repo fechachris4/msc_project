@@ -26,14 +26,13 @@ import numpy as np  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import report_style  # noqa: E402
 import walk_report  # noqa: E402
 import walk_sim  # noqa: E402
 
 OUT = Path("analysis/output/disturbance")
 AMPLITUDE_KEY = 1.0        # table row whose amplitudes are held fixed
 FREQS_HZ = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]   # add 1.8 to re-check vs --speed=1.0
-NO_CONTROL = "#D55E00"
-REACTIVE = "#0072B2"
 
 _table_params = walk_sim.walk_params
 _fundamental_hz = [None]
@@ -57,82 +56,70 @@ def run_one(f_hz, arms):
         walk_sim.walk_params = _table_params
     t = walk_report._stack(rows, "t")
     on = t >= 0.0
-    out = dict(f_hz=f_hz, settled=int(settled), pos=0.0, pos_free=0.0,
-               rot=0.0, rot_free=0.0)
-    for side in arms:     # report the worst arm
-        rms = lambda v: float(np.sqrt(np.mean(v[on] ** 2)))  # noqa: E731
-        out["pos"] = max(out["pos"], rms(1e3 * np.linalg.norm(
-            walk_report._stack(rows, "e_pos", side), axis=1)))
-        out["pos_free"] = max(out["pos_free"], rms(1e3 * np.linalg.norm(
-            walk_report._stack(rows, "rigid_err", side), axis=1)))
-        out["rot"] = max(out["rot"], rms(np.degrees(np.linalg.norm(
-            walk_report._stack(rows, "e_rot", side), axis=1))))
-        out["rot_free"] = max(out["rot_free"], rms(np.degrees(
-            walk_report._stack(rows, "rigid_rot_err", side))))
+    # Worst arm. Value = RMS over the whole 8 s; *_sd = SD of the RMS of each
+    # complete pattern period (2/f), n_periods of them.
+    period_s = 2.0 / f_hz
+    out = dict(f_hz=f_hz, settled=int(settled), n_periods=0)
+    for key in ("pos", "pos_free", "rot", "rot_free"):
+        out[key] = 0.0
+        out[key + "_sd"] = 0.0
+    for side in arms:
+        series = dict(
+            pos=1e3 * np.linalg.norm(
+                walk_report._stack(rows, "e_pos", side), axis=1),
+            pos_free=1e3 * np.linalg.norm(
+                walk_report._stack(rows, "rigid_err", side), axis=1),
+            rot=np.degrees(np.linalg.norm(
+                walk_report._stack(rows, "e_rot", side), axis=1)),
+            rot_free=np.degrees(walk_report._stack(rows, "rigid_rot_err", side)))
+        for key, v in series.items():
+            rms = float(np.sqrt(np.mean(v[on] ** 2)))
+            if rms > out[key]:
+                per = walk_report._per_stride_rms(t[on], v[on], period_s)
+                out[key] = rms
+                out[key + "_sd"] = float(per.std(ddof=1))
+                out["n_periods"] = len(per)
     return out
 
 
 def figure(rows, path):
+    """(a) what varies between runs; (b, c) error RMS against frequency.
+    No title: the caption is in freq_sweep_report.md."""
+    report_style.apply()
     f = np.array([r["f_hz"] for r in rows])
-    p = _table_params(speed=AMPLITUDE_KEY)
-    amp = (f"same motion size in every run: "
-           f"{1e3 * p['linear_amplitude'].max():.0f} mm, "
-           f"{np.degrees(p['rotational_amplitude']).max():.0f}° peak per axis")
-    fig = plt.figure(figsize=(9, 6.2), layout="constrained")
-    grid = fig.add_gridspec(2, 2, height_ratios=[1, 1.9])
+    fig = plt.figure(figsize=(report_style.FULL_WIDTH_IN, 4.6),
+                     layout="constrained")
+    grid = fig.add_gridspec(2, 2, height_ratios=[1, 1.7])
     ax_how = fig.add_subplot(grid[0, :])
     axes = [fig.add_subplot(grid[1, 0]), fig.add_subplot(grid[1, 1])]
-    # How the runs differ: same mount motion, played slower or faster.
     ts = np.linspace(0.0, 2.0, 600)
-    for f_hz, col, ls in ((f.min(), "0.55", "-"), (f.max(), "black", "-")):
+    for f_hz, col in ((f.min(), "0.6"), (f.max(), "black")):
         _fundamental_hz[0] = f_hz
         walk_sim.walk_params = fixed_amplitude_params
         z = [walk_sim.torso_pose_at(s, speed=AMPLITUDE_KEY)[0][2] for s in ts]
         walk_sim.walk_params = _table_params
-        ax_how.plot(ts, 1e3 * (np.array(z) - z[0]), color=col, linestyle=ls,
-                    linewidth=1.5, label=f"f = {f_hz:g} Hz")
-    ax_how.set_xlabel("time [s]   (vertical axis shown as the example; "
-                      "the other five axes are sped up the same way)")
+        ax_how.plot(ts, 1e3 * (np.array(z) - z[0]), color=col, linewidth=1.4,
+                    label=f"f = {f_hz:g} Hz")
+    ax_how.set_xlabel("time [s]")
     ax_how.set_ylabel("mount vertical\ndisplacement [mm]")
-    ax_how.set_title("What changes between runs: the mount moves the same "
-                     "distance, only faster", fontsize=9.5, loc="left")
-    ax_how.legend(loc="lower right", bbox_to_anchor=(1.0, 1.08), ncol=2,
-                  frameon=False, fontsize=9, title="slowest and fastest run",
-                  title_fontsize=8.5)
-    ax_how.spines[["top", "right"]].set_visible(False)
+    ax_how.legend(loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2)
     for ax, key, unit, name in ((axes[0], "pos", "mm", "position"),
                                 (axes[1], "rot", "deg", "orientation")):
         free = np.array([r[key + "_free"] for r in rows])
         ctrl = np.array([r[key] for r in rows])
-        ax.plot(f, free, color=NO_CONTROL, linestyle="--", marker="s",
-                linewidth=1.5, label="no control (arm rigid on mount)")
-        ax.plot(f, ctrl, color=REACTIVE, marker="o", linewidth=1.8,
-                label="reactive control")
-        ax.fill_between(f, ctrl, free, color=REACTIVE, alpha=0.10,
-                        linewidth=0)
-        for x, c, u in zip(f, ctrl, free):
-            ax.annotate(f"{100 * (1 - c / u):.0f}%", (x, c),
-                        textcoords="offset points", xytext=(0, 7),
-                        ha="center", fontsize=8, color=REACTIVE)
+        ax.errorbar(f, free, yerr=[r[key + "_free_sd"] for r in rows],
+                    marker="s", capsize=2, label=report_style.NO_CONTROL_LABEL,
+                    **report_style.NO_CONTROL)
+        ax.errorbar(f, ctrl, yerr=[r[key + "_sd"] for r in rows], marker="o",
+                    capsize=2, label=report_style.REACTIVE_LABEL,
+                    **report_style.REACTIVE)
         ax.set_xlabel("mount disturbance frequency f [Hz]")
-        ax.set_ylabel(f"end-effector {name} error, RMS [{unit}]")
+        ax.set_ylabel(f"end-effector {name}\nerror RMS [{unit}]")
         ax.set_ylim(bottom=0)
         ax.set_xticks(f)
-        ax.spines[["top", "right"]].set_visible(False)
-    axes[0].legend(loc="center left", frameon=False, fontsize=9,
-                   title="% = share of the error removed by control",
-                   title_fontsize=8.5, alignment="left")
-    axes[0].set_title("Result: the faster the mount moves, the more error "
-                      "is left over", fontsize=9.5, loc="left")
-    fig.suptitle(f"Every run uses the same mount motion (up to "
-                 f"{1e3 * p['linear_amplitude'].max():.0f} mm and "
-                 f"{np.degrees(p['rotational_amplitude']).max():.0f}\u00b0 "
-                 "per axis); only its frequency f changes",
-                 fontsize=9, color="0.3", x=0.01, ha="left")
-    fig.savefig(path, dpi=200)
-    fig.savefig(Path(path).with_suffix(".pdf"))
-    plt.close(fig)
-
+    axes[0].legend(loc="center left")
+    report_style.panel_letters([ax_how] + axes, x=-0.09)
+    report_style.save(fig, path)
 
 
 def write_report_text(rows, path):
@@ -174,13 +161,21 @@ def write_report_text(rows, path):
         "## Caption", "",
         "Reactive disturbance rejection against mount disturbance frequency. "
         "The same scripted six-axis mount motion is applied in every run and "
-        "only its frequency f is varied (top: slowest and fastest run, "
-        "vertical axis). Bottom: end-effector position and orientation error "
-        "RMS over 8 s with the arm rigid on the mount (no control, dashed) and "
-        "with the reactive controller (solid); labels give the share of the "
-        "uncontrolled error removed. Worst of the two arms is shown; the "
-        "world-frame target is fixed. Residual error grows with frequency "
-        "because the controller acts only after error appears.", ""]
+        "only its frequency f is varied. (a) Vertical mount displacement in "
+        "the slowest and fastest run; the other five axes are sped up in the "
+        "same way. (b) End-effector position and (c) orientation error, RMS "
+        "over 8 s after disturbance onset, with the arm rigid on the mount "
+        "(no control) and with the reactive controller; worst of the two "
+        "arms, world-frame target fixed. Error bars: SD of the per-period "
+        f"RMS over the n = {int(min(r['n_periods'] for r in rows))} to "
+        f"{int(max(r['n_periods'] for r in rows))} complete pattern periods "
+        "(2/f) in each run; the simulation is deterministic, so they show "
+        "period-to-period variation including the onset period. The "
+        "controller removes "
+        f"{100 * (1 - rows[0]['pos'] / rows[0]['pos_free']):.0f}% of the "
+        f"position error at {rows[0]['f_hz']:g} Hz but only "
+        f"{100 * (1 - rows[-1]['pos'] / rows[-1]['pos_free']):.0f}% at "
+        f"{rows[-1]['f_hz']:g} Hz.", ""]
     Path(path).write_text("\n".join(text))
 
 if __name__ == "__main__":

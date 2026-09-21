@@ -25,6 +25,7 @@ from PIL import Image  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import report_style  # noqa: E402
 import walk_sim  # noqa: E402
 from controller import desired_pos, frames, reactive_controller  # noqa: E402
 from controller.runner import ReactivePositionRunner  # noqa: E402
@@ -216,7 +217,9 @@ def figure(rows, arms, path, speed):
     walking = t >= 0.0
     torso_mm = 1e3 * _stack(rows, "torso_dx")
     torso_deg = np.degrees(_stack(rows, "torso_rpy"))
-    fig, axes = plt.subplots(4, 1, sharex=True, figsize=(9, 10),
+    report_style.apply()
+    fig, axes = plt.subplots(4, 1, sharex=True,
+                             figsize=(report_style.FULL_WIDTH_IN, 7.0),
                              layout="constrained")
     ax = axes[0]
     for i, (name, col) in enumerate(OI.items()):
@@ -259,6 +262,7 @@ def figure(rows, arms, path, speed):
     for ax in axes:
         ax.axvline(0.0, color="0.6", linewidth=0.8, linestyle=":")
         ax.axhline(0.0, color="0.7", linewidth=0.5, zorder=0)
+    report_style.panel_letters(axes, x=-0.07)
     worst = max(summary.values(), key=lambda s: s["rms"])
     reduction = 100.0 * (1.0 - worst["rms"] / worst["rigid_rms"])
     fig.savefig(path, dpi=200)
