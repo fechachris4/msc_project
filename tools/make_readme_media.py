@@ -4,7 +4,7 @@ Same scripted six-axis mount disturbance as disturbance_freq_sweep.py at
 F_HZ, unscaled amplitudes. The controlled runs are recorded as MuJoCo states
 and re-rendered; the locked panel replays the same mount motion with the
 joints frozen at their settled pose (the no-control counterfactual). The
-error readout is the worse of the two arms.
+readout is the running RMS of the worse arm's position error since onset.
 
 Outputs: media/hold_pose.gif, media/hold_pose.mp4
 
@@ -28,16 +28,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import disturbance_freq_sweep as sweep  # noqa: E402
 import report_style  # noqa: E402
-import walk_report  # noqa: E402
-import walk_sim  # noqa: E402
+import disturbance_run  # noqa: E402
+import mount_disturbance  # noqa: E402
 from controller import servo  # noqa: E402
 from sim import world  # noqa: E402
 
 OUT = Path("media")
-PANEL = (420, 300)          # w, h of each wide render
-CLOSE = (420, 170)          # w, h of the close-up on the left target
-SHOW_S = 3.0                # disturbed time shown after onset
-LEAD_S = 0.4                # static mount shown before onset
+PANEL = (320, 150)          # w, h of each wide (context) render
+CLOSE = (320, 200)          # w, h of the close-up on the left target
+SHOW_S = 2.3                # two pattern periods at 1.8 Hz
+LEAD_S = 0.3                # static mount shown before onset
 FPS = 25
 BG = (24, 26, 32)
 FG = (230, 230, 230)
@@ -50,7 +50,7 @@ FONT_BOLD = Path(matplotlib.get_data_path()) / "fonts/ttf/DejaVuSans-Bold.ttf"
 
 
 class _StateRecorder:
-    """Stands in for mujoco.Renderer inside walk_report.run: keeps states."""
+    """Stands in for mujoco.Renderer inside disturbance_run.run: keeps states."""
 
     snapshots = []
 
@@ -75,7 +75,7 @@ def record(ff_enabled):
     _StateRecorder.snapshots = []
     mujoco.Renderer = _StateRecorder
     try:
-        settled, _, rows, _ = walk_report.run(
+        settled, _, rows, _ = disturbance_run.run(
             world.SIDES, 1.0, sweep.AMPLITUDE_KEY, record_gif=True,
             controller_config=config)
     finally:
@@ -102,23 +102,33 @@ def _camera(lookat, distance, azimuth=-140.0, elevation=-22.0):
     return cam
 
 
+_OPT = mujoco.MjvOption()
+_OPT.sitegroup[:] = 0        # hide marker sites (frame origins)
+
+
 def _draw(renderer, cam):
-    renderer.update_scene(world.data, camera=cam)
+    renderer.update_scene(world.data, camera=cam, scene_option=_OPT)
     renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = False
     return Image.fromarray(renderer.render().copy())
+
+
+def running_rms(t, err, now):
+    """RMS of err over [0, now]; zero before the disturbance starts."""
+    window = (t >= 0.0) & (t <= now)
+    return float(np.sqrt(np.mean(err[window] ** 2))) if window.any() else 0.0
 
 
 def render_states(snapshots, wide, close, lock_q=None):
     """Wide view plus a close-up fixed on the (world-fixed) left target."""
     target = world.model.body("left_target").mocapid[0]
-    wide_cam = _camera([0.20, 0.06, 1.24], 1.42, elevation=-30.0)
+    wide_cam = _camera([0.18, 0.04, 1.26], 1.15, elevation=-32.0)
     images = []
     for qpos, mocap_pos, mocap_quat in snapshots:
         world.data.qpos[:] = qpos if lock_q is None else lock_q
         world.data.mocap_pos[:] = mocap_pos
         world.data.mocap_quat[:] = mocap_quat
         mujoco.mj_forward(world.model, world.data)
-        close_cam = _camera(mocap_pos[target], 0.30, elevation=-30.0)
+        close_cam = _camera(mocap_pos[target], 0.34, elevation=-30.0)
         images.append((_draw(wide, wide_cam), _draw(close, close_cam)))
     return images
 
@@ -132,18 +142,23 @@ def strip_chart(series, width, height):
     fig.patch.set_facecolor(bg)
     ax.set_facecolor(bg)
     for name, (t, err) in series.items():
-        ax.plot(t, err, color=COLORS[name], linewidth=1.8,
-                linestyle="--" if name == "locked" else "-")
+        ax.plot(t, err, color=COLORS[name], linewidth=2.0,
+                linestyle="--" if name == "locked" else "-",
+                label=TITLES[name])
+    leg = ax.legend(loc="upper right", ncol=3, fontsize=11, frameon=False,
+                    handlelength=1.8, borderaxespad=0.1)
+    for text in leg.get_texts():
+        text.set_color(fg)
     ax.set_xlim(-LEAD_S, SHOW_S)
-    ax.set_ylim(0, 1.08 * max(err.max() for _, err in series.values()))
-    ax.set_xlabel("time since disturbance onset [s]", color=fg, fontsize=10)
-    ax.set_ylabel("EE error [mm]", color=fg, fontsize=10)
-    ax.tick_params(colors=fg, labelsize=9)
+    ax.set_ylim(0, 1.55 * max(err.max() for _, err in series.values()))
+    ax.set_xlabel("time since disturbance onset [s]", color=fg, fontsize=12)
+    ax.set_ylabel("error [mm]", color=fg, fontsize=12)
+    ax.tick_params(colors=fg, labelsize=11)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color(fg)
-    fig.subplots_adjust(left=0.075, right=0.985, top=0.95, bottom=0.33)
+    fig.subplots_adjust(left=0.07, right=0.985, top=0.97, bottom=0.27)
     fig.canvas.draw()
     image = Image.frombuffer(
         "RGBA", fig.canvas.get_width_height(),
@@ -165,8 +180,9 @@ def compose(panels, chart, x_of, y_span, t, readouts):
     title_h, chart_h = 34, chart.size[1]
     canvas = Image.new("RGB", (3 * w, title_h + h + ch + chart_h), BG)
     draw = ImageDraw.Draw(canvas)
-    title_font = ImageFont.truetype(str(FONT_BOLD), 17)
-    big_font = ImageFont.truetype(str(FONT_BOLD), 24)
+    title_font = ImageFont.truetype(str(FONT_BOLD), 16)
+    big_font = ImageFont.truetype(str(FONT_BOLD), 22)
+    small_font = ImageFont.truetype(str(FONT), 13)
     for i, (name, (image, inset)) in enumerate(panels.items()):
         x0 = i * w
         canvas.paste(image, (x0, title_h))
@@ -175,7 +191,10 @@ def compose(panels, chart, x_of, y_span, t, readouts):
                   fill=BG, width=3)
         draw.text((x0 + w / 2, title_h / 2), TITLES[name], fill=COLORS[name],
                   font=title_font, anchor="mm")
-        draw.text((x0 + 14, title_h + h + ch - 12), f"{readouts[name]:4.1f} mm",
+        draw.text((x0 + 12, title_h + h + ch - 34), "RMS so far",
+                  fill=FG, font=small_font, anchor="ls",
+                  stroke_width=2, stroke_fill=BG)
+        draw.text((x0 + 12, title_h + h + ch - 10), f"{readouts[name]:4.1f} mm",
                   fill=COLORS[name], font=big_font, anchor="ls",
                   stroke_width=3, stroke_fill=BG)
     for i in (1, 2):
@@ -189,9 +208,9 @@ def compose(panels, chart, x_of, y_span, t, readouts):
 
 
 def main(argv):
-    f_hz = walk_sim.pop_float_option(argv, "f", 1.8)
+    f_hz = mount_disturbance.pop_float_option(argv, "f", 1.8)
     sweep._fundamental_hz[0] = f_hz
-    walk_sim.walk_params = sweep.fixed_amplitude_params
+    mount_disturbance.walk_params = sweep.fixed_amplitude_params
     OUT.mkdir(exist_ok=True)
 
     rows_r, snaps_r = record(ff_enabled=False)
@@ -205,11 +224,11 @@ def main(argv):
               f"{np.sqrt(np.mean(err[on] ** 2)):.1f} mm")
 
     # Frame k of the recording is at t = -GIF_LEAD_S + k * GIF_FRAME_S.
-    step = walk_report.GIF_FRAME_S
-    first = int(round((walk_report.GIF_LEAD_S - LEAD_S) / step))
+    step = disturbance_run.GIF_FRAME_S
+    first = int(round((disturbance_run.GIF_LEAD_S - LEAD_S) / step))
     count = int(round((LEAD_S + SHOW_S) / step))
     keep = slice(first, first + count)
-    times = -walk_report.GIF_LEAD_S + step * np.arange(len(snaps_r))[keep]
+    times = -disturbance_run.GIF_LEAD_S + step * np.arange(len(snaps_r))[keep]
 
     world.model.vis.global_.offwidth = max(PANEL[0],
                                            world.model.vis.global_.offwidth)
@@ -226,17 +245,18 @@ def main(argv):
     wide.close()
     close.close()
 
-    chart, x_of, y_span = strip_chart(series, 3 * PANEL[0], 150)
+    chart, x_of, y_span = strip_chart(series, 3 * PANEL[0], 170)
     frames = []
     for k, t in enumerate(times):
-        readouts = {name: float(np.interp(t, *series[name]))
-                    for name in series}
+        readouts = {name: running_rms(*series[name], t) for name in series}
         frames.append(compose({n: panels[n][k] for n in panels},
                               chart, x_of, y_span, t, readouts))
 
     gif = OUT / "hold_pose.gif"
-    frames[0].save(gif, save_all=True, append_images=frames[1:],
-                   duration=int(1000 / FPS), loop=0, optimize=True)
+    palette = frames[len(frames) // 2].quantize(colors=96, method=Image.Quantize.MEDIANCUT)
+    small = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
+    small[0].save(gif, save_all=True, append_images=small[1:],
+                  duration=int(1000 / FPS), loop=0, optimize=True)
     print(f"gif: {gif} ({gif.stat().st_size / 1e6:.1f} MB, {len(frames)} frames)")
     tmp = OUT / "_frames"
     tmp.mkdir(exist_ok=True)
