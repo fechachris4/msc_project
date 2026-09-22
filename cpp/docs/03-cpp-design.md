@@ -26,8 +26,8 @@ those boundaries one-to-one so the two can be read side by side.
 
 | Dependency | Version | Source | Why |
 |---|---|---|---|
-| MuJoCo | 3.10.0 | venv wheel (`site-packages/mujoco`) — headers + `libmujoco.3.10.0.dylib` | Same physics build as Python |
-| Pinocchio | 4.0.0 | venv `cmeel.prefix` — headers + dylibs | Same FK/Jacobian/`log3` |
+| MuJoCo | 3.10.0 | venv wheel (`site-packages/mujoco`), headers + `libmujoco.3.10.0.dylib` | Same physics build as Python |
+| Pinocchio | 4.0.0 | venv `cmeel.prefix`: headers + dylibs | Same FK/Jacobian/`log3` |
 | Boost, coal, urdfdom | as shipped | venv `cmeel.prefix` | Pinocchio's own dependencies |
 | Eigen | 3.4.0 | FetchContent (pinned) | Required by Pinocchio headers; not installed on this machine |
 | Accelerate | system | macOS framework | `dgesv` / `dgesdd`, identical to NumPy |
@@ -97,7 +97,7 @@ cpp/
 
 The Python records validate aggressively in `__post_init__`. The port keeps
 validation at *construction boundaries* (config load, backend read, source
-sample) rather than on every internal temporary — same guarantees, without
+sample) rather than on every internal temporary: same guarantees, without
 paying the cost 500 times a second on the control path.
 
 ## 5. Numerics plan
@@ -145,7 +145,7 @@ Each stage ends with something runnable and a check that can fail.
 | 2 | `config/RuntimeConfig` | Loads `control.toml`; effective JSON + sha256 byte-identical to Python (I1–I4) |
 | 3 | `kinematics/PinModel`, `Frames`, `LinkSpheres` | FK/Jacobian vs Python at 1e-12 (B1–B6) |
 | 4 | `sim/MujocoBackend`, `Motion`, `Targets` | `PlantState` sequence matches Python for N steps (K1, J2) |
-| 5 | `control/*` — reactive law, actuation, human safety, router | Per-stage vectors match Python (D, E, F, G) |
+| 5 | `control/*`: reactive law, actuation, human safety, router | Per-stage vectors match Python (D, E, F, G) |
 | 6 | `control/Servo`, `Runner` | Cycle ordering; full-loop trace (J1) |
 | 7 | `trajectory/*` | Spline/circle/program sampling vs Python (H) |
 | 8 | `telemetry`, `app/golden_trace` | **250-cycle trace compared column-by-column** |

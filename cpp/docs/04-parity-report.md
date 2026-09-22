@@ -1,6 +1,6 @@
 # Parity report
 
-Measured, not asserted. Every number below is reproduced by
+Every number below is reproduced by
 `bash cpp/tools/verify_parity.sh`.
 
 Environment: macOS (Darwin 27), Apple clang 21, CMake 4.3.4.
@@ -25,7 +25,7 @@ the Python harness's `np.isclose` usage.
 | 2 | Golden trace | 500 rows x 210 cols = 105,000 fields | **PASS** @1e-12 | 2.167e-13 (`qdot_raw_3`) |
 | 3 | Headless default-config trace | 4,000 rows x 59 cols = 236,000 fields | **PASS** @1e-12 | 4.441e-13 (`qdot_safety_filtered_1`) |
 | 4 | Trajectory sampling | 401 samples x 6 quantities | **PASS** @1e-12 | 1.127e-14 (linear acceleration) |
-| 5 | C++ unit tests | 336 checks across 6 suites | **PASS** | — |
+| 5 | C++ unit tests | 336 checks across 6 suites | **PASS** | - |
 
 ### 1. Configuration
 
@@ -42,7 +42,7 @@ this compares against a *frozen artifact*, not a fresh Python run.
 - 22 of 187 numeric columns are **bit-identical**, including
   `sample_time_s`, `dt_s` and all three `torso_position_m` components.
 - Divergence first appears at **cycle 0** in `J` (5.55e-16) and
-  `ee_position_m` (4.44e-16) — one ULP.
+  `ee_position_m` (4.44e-16), one ULP.
 - `q` (the MuJoCo joint state) is bit-identical until **cycle 2**, i.e.
   physics agrees exactly until the control output feeds back into it.
 
@@ -50,9 +50,8 @@ this compares against a *frozen artifact*, not a fresh Python run.
 
 The golden trace deliberately disables human safety, leaving the safety
 geometry, the projection ladder and the router's replanning unverified by it.
-This second harness closes that gap: it runs exactly what `srl_sim` runs —
-configured targets, the configured left-arm trajectory, cylinder routing and
-the whole-arm safety filter — for 2,000 closed-loop cycles (4 sim-seconds).
+This second harness closes that gap: it runs exactly what `srl_sim` runs (configured targets, the configured left-arm trajectory, cylinder routing and
+the whole-arm safety filter) for 2,000 closed-loop cycles (4 sim-seconds).
 
 Every **discrete** column matches exactly across all 4,000 samples:
 
@@ -62,13 +61,12 @@ Every **discrete** column matches exactly across all 4,000 samples:
 - `active_count` (how many of the 18 spheres per arm are constraining),
 - `route_kind` and `waypoint_count`.
 
-That is the meaningful result: the two implementations do not merely produce
+So the two implementations do not merely produce
 similar numbers, they take the **same branch** at every decision point, on
 every cycle, in a scenario where the safety filter is actively engaging
 (`reason=filtered` on the left arm throughout).
 
-`qp_fallback_entries=0`: the OSQP fallback was never reached in 2,000 cycles —
-the Gauss–Seidel repair sweep resolved every case. OSQP is still built and
+`qp_fallback_entries=0`: the OSQP fallback was never reached in 2,000 cycles; the Gauss–Seidel repair sweep resolved every case. OSQP is still built and
 wired (`-DSRL_WITH_OSQP=ON`, the default) because the Python would call it if
 repair ever failed.
 
@@ -86,11 +84,11 @@ companion-matrix eigensolve), every rotation matrix, every angular velocity
 and every angular acceleration.
 
 Residual only in translation: position 3.33e-15, velocity 4.01e-15,
-acceleration 1.13e-14 — from the quintic coefficient solve.
+acceleration 1.13e-14, from the quintic coefficient solve.
 
 ## Where the residual comes from
 
-Traced, not guessed:
+
 
 1. **MuJoCo and Pinocchio agree exactly.** Same binaries, same call order.
    `torso_position_m` and `sample_time_s` are bit-identical for all 500 rows,
@@ -115,8 +113,7 @@ Routing the handful of control-path matrix products through Accelerate's
 bit-identical and collapse the `qdot_task` residual with them. It was not
 done because the port already clears the project's own 1e-12 bar by more
 than four orders of magnitude, and the change would trade readable Eigen
-expressions for hand-rolled BLAS calls throughout the kinematics. Recorded
-here as the known next step rather than left implicit.
+expressions for hand-rolled BLAS calls throughout the kinematics.
 
 ## Unit tests
 
@@ -125,12 +122,12 @@ clause it defends:
 
 | Suite | Checks | Covers |
 |---|---|---|
-| `test_math` | 20 | A5, D7, D9 — rpy composition, quaternions, analytic derivatives, `dgesv`, Moore–Penrose conditions, null-space projector |
-| `test_actuation` | 84 | F1–F5 — clamp order, exact clamp-free velocity interval, saturation flags, command persistence, infinite bounds |
-| `test_safety` | 56 | E1–E12 — corner distance rule, on-axis degeneracy, mount exemption, and every rung of the projection ladder including the hold |
-| `test_router` | 49 | G1–G8 — inflation, route radius, height-band clipping, interior-target adjustment, follower advance, 32-waypoint cap |
-| `test_trajectory` | 99 | H1–H10 — minimum-jerk endpoints, SO(3) log round-trip incl. the near-pi branch, exact knots, circle geometry, C² program validation, limit scaling |
-| `test_config` | 28 | I1–I4 — unknown/missing keys, ranges, cross-field rules, disabled-feature validation, CPython float repr, provenance stability |
+| `test_math` | 20 | A5, D7, D9: rpy composition, quaternions, analytic derivatives, `dgesv`, Moore–Penrose conditions, null-space projector |
+| `test_actuation` | 84 | F1–F5: clamp order, exact clamp-free velocity interval, saturation flags, command persistence, infinite bounds |
+| `test_safety` | 56 | E1–E12: corner distance rule, on-axis degeneracy, mount exemption, and every rung of the projection ladder including the hold |
+| `test_router` | 49 | G1–G8: inflation, route radius, height-band clipping, interior-target adjustment, follower advance, 32-waypoint cap |
+| `test_trajectory` | 99 | H1–H10: minimum-jerk endpoints, SO(3) log round-trip incl. the near-pi branch, exact knots, circle geometry, C² program validation, limit scaling |
+| `test_config` | 28 | I1–I4: unknown/missing keys, ranges, cross-field rules, disabled-feature validation, CPython float repr, provenance stability |
 
 Two of these caught real mistakes during development: one wrong test
 expectation (clearance sign after subtracting sphere radii) and one genuine

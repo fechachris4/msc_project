@@ -51,6 +51,16 @@ def main():
     expected = load(args.expected)
     actual = load(args.actual)
 
+    # The C++ port predates the feedforward term. Its trace has no ff_twist
+    # columns; they are only dropped from the Python side when they are all
+    # exactly zero (feedforward disabled), so nothing is hidden.
+    ff = [c for c in expected[0] if c.startswith("ff_twist_")]
+    if ff and not any(c in actual[0] for c in ff):
+        nonzero = [c for c in ff if any(float(r[c]) != 0.0 for r in expected)]
+        if nonzero:
+            raise SystemExit(f"feedforward active in expected trace: {nonzero}")
+        expected = [{k: v for k, v in r.items() if k not in ff} for r in expected]
+
     if len(expected) != len(actual):
         raise SystemExit(
             f"row count differs: expected {len(expected)}, actual {len(actual)}"

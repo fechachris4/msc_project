@@ -64,7 +64,7 @@ referenced from the C++ tests.
 | E7 | Constraint: `A qdot ≥ b`, `b = −recovery_gain (clearance − control_margin) − approach_damping · min(A q̇_meas, 0)`. |
 | E8 | Resolution ladder exactly as in `01-architecture.md` §4: disabled → box-clip → no-active → already-feasible → repair(4) → OSQP + repair(16) → hold. |
 | E9 | When disabled, the request is returned **unclipped**; joint-limit clipping is skipped entirely. |
-| E10 | On hold, `qdot = clip(0, lower, upper)` — not literally zero, because the persistent command may need to catch up to its bounds. |
+| E10 | On hold, `qdot = clip(0, lower, upper)`: not literally zero, because the persistent command may need to catch up to its bounds. |
 | E11 | `human_adjusted` uses `allclose(atol=tolerance, rtol=0)`; `limit_adjusted` uses exact array equality. |
 | E12 | `limiting_points` are those with slack ≤ 10 × tolerance. |
 

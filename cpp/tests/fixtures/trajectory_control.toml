@@ -12,6 +12,7 @@ dls_damping = 0.05
 position_enabled = true
 orientation_enabled = true
 velocity_enabled = true
+velocity_feedforward_enabled = false
 
 [limits]
 joint_velocity_rad_s = [
@@ -62,6 +63,33 @@ cylinder_keepout_z_min_m = 0.0
 cylinder_keepout_z_max_m = 1.8
 cylinder_keepout_clearance_m = 0.10
 cylinder_waypoint_tolerance_m = 0.01
+
+[planning]
+enabled = false
+arm = "right"
+waypoint_count = 3
+dense_samples = 60
+clearance_margin_m = 0.05
+smoothness_weight = 1.0
+obstacle_weight = 40.0
+max_iterations = 200
+tool_radius_m = 0.0
+# Weak pull toward the straight line: without it the obstacle hinge has
+# no finite basin and can route the path outside the arm's workspace.
+deviation_weight = 0.5
+# Hard bound on each knot: the start/goal box grown by this allowance.
+reach_allowance_m = 0.45
+lead_compensation_enabled = true
+replan_clearance_trigger_m = 0.01
+include_floor = true
+floor_height_world_m = 0.0
+include_torso_box = true
+torso_box_half_extent_m = [0.12, 0.18, 0.28]
+max_linear_speed_m_s = 0.2
+max_linear_acceleration_m_s2 = 0.5
+max_angular_speed_rad_s = 0.5
+max_angular_acceleration_rad_s2 = 1.0
+
 
 [targets.right]
 reference_frame = "world"

@@ -63,19 +63,23 @@ std::string PythonRoot() { return std::string(SRL_PYTHON_ROOT); }
 
 int main(int argc, char** argv) {
   std::string output_path = PythonRoot() + "/cpp/build/cpp_trace.csv";
+  std::string config_path = srl::config::DefaultConfigPath();
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
     if (argument == "--out" && index + 1 < argc) {
       output_path = argv[++index];
+    } else if (argument == "--config" && index + 1 < argc) {
+      config_path = argv[++index];
     } else {
-      std::fprintf(stderr, "usage: srl_golden_trace [--out PATH]\n");
+      std::fprintf(stderr,
+                   "usage: srl_golden_trace [--out PATH] [--config PATH]\n");
       return 2;
     }
   }
 
   try {
     const srl::config::ProjectConfig config =
-        srl::config::LoadConfig(srl::config::DefaultConfigPath());
+        srl::config::LoadConfig(config_path);
 
     srl::sim::MujocoBackend backend(PythonRoot() + "/sim/scene.xml", config);
     srl::kinematics::PinModel pin(

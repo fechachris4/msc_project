@@ -2,8 +2,7 @@
 
 A modern C++20 port of the Python simulation in the parent directory: a
 torso-mounted dual Kinova Gen3 (supernumerary robotic limbs) holding a
-world-frame end-effector pose while the torso moves — "chicken-head"
-stabilisation.
+world-frame end-effector pose while the torso moves.
 
 Documentation, in reading order:
 
@@ -25,7 +24,7 @@ telemetry.
 | `runtime_config.py` | `src/config/RuntimeConfig.*` | Strict TOML loader; byte-identical effective-config output |
 | `controller/state.py` | `src/core/Types.h` | Plain aggregates, one per Python record |
 | `controller/transforms.py` | `src/math/Transforms.*` | Pure SE(3)/SO(3) |
-| (NumPy `linalg`) | `src/math/LinAlg.*` | Accelerate `dgesv`/`dgesdd` — the same LAPACK NumPy uses |
+| (NumPy `linalg`) | `src/math/LinAlg.*` | Accelerate `dgesv`/`dgesdd`: the same LAPACK NumPy uses |
 | `controller/pin_fk.py` | `src/kinematics/PinModel.*` | Same Pinocchio 4.0.0 binary |
 | `controller/frames.py` | `src/kinematics/Frames.*` | World-frame kinematics + target resolution |
 | `controller/link_spheres.py` | `src/kinematics/LinkSpheres.h` | **Generated** by `tools/generate_link_spheres.py` |
@@ -71,19 +70,19 @@ telemetry.
    unsupported rather than silently ignored.
 5. **OSQP is a build option** (`-DSRL_WITH_OSQP=ON` by default). The harness
    reports `qp_fallback_entries` so the effect of omitting it is measured, not
-   assumed — it is currently 0 in every scenario tested.
+   assumed; it is currently 0 in every scenario tested.
 6. **Legacy `shape = "measured_start_displacement"` trajectory tables are
    rejected** with an explicit error instead of being translated. The shipped
    config uses the segment form; the legacy shim exists only for backwards
    compatibility in the Python.
-7. **`LinkSpheres.h` is generated, not transcribed** — 18 spheres of
+7. **`LinkSpheres.h` is generated, not transcribed**: 18 spheres of
    17-significant-digit constants are too easy to corrupt by hand.
 
 ## Build
 
 Requirements: CMake ≥ 3.24, a C++20 compiler, LAPACK (Apple Accelerate on
 macOS or a system LAPACK on Linux), and the project's Python venv present at
-`../.venv` — the build links the native MuJoCo and Pinocchio libraries that
+`../.venv`: the build links the native MuJoCo and Pinocchio libraries that
 venv already ships.
 
 Eigen, toml++, GLFW, urdfdom_headers and OSQP are fetched at configure time
@@ -223,20 +222,20 @@ bash cpp/tools/verify_parity.sh
 ```
 
 It builds, runs the 336 unit assertions, and then performs four
-Python-vs-C++ comparisons at `rtol = atol = 1e-12` — the same tolerance the
+Python-vs-C++ comparisons at `rtol = atol = 1e-12`: the same tolerance the
 Python golden trace holds itself to:
 
-1. **Effective configuration** — byte-identical, including CPython float
+1. **Effective configuration**: byte-identical, including CPython float
    `repr()` and the config SHA-256.
-2. **Golden trace** — 250 cycles × 2 arms against the *committed*
+2. **Golden trace**: 250 cycles × 2 arms against the *committed*
    `tests/golden/reactive_current.csv`: 105,000 fields, worst difference
    2.167e-13.
-3. **Headless default-config trace** — 2,000 closed-loop cycles with human
+3. **Headless default-config trace**: 2,000 closed-loop cycles with human
    safety, cylinder routing and the configured trajectory all enabled:
    236,000 fields, worst difference 4.441e-13, and **every discrete column
    identical** (safety-ladder branch, stop flags, active constraint counts,
    route kinds).
-4. **Trajectory generation** — hold + line + 4-point C² spline + 2-revolution
+4. **Trajectory generation**: hold + line + 4-point C² spline + 2-revolution
    circle: durations, boundaries, rate bounds and all rotational quantities
    bit-identical; translation residual ≤ 1.13e-14.
 

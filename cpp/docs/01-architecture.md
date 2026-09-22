@@ -40,14 +40,14 @@ Import-time side effects matter here, because they fix the order.
    - creates `MjData`, runs `mj_forward`;
    - resolves named ids (EE sites, torso body, arm base bodies, target
      bodies, 7 actuators/joints per side) and fails loudly if any is missing;
-   - builds `MountCalibration` — `T_T_B` per side, taken from
+   - builds `MountCalibration`: `T_T_B` per side, taken from
      `model.body_pos` / `body_quat` of `{side}_base_link`;
-   - builds `DualArmPipelineSetup` — joint-centering midpoints from
+   - builds `DualArmPipelineSetup`: joint-centering midpoints from
      `jnt_range` (only for *limited* joints; unlimited joints get midpoint 0
      and are masked off), and actuation limits from TOML velocity limits +
      `position_lead_rad` + the **actuator `ctrlrange`** as position bounds.
 3. **`controller/frames.py`** (module import) builds a **Pinocchio** model
-   from `gen3.xml` *alone* — where `base_link` sits at the origin, so
+   from `gen3.xml` *alone*, where `base_link` sits at the origin, so
    `oMf(pinch_site)` is directly `T_K_E`. It also precomputes the link-sphere
    frame groupings used by the safety filter.
 4. **`main.py`** then: parses `[right|left|both]` and `--trajectory-plot`,
@@ -75,11 +75,11 @@ allowed; the other arm holds its static target.
    (the origin is captured at `takeover()`, so trajectory time starts at
    backend takeover, not at wall-clock zero).
 2. **Sample the target source once** → `DualArmFramedTargets`.
-3. **`frames.resolve_targets_world`** — convert world/base/torso framed
+3. **`frames.resolve_targets_world`**: convert world/base/torso framed
    targets into world pose *and* world twist. Torso-carried frames
    contribute `v + ω × r`. After this point the controller sees no frame
    selector.
-4. **`frames.controller_states`** — per arm:
+4. **`frames.controller_states`**: per arm:
    `pin.computeJointJacobians`, `pin.updateFramePlacements`;
    `T_W_E = T_W_T · T_T_B · T_B_E`;
    world Jacobian `J_W = blockdiag(R_W_B, R_W_B) · J_B` where
@@ -87,17 +87,17 @@ allowed; the other arm holds its static target.
    EE twist `= torso_v + ω × (p_E − p_T) + J_W q̇` (linear) and
    `ω + (J_W q̇)[3:]` (angular);
    plus every link-sphere world position and its 3×7 point Jacobian.
-5. **`human_safety.evaluate_dual_arm`** — express sphere centres and their
+5. **`human_safety.evaluate_dual_arm`**: express sphere centres and their
    Jacobians in the **torso** frame, compute signed clearance to a capped
    cylinder, build the distance Jacobian, and mark constraints active.
-6. **`_route_targets`** — cylinder keep-out routing substitutes the active
+6. **`_route_targets`**: cylinder keep-out routing substitutes the active
    waypoint for the target **position only**; orientation and twist pass
    through untouched. A route is replanned whenever the *resolved world*
    target moves (so a torso-frame target replans as the torso moves).
-7. **`pipeline.step`** — per selected arm, in this order:
+7. **`pipeline.step`**: per selected arm, in this order:
    pose error → twist error → PD → DLS → null-space → safety projection →
    clip and integrate the persistent position command.
-8. **`backend.exchange(command)`** — write `data.ctrl`, `mj_step`, refresh
+8. **`backend.exchange(command)`**: write `data.ctrl`, `mj_step`, refresh
    the torso mocap from the scripted driver, `mj_kinematics`, read the next
    `PlantState`.
 
@@ -124,7 +124,7 @@ The file is deliberately ordered as an executable equation sheet.
 6. **Null-space projection**:
    `qdot_null = (I₇ − J⁺ J) qdot_null_obj`, with `J⁺` the *undamped*
    pseudo-inverse. `qdot_raw = qdot_task + qdot_null`.
-7. **Safety projection** — see below.
+7. **Safety projection**: see below.
 
 `k_null` is `centering.enabled * null_gain_s_inv`, i.e. a **per-joint
 boolean mask times a scalar**, so unlimited joints (1/3/5/7 on the Gen3) are
@@ -146,7 +146,7 @@ The resolution ladder is important and must be preserved exactly:
 3. If no active constraints → return the bounded request, reason `"clear"`.
 4. If the bounded request already satisfies every constraint within
    tolerance → return it (reason `"clear"` or `"joint_limit_filtered"`).
-5. Else run `_repair_constraint_feasibility` — a Gauss–Seidel-style
+5. Else run `_repair_constraint_feasibility`: a Gauss–Seidel-style
    projection onto each violated half-space, re-clipped to the box, up to
    4 sweeps.
 6. Only if that still violates → an **OSQP** solve on row-normalised
@@ -170,7 +170,7 @@ at pipeline construction, then per cycle:
     qdot_effective = (command_after − command_before) / dt
 
 `velocity_bounds()` inverts that chain to give the exact velocity interval
-that avoids every downstream clamp — this is what the safety filter is
+that avoids every downstream clamp; this is what the safety filter is
 handed as its box. Reset means *reconstruct the object*, never mutate.
 
 ## 5. Frames, units, conventions
@@ -192,7 +192,7 @@ handed as its box. Reset means *reconstruct the object*, never mutate.
   MJCF timestep.
 - The integrator is `implicitfast`.
 - `dt` used by the controller is `plant.nominal_dt_s`, read from the state
-  record — not a separate clock.
+  record, not a separate clock.
 - Target-source time is elapsed since backend takeover.
 - The viewer loop sleeps to pace against `model.opt.timestep`; this is
   presentation only and does not enter the physics or the control math.
@@ -204,7 +204,7 @@ handed as its box. Reset means *reconstruct the object*, never mutate.
   separately because mocap writes carry no velocity. Module-level default
   amplitudes are **all zero**, so the default scenario has a static torso.
   The rpy element-wise sum is only valid because the torso home rotation is
-  identity — asserted at import.
+  identity, asserted at import.
 - **EE target** (`sim/target_motion.py`): sinusoid about a captured home
   pose, off by default, used by the golden trace and bandwidth sweeps.
   Composed as `R_home · R_rpy(δ)` (matrix composition, not rpy addition).
@@ -241,7 +241,7 @@ Recorded during discovery, each verified against the source:
    so "reset" must mean reconstruction.
 7. `model.opt.timestep` is overwritten from TOML after model load.
 8. Target markers are display-only; the Runner resolves retained records.
-9. `_clean_small` zeroes trajectory outputs below 1e-14 — a real numerical
+9. `_clean_small` zeroes trajectory outputs below 1e-14, a real numerical
    behaviour, not cosmetic.
 10. Ties between cylinder route candidates resolve by strict `<` in the
     order ccw, cw, over.

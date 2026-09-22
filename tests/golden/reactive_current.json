@@ -17,11 +17,11 @@
     },
     "gains": {
       "dls_damping": 0.05,
-      "k_null_s_inv": 1.0,
-      "kd_pos": 0.3,
-      "kd_rot": 0.3,
-      "kp_pos_s_inv": 2.0,
-      "kp_rot_s_inv": 2.0
+      "k_null_s_inv": 2.0,
+      "kd_pos": 0.9,
+      "kd_rot": 0.9,
+      "kp_pos_s_inv": 32.0,
+      "kp_rot_s_inv": 2.1
     },
     "joint_velocity_limit_rad_s": [
       1.3892820845874863,
@@ -36,7 +36,7 @@
   },
   "controller_output_field": "qdot_raw",
   "csv": "reactive_current.csv",
-  "csv_sha256": "26c9ac94c5f0825a86b0706110ec7792f56e51eb1ea3e9d8ae9506cb1a7b7030",
+  "csv_sha256": "ba5d68851aa1cc586593ec135b988c7c187107d51e800d8f14c1b07d84424d5e",
   "cycles": 250,
   "dt_s": 0.002,
   "duration_s": 0.5,

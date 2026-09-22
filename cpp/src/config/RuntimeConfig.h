@@ -30,6 +30,7 @@ struct ReactivePoseConfig {
   bool position_enabled{};
   bool orientation_enabled{};
   bool velocity_enabled{};
+  bool velocity_feedforward_enabled{};
 };
 
 struct LimitConfig {

@@ -287,7 +287,7 @@ const std::set<std::string> kControllerKeys = {"reactive_pose"};
 const std::set<std::string> kReactiveKeys = {
     "kp_position_s_inv", "kp_rotation_s_inv", "kd_position", "kd_rotation",
     "null_gain_s_inv", "dls_damping", "position_enabled",
-    "orientation_enabled", "velocity_enabled"};
+    "orientation_enabled", "velocity_enabled", "velocity_feedforward_enabled"};
 const std::set<std::string> kLimitKeys = {"joint_velocity_rad_s",
                                           "position_lead_rad"};
 const std::set<std::string> kCylinderKeys = {
@@ -397,6 +397,13 @@ ReactivePoseConfig ParseReactivePose(const toml::node& node) {
                                        location + ".orientation_enabled");
   config.velocity_enabled =
       Boolean(*table.get("velocity_enabled"), location + ".velocity_enabled");
+  config.velocity_feedforward_enabled =
+      Boolean(*table.get("velocity_feedforward_enabled"),
+              location + ".velocity_feedforward_enabled");
+  if (config.velocity_feedforward_enabled) {
+    Fail("controller.reactive_pose.velocity_feedforward_enabled = true is not "
+         "supported: the C++ port predates the feedforward term");
+  }
 
   if (config.position_enabled && config.kp_position_s_inv <= 0.0) {
     Fail("controller.reactive_pose.kp_position_s_inv must be greater than "
@@ -1156,7 +1163,9 @@ std::string EffectiveConfigJson(const ProjectConfig& config) {
   out << "      \"null_gain_s_inv\": " << PythonFloatRepr(reactive.null_gain_s_inv) << ",\n";
   out << "      \"orientation_enabled\": " << JsonBool(reactive.orientation_enabled) << ",\n";
   out << "      \"position_enabled\": " << JsonBool(reactive.position_enabled) << ",\n";
-  out << "      \"velocity_enabled\": " << JsonBool(reactive.velocity_enabled) << "\n";
+  out << "      \"velocity_enabled\": " << JsonBool(reactive.velocity_enabled) << ",\n";
+  out << "      \"velocity_feedforward_enabled\": "
+      << JsonBool(reactive.velocity_feedforward_enabled) << "\n";
   out << "    }\n  },\n";
 
   out << "  \"cylinder_keepout\": {\n";
