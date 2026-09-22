@@ -1,207 +1,111 @@
-# MSc Project — SRL MuJoCo Simulation
+# Holding a robot's hand still while its wearer moves
 
-MuJoCo simulation of a torso-mounted dual Kinova Gen3 (supernumerary robotic
-limbs). Current phase: a **reactive baseline controller** that holds a
-world-frame end-effector pose while the torso (the human) moves —
-"chicken-head" stabilization. Predictive control comes later, measured
-against this baseline.
+Two Kinova Gen3 arms are strapped to a person's torso as supernumerary robotic limbs. When the wearer walks, the mount bounces and sways, and anything the arms hold moves with it. I wanted to know how much of that motion a reactive controller can cancel, so the end-effectors stay fixed in the world rather than on the body.
 
-## Pipeline
+This is the MuJoCo simulation and controller from my MSc project at Imperial (MUVE Lab), "World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Based Motion".
 
-Per control step, all SI (meters, radians; mm only at prints/plots):
+![Arms locked vs reactive vs reactive + feedforward](media/hold_pose.gif)
 
-```
-sample target source once + backend PlantState
-  -> resolve target/state into world frame          controller/frames
-  -> pose/twist error, PD, DLS, null-space qdot     controller/reactive_controller
-  -> whole-arm human-distance safety projection     controller/reactive_controller
-  -> clip and integrate joint-position command      controller/position_actuation
-  -> apply command, mj_step, read next PlantState   sim/world.MujocoBackend
-```
+*Same scripted mount motion in all three panels (f = 1.8 Hz, unscaled). Top: the whole robot. Middle: a camera fixed on the left arm's world target (red sphere). The number is the worse of the two arms' end-effector position error at that instant; the strip below is the same quantity over time. [MP4](media/hold_pose.mp4)*
 
-The EE pose is never read from MuJoCo in the control path — it is composed
-from the torso pose (future: Vicon) and arm FK (future: joint encoders),
-mirroring what the hardware will provide.
-`ReactivePositionRunner` owns that ordering. Target mocap bodies are display
-markers, not controller inputs.
-
-Whole-arm human protection is enabled under `[human_safety]` in
-`config/control.toml`. Conservative sphere chains cover the Kinova collision
-meshes; their world positions and joint Jacobians are recomputed every cycle.
-A torso-frame human envelope then constrains the requested joint velocity
-before position integration. The older `[cylinder_keepout]` waypoint router
-remains optional path shaping and is not the safety mechanism. The equation,
-geometry derivation, stop behavior, and current evidence are documented in
-[`docs/human-safety.md`](docs/human-safety.md).
+With the arms locked, the end-effectors move with the mount: 31 mm RMS position error. The reactive controller removes 94% of that at 0.5 Hz and 63% at 3 Hz. Feeding forward the measured mount velocity cuts the remaining error by another 62% at 1.8 Hz.
 
 ## Setup
 
-Requires the project virtual environment (Python 3.14 with `mujoco`,
-`pinocchio`, `numpy`, `scipy`, `osqp`, `matplotlib`):
+The mount is a mocap body standing in for the wearer's torso. Both arms are kinematic children of it, and each end-effector has a target pose fixed in the world frame. The mount follows a scripted six-axis motion, A sin(2πft) on each axis, with amplitudes taken from a treadmill-gait model at 1 m/s:
 
-```bash
-source .venv/bin/activate
-```
+| axis | amplitude | frequency |
+|---|---|---|
+| x (forward) | 8 mm | f |
+| y (left) | 22 mm | f/2 |
+| z (up) | 20 mm | f |
+| roll | 2° | f/2 |
+| pitch | 1.3° | f |
+| yaw | 3° | f/2 |
 
-If `.venv` is missing, recreate it from the Python.org framework install:
+Only f changes between runs. The arms first settle on the static mount, then the disturbance starts and runs for 8 s at a 500 Hz control rate.
 
-```bash
-/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m venv --system-site-packages .venv
-```
+![The task](media/task_illustration.png)
 
-**macOS note:** anything that opens the MuJoCo viewer must be run with
-`mjpython` (installed with the `mujoco` package), not plain `python` —
-`launch_passive` needs the main thread on macOS. Run everything from the
-repo root (model paths are CWD-relative).
+*Four extreme mount poses of one cycle and (e) the average over the cycle: the mount and the proximal links blur, the end-effectors stay sharp. Motion enlarged 3x here so it shows in a still; all numbers use the unscaled motion.*
+
+## Controller
+
+![Control loop](media/control_loop.png)
+
+Per arm, every 2 ms:
+
+1. Compose the end-effector pose and Jacobian through the mount: world → mount → arm base → end-effector. The pose is never read from MuJoCo directly, so the same code can run on Vicon plus joint encoders.
+2. PD on the world-frame pose and twist error gives a task twist.
+3. Damped least squares maps it to joint velocities, with a null-space term that centres the joints.
+4. A whole-arm safety filter finds the nearest joint velocity that keeps every link outside a cylinder around the wearer and respects joint speed and position limits ([docs/human-safety.md](docs/human-safety.md)).
+5. Integrate to a joint position command and send it to the position servo.
+
+Feedforward adds one term to step 2. The mount's contribution to the end-effector velocity is the measured total minus the arm's own J q̇; the controller commands the negative of it, so the arm moves before an error builds up instead of after.
+
+## Results
+
+Position and orientation error RMS over 8 s, worse of the two arms.
+
+| f (Hz) | locked (mm) | reactive (mm) | removed | orientation (°) | peak joint speed (°/s) |
+|---|---|---|---|---|---|
+| 0.5 | 31.0 | 1.9 | 94% | 1.24 | 14 |
+| 1.0 | 31.0 | 3.7 | 88% | 1.56 | 27 |
+| 1.5 | 31.0 | 5.6 | 82% | 1.73 | 40 |
+| 2.0 | 31.0 | 7.4 | 76% | 1.85 | 52 |
+| 2.5 | 31.0 | 9.3 | 70% | 1.95 | 66 |
+| 3.0 | 31.0 | 11.3 | 63% | 2.02 | 80 |
+
+![Frequency sweep](media/freq_sweep.png)
+
+*(a) Vertical mount motion in the slowest and fastest run. (b, c) End-effector error against disturbance frequency. Open marker: joint-speed limit reached (16% of samples at 3 Hz).*
+
+The error grows roughly linearly with frequency. That is what a PD loop with a fixed bandwidth does: it only acts on error that already exists, so a faster disturbance leaves more of it behind. Orientation is harder than position; the controller removes 54% of the orientation error at 0.5 Hz and 25% at 3 Hz.
+
+![Feedforward](media/feedforward.png)
+
+*Right arm at f = 1.8 Hz. Position error RMS 6.7 → 2.6 mm (62% lower), orientation 1.79° → 1.25°.*
+
+## Limitations
+
+- The disturbance is a scripted sum of sinusoids, not recorded gait. It is periodic and smooth, which flatters any controller.
+- In simulation the feedforward gets the exact mount velocity. On hardware it would come from Vicon, with noise and delay, and the gain would shrink.
+- The arms are position-servoed and rigid: no link flexibility, backlash or servo dynamics beyond what MuJoCo models.
+- The thesis direction was predictive control (MPC) against this baseline. That was not built; this repo is the reactive baseline and the feedforward extension.
+
+## Code
+
+| Path | |
+|---|---|
+| `controller/reactive_controller.py` | The whole control law, equations in order: errors, PD, feedforward, DLS, null space, safety projection |
+| `controller/frames.py`, `pin_fk.py` | World-frame kinematics composed through the mount (Pinocchio FK) |
+| `controller/human_safety.py`, `link_spheres.py` | 18 conservative spheres per arm, torso-frame keep-out constraints |
+| `controller/runner.py`, `servo.py` | One control cycle in a fixed order, behind a takeover / exchange / release backend interface |
+| `sim/` | MJCF scene, MuJoCo backend, scripted mount motion |
+| `tools/disturbance_freq_sweep.py` | Frequency sweep (results table and figure) |
+| `tools/walk_ff_compare.py` | Reactive vs feedforward comparison |
+| `tools/make_readme_media.py` | The video above |
+| `analysis/` | Validation scripts: FK against MuJoCo, end-effector velocity ([docs/velocity-validation.md](docs/velocity-validation.md)), gain sweeps, live dashboard |
+| `planning/`, `examples/gpmp2_joint_space/` | Collision-aware Cartesian path planning and a GPMP2 joint-space demo |
+| `cpp/` | C++20 port of the simulation and controller, matched to the Python golden trace at 1e-12 when ported ([cpp/README.md](cpp/README.md)) |
+
+Two FK implementations exist on purpose: `pin_fk.py` (Pinocchio) is the control path, `kinematics.py` (analytical, from MuJoCo model constants) cross-checks it.
+
+Frames are written `T_A_B`: pose of frame B in frame A (W world, T torso/mount, K arm base, E end-effector). Everything is SI internally; millimetres only in prints and plots.
 
 ## Running
 
-Closed-loop simulation with viewer (controlled arms selectable):
+Python 3.14 with `mujoco`, `pin`, `numpy`, `scipy`, `osqp`, `matplotlib` (`requirements.txt`; exact versions in `requirements-primary.txt`). Run from the repo root.
 
 ```bash
-mjpython main.py                          # targets from config/control.toml
-mjpython main.py [right|left|both]        # optional command-line override
-mjpython main.py both --trajectory-plot   # optional nonblocking live EE paths
-```
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-Each `[targets.right]` / `[targets.left]` table is always a target source.
-Without a nested `.trajectory` table, its existing pose is held statically.
-With timed trajectory data, `main.py` initializes the configured simulation
-posture once, then samples the path through the real-time Runner boundary.
-There is no hidden replay and no separate trajectory mode.
-
-Base motion is configured by the levers at the top of `sim/motion.py`
-(amplitude/frequency); zero amplitude = static base, and the torso then
-stays hand-draggable in the viewer as an improvised perturbation.
-
-The intended trajectory interface is conversational: describe the motion to
-Codex, let it resolve the arm/frame/geometry/orientation and only genuine
-ambiguities, then have it materialize structured data, report the resolved
-parameters, and launch the viewer/live path plot.
-For example:
-
-- “Make the left hand trace a 10 cm diameter circle in the torso YZ plane,
-  keep its orientation fixed, and repeat slowly.”
-- “Move the left hand smoothly through offsets `[4,3,2]`, `[8,1,5]`, and
-  `[12,0,2]` cm in world coordinates, respecting 0.1 m/s.”
-
-There is no natural-language parser in the robotics runtime. The rigorous
-internal vocabulary is hold, line, C2 waypoint spline, circle, and sequence.
-The current user-configured displacement form remains compatible and is
-translated into line segments internally. Remove the nested trajectory table
-to return that arm to its existing fixed `position_m` / `rpy_rad`.
-Simulation-only starting joints remain separate under
-`[simulation.initial_joint_position_rad]`. The structured Codex/programmatic
-seam and reproducibility examples are in `docs/cartesian-trajectories.md`.
-
-Base motion vs. EE error, both arms, headless (plain `python` is fine —
-no MuJoCo viewer; live mode opens a rolling plot and runs until the
-window is closed; `--save T` runs headlessly for `T`
-sim-seconds instead):
-
-```bash
-python -m analysis.base_vs_error
-python -m analysis.base_vs_error --save 30
-```
-
-Provenance-stamped reactive-baseline validation with thesis-ready
-mean/RMSE/peak and desired-vs-measured world-path figures:
-
-```bash
-python -m analysis.reactive_baseline
-# A canonical evidence run requires a clean worktree and pinned environment:
-python -m analysis.reactive_baseline --canonical --output /tmp/reactive-baseline
-```
-
-Live 7-panel control-loop dashboard, one or both arms (same `--save T`
-convention):
-
-```bash
-python -m analysis.dashboard right
-python -m analysis.dashboard both --save 10
-```
-
-FK validation — MuJoCo's directly measured right EE position vs. the
-independently composed FK (world → torso → Kinova base → EE):
-
-```bash
-python -m analysis.fk_validation
-```
-
-Tests:
-
-```bash
+mjpython main.py both                       # viewer (macOS needs mjpython)
+python tools/disturbance_freq_sweep.py      # results table and sweep figure
+python tools/walk_ff_compare.py right --speed=1   # feedforward at f = 1.8 Hz
+python tools/make_readme_media.py           # README video
 python -m unittest discover tests
 ```
 
-## Layout
-
-```
-main.py                    viewer loop: closed-loop world-frame pose hold
-runtime_config.py          strict immutable loader for shared control TOML
-config/
-  control.toml             arm, gains, limits, nominal dt, and startup targets
-sim/
-  scene.xml                MJCF scene: torso mocap body + dual Kinova Gen3 + targets
-  world.py                 MuJoCo backend: model/data, exchange, lifecycle
-  human_safety_view.py     viewer-only safety envelope and link-sphere display
-  target_trajectory.py     trajectory initialization for the real-time loop
-  targets.py               set/read EE target poses (mocap spheres, world frame)
-  motion.py                scripted base motion: sinusoidal torso disturbance
-  assets/kinova_gen3/      vendored Kinova Gen3 model
-controller/
-  backend.py               minimal takeover/exchange/release plant contract
-  runner.py                explicit reactive pose-to-position cycle ordering
-  trajectory.py            pure static/waypoint/program target sources
-  trajectory_config.py     validated structured-intent compiler
-  transforms.py            pure SE(3)/rotation math (NumPy only)
-  pin_fk.py                Pinocchio FK for one arm: T_K_E(q)   [control path]
-  kinematics.py            analytical FK from MjModel constants [test reference only]
-  frames.py                target/state boundary + world-frame EE kinematics
-  desired_pos.py           configured framed targets and MuJoCo marker display
-  link_spheres.py          mesh-derived conservative whole-arm geometry
-  human_safety.py          torso-frame distances and link-point constraints
-  reactive_controller.py   complete control + safety equations, top-to-bottom
-  position_actuation.py    velocity limits + persistent position integration
-  servo.py                 explicit reactive-pose-to-position composition
-plotting/                 reusable instruments only (no MuJoCo except via callers)
-  live_plot.py             generic live time-series plot, expand-only autoscale
-  live_cartesian_path.py   bounded nonblocking live EE-path publisher
-  style.py                 shared Okabe-Ito colors + side conventions
-analysis/                  every experiment script; figures -> analysis/output/
-  metrics.py               one metric definition: stats/print_stats/windowed_stats
-  reactive_baseline.py     stamped validation run + mean/RMSE/peak figure
-  cartesian_path.py        aligned desired-vs-measured world-path figure
-  dashboard.py             live 7-panel control-loop dashboard, one or both arms
-  base_vs_error.py         thesis success-criterion figure: base disp vs EE error
-  diagnose.py              pinned-scenario failure diagnosis
-  bandwidth_sweep.py       reactive-loop tracking bandwidth vs frequency
-  validate_velocity.py     ee_velocity vs finite-difference ground truth
-  fk_validation.py         live direct-vs-FK comparison (right arm)
-tests/                     unit + closed-loop tests (python -m unittest discover tests)
-tools/
-  derive_link_spheres.py   regenerate conservative geometry from collision meshes
-```
-
-Two FK implementations exist deliberately: `pin_fk.py` (Pinocchio) is the
-control path; `kinematics.py` (analytical, from MjModel constants only) is
-an independent cross-check that catches regressions in the Pinocchio path.
-Do not unify them.
-
-## Conventions
-
-- Frames: `T_A_B` denotes the pose of frame B expressed in frame A.
-  W = world, T = torso, K = Kinova arm base, E = end-effector site.
-- Poses are passed as `(pos (3,) meters, R 3x3)` pairs; quaternions are
-  MuJoCo order `[w, x, y, z]`.
-- All internal math is SI (meters, radians). Millimetres appear only at
-  human-facing boundaries (prints, plots).
-- Controller math is world-frame. World/base/torso target selection is resolved
-  at the Runner boundary every cycle; the configured baseline references are
-  world-frame and therefore remain fixed while the base moves.
-- Target-source time starts at backend takeover. Waypoint conventions, program
-  frame rules, and the C++ replay fixture are documented in
-  `docs/cartesian-trajectories.md`.
-- Runtime control values come from `config/control.toml`. Edit that file and
-  restart; the effective configuration and source hash are printed at startup
-  and stamped into saved experiment metadata.
+Gains, limits, targets and the safety envelope live in `config/control.toml`.
