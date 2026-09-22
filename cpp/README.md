@@ -58,8 +58,7 @@ Each is a deliberate choice, not an oversight.
 
 1. **No import-time global backend.** `sim/world.py` constructs a
    `MujocoBackend` at module import; the C++ constructs everything explicitly
-   in `main`. Same behaviour — and what the Python project's own risk list
-   (`PROJECT_MAP.md` §10.4) asks a C++ port to do.
+   in `main`. Same behaviour, no hidden global state.
 2. **Validation at boundaries, not on every temporary.** The Python records
    re-validate shapes and finiteness on every construction. The port
    validates at the boundaries that can actually produce bad data (config

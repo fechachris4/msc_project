@@ -1,8 +1,7 @@
 """Compile validated structured trajectory intent into pure target sources.
 
-This is the request-to-control seam used after Codex has resolved a user's
-natural-language intent. It deliberately accepts structured data only; no
-natural-language interpretation, MuJoCo access, or marker state belongs here.
+It deliberately accepts structured data only; no natural-language
+interpretation, MuJoCo access, or marker state belongs here.
 """
 
 from dataclasses import dataclass

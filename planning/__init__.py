@@ -12,7 +12,7 @@ Design boundaries, all deliberate:
 
 - Collision is evaluated in the TORSO frame, where the human envelope is
   static by construction.  The delivered reference stays WORLD-frame,
-  because the task is a world-frame pose hold (see AGENTS.md).
+  because the task is a world-frame pose hold.
 - The path is represented by the project's existing minimum-jerk C2
   spline.  The optimiser only chooses where its knots go; smoothness,
   timing, and Cartesian rate limits remain the trajectory layer's job.

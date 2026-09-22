@@ -1,22 +1,11 @@
 # Cartesian target trajectories
 
-## User workflow: describe, validate, view
+## How a trajectory gets in
 
-The intended interface is conversational. Tell Codex the motion you want, for
-example:
-
-> Make the left hand trace a 10 cm diameter circle in front of the torso,
-> keeping its orientation fixed and repeating slowly.
-
-Codex resolves the physical meaning into an arm, one declared frame, geometry,
-orientation policy, limits, and timing. It asks only when the request is
-genuinely ambiguous—for example which plane “circle” means. Codex then
-materializes the structured trajectory, reports the resolved parameters, and
-launches the viewer plus the optional desired-versus-measured path plot.
-
-There is deliberately no natural-language parser in the controller process.
-The language interpretation layer is Codex; runtime receives only strict,
-finite, SI-valued records.
+A trajectory is a structured, SI-valued record under an arm's
+`[targets.<arm>]` table in `config/control.toml`. There is no
+natural-language parser in the controller process; runtime only accepts
+strict, finite records.
 
 The programmatic seam is:
 
@@ -124,8 +113,7 @@ velocity jumps.
 
 ## Structured representation
 
-Users are not expected to learn or hand-author this. Codex may persist the
-resolved request under the existing per-arm target so runs are reproducible.
+The record lives under the existing per-arm target so runs are reproducible.
 A side-facing vertical circle in the world `yz` plane can look like:
 
 ```toml

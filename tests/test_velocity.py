@@ -30,7 +30,7 @@ HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
 
 # Pinned scenario, independent of the motion module's research levers.
 # Rotation nonzero (the whole point) but modest: the right arm hits the
-# torso near +15.6 deg roll (analysis/diagnosis_report.md), and this
+# torso near +15.6 deg roll (docs/diagnosis.md), and this
 # comparison wants a contact-free rollout.
 SCENARIO = dict(
     linear_amplitude=np.array([0.05, 0.02, 0.01]),

@@ -24,7 +24,6 @@ _SOURCE_FILES = (
     "main.py",
     "runtime_config.py",
     "requirements.txt",
-    "AGENTS.md",
 )
 
 
