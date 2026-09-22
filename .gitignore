@@ -7,14 +7,4 @@ __pycache__/
 # Generated experiment output (regenerate with the scripts in analysis/ and tools/)
 analysis/output*/
 MUJOCO_LOG.TXT
-
-# Editor, OS and agent tooling
 .DS_Store
-.vscode/
-.claude/
-.remember/
-.superpowers/
-
-# Office files
-*.pptx
-~$*

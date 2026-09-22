@@ -28,7 +28,7 @@ and controller cannot depend on them.
 radians for each arm. Cartesian controller inputs are derived from
 `PlantState`, calibrated `T_T_B`, and FK before entering controller math.
 
-## The genuine backend difference
+## MuJoCo vs hardware backend
 
 For MuJoCo, `exchange` writes `data.ctrl`, calls `mj_step`, refreshes scripted
 torso kinematics, and reads the new `qpos/qvel`. MuJoCo time advances because

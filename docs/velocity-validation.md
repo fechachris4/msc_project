@@ -3,8 +3,9 @@
 **Claim.** `frames.ee_velocity(side, base_twist)` returns the true
 world-frame end-effector twist under scripted base motion, verified to
 0.5 mm/s / 0.03 deg/s against a MuJoCo ground truth that is independent
-of the production math. MuJoCo's own velocity readout is wrong by up to
-315 mm/s / 15 deg/s in the same scenario and must not be used.
+of the production math. MuJoCo's velocity readout omits the base motion, because mocap bodies
+carry no velocity state (error up to 315 mm/s / 15 deg/s here), so it is
+not used.
 
 Produced by `python -m analysis.validate_velocity`
 (figures `analysis/output/velocity_[123]_*.png`). Companion unit tests:
@@ -74,9 +75,8 @@ Each piece lives next to the code it differentiates — no new module:
 deliberately does not import `sim.motion`: the twist source is
 swappable (scripted derivative in sim, Vicon estimate on hardware,
 zeros for a stationary base), and a forgotten base twist fails loudly
-instead of defaulting to a silently wrong zero. Nothing in the control
-law consumes the velocity yet; this is estimation infrastructure for
-the base-motion feedforward work.
+instead of defaulting to a silently wrong zero. The feedforward term in
+`controller/reactive_controller.py` consumes this velocity.
 
 ## 4. Validation methodology
 
@@ -123,7 +123,7 @@ the same ground truth: RMSE up to 156 mm/s, max 315 mm/s and 15 deg/s
 
 Unit tests pin these margins: leg 3 asserts max error < 2 mm/s
 (mrad/s), ~4× the measured worst case, plus a 50 mm/s activity floor
-proving the disturbance engaged. 30/30 tests pass.
+proving the disturbance engaged.
 
 ## 6. Assumptions
 
@@ -149,5 +149,4 @@ proving the disturbance engaged. 30/30 tests pass.
 - `E(rpy)` is singular at pitch = ±90° (gimbal lock of the rpy chart).
   Irrelevant at the scripted amplitudes; a hardware base-twist source
   would come as an angular velocity directly and never pass through `E`.
-- Nothing consumes the velocity yet; closed-loop benefit (feedforward)
-  is future work by design.
+- The closed-loop benefit of using it (feedforward) is in the README.

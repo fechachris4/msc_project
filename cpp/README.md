@@ -5,8 +5,6 @@ torso-mounted dual Kinova Gen3 (supernumerary robotic limbs) holding a
 world-frame end-effector pose while the torso moves — "chicken-head"
 stabilisation.
 
-The Python implementation is **unmodified**. This directory is additive.
-
 Documentation, in reading order:
 
 | Document | Contents |
@@ -53,8 +51,6 @@ telemetry.
 | `tests/golden_trace.py` | `src/app/golden_trace.cpp` + `src/telemetry/TraceWriter.*` | 210-column trace, identical schema |
 
 ## Intentional deviations
-
-Each is a deliberate choice, not an oversight.
 
 1. **No import-time global backend.** `sim/world.py` constructs a
    `MujocoBackend` at module import; the C++ constructs everything explicitly
@@ -120,14 +116,13 @@ measured q, qdot + joint goal + torso-frame human SDF
     -> MuJoCo backend
 ```
 
-The GPMP2 bundle currently available in `HumanSL_MAIN/third_party` contains
-Linux x86-64 `.so` files. Build and run this option on the Ubuntu workspace,
-not on macOS:
+The GPMP2 option links prebuilt GPMP2 libraries from the lab's HumanSL
+codebase (not public), which are Linux x86-64 only:
 
 ```bash
 cmake -S cpp -B cpp/build \
   -DSRL_WITH_GPMP2=ON \
-  -DSRL_GPMP2_ROOT=/path/to/HumanSL_MAIN/third_party \
+  -DSRL_GPMP2_ROOT=/path/to/HumanSL/third_party \
   -DSRL_WITH_VIEWER=ON
 cmake --build cpp/build -j
 
@@ -143,7 +138,7 @@ the whole HumanSL `third_party/lib` directory to `LD_LIBRARY_PATH`: that
 bundle also contains an older Pinocchio build which would override the
 simulator venv's Pinocchio and cause an ABI mismatch.
 
-This is a selective port of HumanSL_MAIN's live source chain:
+This is a selective port of the lab HumanSL planner's source chain:
 `Gen3Arm::plan_joint` -> `TrajectoryInitiation` -> `OptimizeTrajectory` ->
 `densifyTrajectory`/`interpolateArmTraj` -> `convertTrajectory`. It reuses
 HumanSL's Kinova DH model, 34-sphere `GenerateArmModel` geometry,

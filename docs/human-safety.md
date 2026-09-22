@@ -11,9 +11,9 @@ per-arm safety filter finds the nearest velocity that satisfies:
 - every one-step joint-position and position-lead limit.
 
 If those constraints cannot all be satisfied, that arm is held and its status
-is reported as a genuine safety stop. The other arm remains independent.
+is reported as a safety stop. The other arm remains independent.
 
-The existing `[cylinder_keepout]` router is unchanged. It may shape the
+The `[cylinder_keepout]` router may shape the
 end-effector path at a high level, but it is neither required by nor trusted
 as the whole-arm safety layer.
 
@@ -36,9 +36,9 @@ interface. The other 13 spheres are protected.
 The human envelope is a finite capped cylinder in the torso frame:
 
 ```text
-radius = 0.25 m
+radius = 0.20 m
 torso z range = [-1.10, 0.70] m
-required clearance = 0.02 m
+required clearance = 0.01 m
 control margin = 0.02 m
 ```
 
@@ -103,7 +103,7 @@ human envelope, its clearance/control boundary, and every link sphere.
 ## Configuration
 
 All safety settings live under `[human_safety]` in
-`config/control.toml`. `enabled = false` bypasses the new filter and preserves
+`config/control.toml`. `enabled = false` bypasses the filter and preserves
 the recorded pre-filter controller output exactly. No separate launcher or
 hidden startup replay is used.
 
@@ -117,22 +117,21 @@ The automated evidence covers:
 - cylinder signed-distance gradients against finite differences;
 - torso rigid-motion invariance;
 - simultaneous human-distance and joint-limit constraints;
-- infeasible-state hold and truthful stop reporting;
+- infeasible-state hold and stop reporting;
 - a headless target-inside-human run with the waypoint router disabled;
 - exact disabled-mode replay of the existing 500-row controller trace.
 
-The final 2,200-cycle adversarial simulation had no torso/arm contacts and no
-safety stops. Minimum reported clearance was 0.01996 m beyond the configured
-required 0.02 m. The safety-projection phase measured 0.35 ms at the 99th
-percentile on the development Mac after warm-up.
+A 2,200-cycle adversarial simulation, run with a wider envelope (radius
+0.25 m, required clearance 20 mm), had no torso/arm contacts and no safety
+stops; minimum clearance was 19.96 mm, within the projection's solver
+tolerance. The safety projection took 0.35 ms at the 99th percentile on an
+Apple-silicon MacBook after warm-up.
 
 The complete Python/MuJoCo Runner cycle measured 3.13 ms at the 99th
 percentile in that run, which is above the configured 2 ms nominal cycle.
 The safety mathematics is inside its sub-millisecond budget, but end-to-end
 500 Hz timing is not yet proven.
 
-The complete Python suite passes 281 tests; three optional C++ router
-cross-checks are skipped when the separate reference build is unavailable.
 
 ## Safety boundary
 

@@ -107,7 +107,8 @@ decays as the wearer moves away from it.
 ## Adapted GPMP2 ideas
 
 Three ideas are taken from the GPMP2 joint-space demonstration in
-`examples/gpmp2_joint_space` and from HumanSL's planner:
+the GPMP2 planner (`cpp/src/planning/Gpmp2Planner`) and the lab's HumanSL
+planner:
 
 - **A smoothness prior over the states.** Here it is a second-difference
   penalty on the knot positions, `k[i] - 2*k[i+1] + k[i+2]`, weighted by
@@ -149,9 +150,8 @@ reasons are specific, not stylistic:
    library would be unused.
 5. **Reproducibility.** GTSAM and GPMP2 are native C++ builds with
    wrappers. The simulation is expected to run from one virtual
-   environment on the project machines; the C++ demonstration stays where
-   it belongs, in `examples/`, as the reference the adaptation is measured
-   against.
+   environment; the GPMP2 adapter lives in the C++ port
+   (`cpp/src/planning/`).
 
 ## Why the Jacobian is exact
 
@@ -249,8 +249,8 @@ Two things follow, and the second is the point:
 - In steady state `edot -> 0`, so the lag is `e = rdot / Kp`, **independent
   of Kd**. No amount of derivative gain removes it.
 
-With the shipped gains (`Kp = 2.0 s^-1`) a reference moving at the
-configured `max_linear_speed_m_s = 0.2` is followed 0.1 m behind. A planned
+At `Kp = 2 s^-1` (the gain when this layer was built; the tuned value is
+now 32) a reference moving at 0.2 m/s is followed 0.1 m behind. A planned
 path is only worth planning if the arm is actually on it, so the prefilter
 pre-inverts that lag at the reference instead:
 
@@ -261,7 +261,7 @@ r = p_plan + pdot_plan / Kp
 Because the twist delivered alongside is deliberately the plan's TRUE
 twist, not the derivative of the prefiltered pose, this first-order form
 is the EXACT inverse of the closed loop above — an acceleration term would
-be injected error, not a refinement; with the shipped gains it was
+be injected error, not a refinement; at `Kp = 2` it was
 measured making tracking about 30x worse (10.5 mm instead of 0.34 mm on a
 3 s path).
 
@@ -294,27 +294,27 @@ other per run, and any result is attributable to exactly one of them.
 All keys live under `[planning]` in `config/control.toml`. They are read
 into `runtime_config.PlanningConfig`; there is no separate launcher.
 
-| Key | Ships as | Meaning |
+| Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | Whether composition builds a plan for the arm(s) named below. `false` leaves the existing reactive/static path untouched. |
 | `arm` | `"right"` | `"right"`, `"left"`, or `"both"`. Any arm not named keeps its own configured motion. |
 | `waypoint_count` | `3` | Number of FREE interior knots. Total knots are `waypoint_count + 2`, including the two fixed endpoints. |
 | `dense_samples` | `60` | Collision samples along the spline per residual evaluation. |
 | `clearance_margin_m` | `0.05` | Hinge activation distance. The obstacle cost is exactly zero beyond it. |
-| `smoothness_weight` | `1.0` | Weight on the second-difference knot penalty. |
+| `smoothness_weight` | `10.0` | Weight on the second-difference knot penalty. |
 | `obstacle_weight` | `40.0` | Weight on the hinge residual. Only the ratio to `smoothness_weight` matters. |
 | `max_iterations` | `200` | Passed to `least_squares` as `max_nfev`. |
-| `tool_radius_m` | `0.0` | Subtracted from every clearance. At `0.0` the end-effector is treated as a point. |
+| `tool_radius_m` | `0.05` | Subtracted from every clearance. At `0.0` the end-effector is a point. |
 | `lead_compensation_enabled` | `true` | Enables the reference prefilter above. Turn it off to measure the uncompensated baseline. |
 | `replan_clearance_trigger_m` | `0.01` | Clearance below which a caller SHOULD replan. Nothing in the shipped code polls it. |
 | `include_floor` | `true` | Add the floor half-space to the obstacle set. |
 | `floor_height_world_m` | `0.0` | World height of that floor, converted into the plan-time torso frame. |
 | `include_torso_box` | `true` | Add an axis-aligned box at the torso origin. |
 | `torso_box_half_extent_m` | `[0.12, 0.18, 0.28]` | Half extents of that box, in torso coordinates. |
-| `max_linear_speed_m_s` | `0.2` | Cartesian limits used to time the optimised spline. |
-| `max_linear_acceleration_m_s2` | `0.5` | " |
-| `max_angular_speed_rad_s` | `0.5` | " |
-| `max_angular_acceleration_rad_s2` | `1.0` | " |
+| `max_linear_speed_m_s` | `3.0` | Cartesian limits used to time the optimised spline. |
+| `max_linear_acceleration_m_s2` | `1.0` | " |
+| `max_angular_speed_rad_s` | `2.0` | " |
+| `max_angular_acceleration_rad_s2` | `1.5` | " |
 
 The human envelope itself is NOT configured here. It is read from
 `[human_safety]`, so the planner and the real-time filter cannot be
@@ -380,12 +380,9 @@ detail.
    least-squares solve) has never been timed against the control cycle;
    the sibling document already records that the complete Python cycle
    exceeds its 2 ms nominal budget without any planner in it.
-6. **The base-motion amplitudes ship at zero.** `sim/motion.py` has
-   `LINEAR_AMPLITUDE` and `ROTATIONAL_AMPLITUDE` set to zero vectors, so
-   every result obtained so far is for a STATIC base. The drift this layer
-   is designed around — the reason `remaining_clearance` exists at all —
-   is therefore currently untested. Raising those amplitudes is the first
-   experiment this layer needs, not an optional extra.
+6. **Only tested on a static mount.** The disturbance experiments in the
+   README bypass the planner, so the drift this layer is designed around,
+   the reason `remaining_clearance` exists, is untested.
 7. **`success` is weaker than the margin.** `PlanResult.success` requires
    the solver to converge and the final clearance to be non-negative, not
    to reach `clearance_margin_m`. A plan can succeed with less margin than

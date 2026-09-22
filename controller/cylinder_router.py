@@ -1,7 +1,7 @@
 """Fixed-size Cartesian waypoint routing around one vertical keep-out cylinder.
 
 Direct port of the hardware controller's ``src/control/CylinderRouter.{h,cpp}``
-(HumanSL_MAIN/Christian_control/basic_control). Pure geometry: no robot, no
+(my C++ Kinova controller, not in this repo). Pure geometry: no robot, no
 MuJoCo, no I/O. Every constant and branch mirrors the C++ so the two stay
 comparable — ``tests/test_cylinder_router.py`` cross-checks this module against
 the compiled C++ implementation.

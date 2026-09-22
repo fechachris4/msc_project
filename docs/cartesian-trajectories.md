@@ -182,8 +182,8 @@ the previous segment endpoint. Optional `rpy_rad` orientation arrays must have
 the same count and begin at the previous orientation.
 
 The original `measured_start_displacement` table is still accepted and
-translated into line segments internally so the user's current run remains
-reproducible. It is compatibility input, not a second trajectory engine.
+translated into line segments internally so older configs still
+load. It is compatibility input, not a second trajectory engine.
 Simulation-only joint initialization remains separate under
 `[simulation.initial_joint_position_rad]`.
 
