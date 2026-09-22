@@ -87,8 +87,8 @@ and acceleration must match. `PeriodicTargetSource` additionally requires the
 final boundary to match the start in all of those quantities.
 
 Ordinary user paths can be represented as smooth waypoints without source
-changes. A genuinely new mathematical family—such as a clothoid with a
-specific curvature law—requires adding and testing a new primitive in code.
+changes. A genuinely new mathematical family (such as a clothoid with a
+specific curvature law) requires adding and testing a new primitive in code.
 
 ## Timing and limits
 

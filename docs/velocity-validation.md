@@ -14,8 +14,7 @@ Produced by `python -m analysis.validate_velocity`
 ## 1. Why this exists
 
 The torso is a mocap body teleported each step (`sim/motion.py`), so it
-has no velocity state. Everything MuJoCo derives from `qvel` —
-`mj_objectVelocity`, `data.cvel`, `framelinvel` sensors — treats the
+has no velocity state. Everything MuJoCo derives from `qvel` (`mj_objectVelocity`, `data.cvel`, `framelinvel` sensors) treats the
 base as bolted down and reports only the arm-relative part of the EE
 velocity. Figure 3 shows the consequence: under base sway the direct
 readout is roughly in antiphase with the truth (it sees only the arm's
@@ -63,7 +62,7 @@ enters `E`.
 
 ## 3. Architecture
 
-Each piece lives next to the code it differentiates — no new module:
+Each piece lives next to the code it differentiates; there is no new module:
 
 | Piece | Home |
 |---|---|
@@ -95,7 +94,7 @@ Three legs, each independent of the production math it checks:
    `mj_jacSite` in `test_kinematics.py`.)
 3. **End-to-end ground truth** (MuJoCo, not Pinocchio): closed-loop
    rollout, 5 s of pinned sway (lin [50, 20, 10] mm @ 0.5 Hz, rot
-   [5, 3, 8]° @ 0.3 Hz — rotation kept below the ~15.6° roll contact
+   [5, 3, 8]° @ 0.3 Hz, rotation kept below the ~15.6° roll contact
    regime), composed velocity vs central
    finite differences of `measured_ee_pose` (`site_xpos`, which does
    include the mocap teleports). This is the only leg that exercises
@@ -115,11 +114,11 @@ Composed vs FD-of-measured ground truth, per axis
 | left | v [mm/s] | 0.21 / 0.09 / 0.05 | 0.38 / 0.15 / 0.13 | 207 |
 | left | ω [deg/s] | 0.01 / 0.01 / 0.02 | 0.03 / 0.02 / 0.03 | ~19 |
 
-Worst case 0.15 % of peak — the O(dt·q̈) skew of comparing a
+Worst case 0.15 % of peak: the O(dt·q̈) skew of comparing a
 continuous-time estimate against a discrete integrator's trajectory,
 not a math error (it shrinks with dt). MuJoCo's direct readout against
 the same ground truth: RMSE up to 156 mm/s, max 315 mm/s and 15 deg/s
-(right arm) — the entire base contribution is missing.
+(right arm): the entire base contribution is missing.
 
 Unit tests pin these margins: leg 3 asserts max error < 2 mm/s
 (mrad/s), ~4× the measured worst case, plus a 50 mm/s activity floor

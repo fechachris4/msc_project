@@ -13,8 +13,8 @@ pose, resolves the existing `[targets.<arm>]` goal into world coordinates,
 captures the torso pose, and places the knots of the project's existing
 minimum-jerk C2 spline so that the path between start and goal keeps
 clearance from the wearer. The optimised spline IS an ordinary
-`CartesianWaypointTrajectory` — same timing law, same geodesic orientation
-interpolation as every configured trajectory — and it is delivered as that
+`CartesianWaypointTrajectory`: same timing law, same geodesic orientation
+interpolation as every configured trajectory, and it is delivered as that
 arm's single-arm `TargetSource` (lead-conditioned when configured). No
 file under `controller/` is modified, imported into the control path in a
 new way, or subclassed.
@@ -32,7 +32,7 @@ Per arm, one `ArmPlan` produces:
 - the solver's own termination message and success flag.
 
 An arm that is not planned is untouched: it keeps whatever its own
-configuration says — its static target, its configured trajectory, or a
+configuration says: its static target, its configured trajectory, or a
 keep-out routed reach. The planner cannot see, hold, or replace the other
 arm's reference, by construction.
 
@@ -81,7 +81,7 @@ exact analytic functions of the sample point, and the clearance number the
 planner reports is measured against the same geometry the safety filter
 uses.
 
-The floor is the counter-example that proves the rule. It is world-static,
+The floor is the exception. It is world-static,
 so its torso-frame description changes as the torso moves;
 `world_plane_in_torso` converts it once, using the torso pose captured at
 plan time, and it is only valid while the torso stays near that pose.
@@ -127,8 +127,7 @@ planner:
 ### GTSAM and GPMP2 are not dependencies
 
 The ideas are adapted; the libraries are not linked. `planning/` imports
-numpy and `scipy.optimize.least_squares` and nothing else external. The
-reasons are specific, not stylistic:
+numpy and `scipy.optimize.least_squares` and nothing else external. Reasons:
 
 1. **The smoothness the prior would provide already exists.** A GP prior
    over position/velocity states exists to make a discretised trajectory
@@ -191,7 +190,7 @@ d(r_obstacle_j) / d(k_i) = -obstacle_weight * grad_j * B[j, i]   while active
 That is what `path_optimizer.jacobian` assembles. No finite differences are
 taken anywhere in the solve, so the cost of an iteration does not scale
 with the number of knots the way a numerical Jacobian would, and the
-gradient is not an approximation of the model — it is the model.
+gradient is exact.
 
 One subtlety follows from the same property. `B` depends on the knot times,
 and a minimum-jerk spline's SHAPE depends on its segment durations. The
@@ -211,7 +210,7 @@ is the replanning feature's problem, deliberately not pre-solved here.)
 
 **Lag compensation** lives in `controller/lead_compensation.py`, because
 the lag it inverts is a property of the CONTROLLER, not of planned motion
-— any moving reference is tracked with the same systematic lag. It is
+any moving reference is tracked with the same systematic lag. It is
 applied to the planned trajectory as a reference-conditioning decorator
 (`LeadCompensatedSource`) and is deliberately left off configured
 trajectories so the measured reactive baseline stays comparable. The
@@ -242,7 +241,7 @@ which is a first-order lag,
 tau * edot + e = rdot / Kp,        tau = (1 + Kd) / Kp
 ```
 
-Two things follow, and the second is the point:
+Two things follow:
 
 - The time constant is `tau = (1 + Kd) / Kp`, so raising Kd makes the loop
   slower, not stiffer.
@@ -260,7 +259,7 @@ r = p_plan + pdot_plan / Kp
 
 Because the twist delivered alongside is deliberately the plan's TRUE
 twist, not the derivative of the prefiltered pose, this first-order form
-is the EXACT inverse of the closed loop above — an acceleration term would
+is the EXACT inverse of the closed loop above; an acceleration term would
 be injected error, not a refinement; at `Kp = 2` it was
 measured making tracking about 30x worse (10.5 mm instead of 0.34 mm on a
 3 s path).
@@ -268,8 +267,8 @@ measured making tracking about 30x worse (10.5 mm instead of 0.34 mm on a
 This is a prefilter on the reference, not a change to the controller, and
 it is switchable (`lead_compensation_enabled`) so the uncompensated
 reactive baseline stays measurable. When it is on, the commanded target is
-NOT the planned path — it leads it — and both `sim/planning_view.describe`
-and this document say so out loud, because a plot of the commanded target
+NOT the planned path; it leads it, and both `sim/planning_view.describe`
+and this document say so, because a plot of the commanded target
 will not lie on the planned line.
 
 ## Coexistence with the cylinder keep-out
@@ -284,8 +283,8 @@ router's waypoints are timed by the shared trajectory layer into an
 ordinary C2 path whose position and twist come from the same spline, and
 the Runner never rewrites anything.
 
-A planned arm is never routed — the optimiser already owns that path's
-clearance — and an unplanned arm's routed reach cannot touch the planned
+A planned arm is never routed (the optimiser already owns that path's
+clearance), and an unplanned arm's routed reach cannot touch the planned
 arm. The two mechanisms now compose per arm instead of excluding each
 other per run, and any result is attributable to exactly one of them.
 
@@ -334,8 +333,8 @@ The reported `iterations` is the solver's function-evaluation count.
 
 `draw(user_scn, plans, torso_pose_world)` appends a polyline of the
 planned path, a sphere at every knot with the two fixed endpoints coloured
-distinctly, and — only when the current torso pose differs from the pose
-the plan was made at — a faint second polyline through the same knots
+distinctly, and (only when the current torso pose differs from the pose
+the plan was made at) a faint second polyline through the same knots
 re-expressed under the current torso pose. That ghost is where the path
 would be if it had followed the wearer, so the gap between the two lines is
 the drift that `remaining_clearance` measures numerically. It respects the
@@ -343,9 +342,6 @@ same `ngeom < maxgeom` bound as the other views and returns the number of
 geoms it added. `main.py` wires both in whenever plans exist.
 
 ## Known limitations
-
-Stated plainly, because each of these is a real gap rather than a tuning
-detail.
 
 1. **End-effector only.** The planner reasons about the path of one
    Cartesian point. A collision-free end-effector path does not imply a
@@ -369,7 +365,7 @@ detail.
    world-frame path drifts relative to the torso-frame envelope and the
    guarantee weakens continuously. `remaining_clearance(plans, plant,
    planning_config)` is the signal for that, and
-   `replan_clearance_trigger_m` is the configured threshold — but no
+   `replan_clearance_trigger_m` is the configured threshold, but no
    shipped code polls it, so the trigger is a documented intention, not a
    behaviour.
 5. **Replanning does not exist.** Composition happens once, before the
@@ -398,7 +394,7 @@ once against the geometry visible at that instant, and the world is free to
 change afterwards. Every claim above is about a MuJoCo simulation with a
 static base and has no hardware evidence behind it.
 
-On the real system the ordering is unchanged and non-negotiable: the
+On the real system the ordering is unchanged: the
 reactive whole-arm safety filter, the joint limits, and an independent
 emergency stop are what keep a person safe. The planner's only safety
 contribution is that it hands the controller a reference that does not
