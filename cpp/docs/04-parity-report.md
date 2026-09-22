@@ -94,7 +94,8 @@ acceleration 1.13e-14, from the quintic coefficient solve.
 
 1. **MuJoCo and Pinocchio agree exactly.** Same binaries, same call order.
    `torso_position_m` and `sample_time_s` are bit-identical for all 500 rows,
-   and `q` is bit-identical until control feedback reaches it.
+   and on the pre-tuning trace `q` was bit-identical until control feedback
+   reached it.
 2. **Dense matrix products differ by one ULP.** `R_W_B * J_B` (3x3 times 3x7)
    and `T_W_B * T_B_E` (4x4) go through Eigen's GEMM in C++ and OpenBLAS/
    Accelerate's `cblas_dgemm` in NumPy. Different blocking, same mathematics,
@@ -151,7 +152,7 @@ rather than a loosened one.
    closed loop.** No run so far has produced a real safety stop, so the
    hold-and-report behaviour is verified only against constructed inputs.
 3. **Long-horizon divergence is unmeasured.** Parity is established over
-   4 sim-seconds. Since the loop is closed, the ~1e-12 residual is fed back;
+   0.5 sim-seconds today (4 s in the last headless run). Since the loop is closed, the ~1e-12 residual is fed back;
    whether it stays bounded over minutes has not been characterised.
 4. **The viewer is visually unverified.** It runs the same closed loop and
    draws the same overlay geometry, but no image comparison was made against
