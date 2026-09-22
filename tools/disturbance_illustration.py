@@ -54,6 +54,7 @@ if __name__ == "__main__":
     scale = mount_disturbance.pop_float_option(argv, "scale", 3.0)
     f_hz = mount_disturbance.pop_float_option(argv, "f", 1.0)
     OUT.mkdir(parents=True, exist_ok=True)
+    disturbance_run.world.model.site_rgba[:, 3] = 0.0   # hide frame-origin marker sites
 
     disturbance_run._camera = close_camera
     disturbance_run.GIF_SIZE = RENDER_SIZE
@@ -61,11 +62,11 @@ if __name__ == "__main__":
     disturbance_run.world.model.vis.global_.offheight = RENDER_SIZE[1]
     disturbance_run.GIF_FRAME_S = 0.02
     sweep._fundamental_hz[0] = f_hz
-    mount_disturbance.walk_params = sweep.fixed_amplitude_params
+    mount_disturbance.disturbance_params = sweep.fixed_amplitude_params
     settled, settle_s, rows, frames = disturbance_run.run(
         disturbance_run.world.SIDES, scale, sweep.AMPLITUDE_KEY, record_gif=True)
-    p = mount_disturbance.walk_params(scale=scale)
-    mount_disturbance.walk_params = sweep._table_params
+    p = mount_disturbance.disturbance_params(scale=scale)
+    mount_disturbance.disturbance_params = sweep._table_params
 
     t = disturbance_run._stack(rows, "t")
     on = t >= 0.0

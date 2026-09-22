@@ -77,7 +77,7 @@ def compare_one_speed(arms, scale, speed, record_gif):
 
     side = arms[0]
     t = np.array([r["t"] for r in results["baseline"]])
-    walking = t >= 0.0
+    after_onset = t >= 0.0
 
     report_style.apply()
     fig, axes = plt.subplots(2, 1, sharex=True,
@@ -91,9 +91,9 @@ def compare_one_speed(arms, scale, speed, record_gif):
         axes[0].plot(t, e, label=label, **style)
         axes[1].plot(t, e_rot, **style)
         summary[name] = dict(
-            rms=np.sqrt(np.mean(e[walking] ** 2)),
-            peak=e[walking].max(),
-            rot_rms=np.sqrt(np.mean(e_rot[walking] ** 2)),
+            rms=np.sqrt(np.mean(e[after_onset] ** 2)),
+            peak=e[after_onset].max(),
+            rot_rms=np.sqrt(np.mean(e_rot[after_onset] ** 2)),
         )
     axes[0].set_ylabel("end-effector position\nerror [mm]")
     axes[0].set_ylim(bottom=0)
@@ -125,7 +125,7 @@ def compare_one_speed(arms, scale, speed, record_gif):
 def main(argv):
     record_gif = "--no-gif" not in argv
     argv = [a for a in argv if a != "--no-gif"]
-    scale = mount_disturbance.pop_float_option(argv, "scale", mount_disturbance.GAIT_SCALE)
+    scale = mount_disturbance.pop_float_option(argv, "scale", mount_disturbance.AMPLITUDE_SCALE)
     speeds = [mount_disturbance.DEFAULT_SPEED_M_S]
     for a in list(argv):
         if a.startswith("--speeds="):
@@ -138,7 +138,7 @@ def main(argv):
     if f_hz is not None:
         import disturbance_freq_sweep as sweep
         sweep._fundamental_hz[0] = f_hz
-        mount_disturbance.walk_params = sweep.fixed_amplitude_params
+        mount_disturbance.disturbance_params = sweep.fixed_amplitude_params
         speeds = [sweep.AMPLITUDE_KEY]
     choice = argv[0] if argv else "both"
     arms = world.SIDES if choice == "both" else (choice,)

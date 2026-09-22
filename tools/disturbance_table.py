@@ -30,7 +30,7 @@ AXIS_STYLE = (("black", "-"), ("0.55", "-"), ("black", "--"))
 
 
 def profile(speed, strides=2, n=800):
-    p = mount_disturbance.walk_params(speed=speed)
+    p = mount_disturbance.disturbance_params(speed=speed)
     stride_s = 1.0 / p["linear_frequency"][1]
     t = np.linspace(0.0, strides * stride_s, n)
     pos = np.array([mount_disturbance.torso_pose_at(s, speed=speed)[0] for s in t])

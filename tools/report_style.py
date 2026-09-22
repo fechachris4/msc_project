@@ -16,7 +16,7 @@ FULL_WIDTH_IN = 6.3        # A4 text width; include with width=\\linewidth
 NO_CONTROL = dict(color="0.35", linestyle="--", linewidth=1.2)
 REACTIVE = dict(color="#0072B2", linestyle="-", linewidth=1.6)
 FEEDFORWARD = dict(color="#D55E00", linestyle="-", linewidth=1.6)
-NO_CONTROL_LABEL = "no control (arm rigid on mount)"
+NO_CONTROL_LABEL = "arms locked (no control)"
 REACTIVE_LABEL = "reactive control"
 FEEDFORWARD_LABEL = "reactive control + mount-velocity feedforward"
 

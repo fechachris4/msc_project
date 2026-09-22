@@ -210,7 +210,7 @@ def compose(panels, chart, x_of, y_span, t, readouts):
 def main(argv):
     f_hz = mount_disturbance.pop_float_option(argv, "f", 1.8)
     sweep._fundamental_hz[0] = f_hz
-    mount_disturbance.walk_params = sweep.fixed_amplitude_params
+    mount_disturbance.disturbance_params = sweep.fixed_amplitude_params
     OUT.mkdir(exist_ok=True)
 
     rows_r, snaps_r = record(ff_enabled=False)

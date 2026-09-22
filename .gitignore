@@ -5,6 +5,6 @@ __pycache__/
 .pytest_cache/
 
 # Generated experiment output (regenerate with the scripts in analysis/ and tools/)
-analysis/output*/
+**/analysis/output*/
 MUJOCO_LOG.TXT
 .DS_Store

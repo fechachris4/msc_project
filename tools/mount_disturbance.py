@@ -39,8 +39,8 @@ from sim import (  # noqa: E402
 # Hand-chosen disturbance table, keyed by a legacy selector (not a physical
 # speed). x, z and pitch oscillate at the fundamental f; y, roll and yaw at
 # the sub-harmonic f/2. Values between keys are linearly interpolated.
-DEFAULT_SPEED_M_S = 1.3
-GAIT_SCALE = 1.0           # multiplier on all amplitudes; >1 only for visibility
+DEFAULT_SPEED_M_S = 1.0     # row used in the README: f = 1.8 Hz
+AMPLITUDE_SCALE = 1.0           # multiplier on all amplitudes; >1 only for visibility
 _SPEED_TABLE = {           # key : (fundamental Hz, x, y, z mm, roll, pitch, yaw deg)
     0.5: (1.4, 4.0, 28.0, 8.0, 1.5, 1.0, 2.0),
     1.0: (1.8, 8.0, 22.0, 20.0, 2.0, 1.3, 3.0),
@@ -52,7 +52,7 @@ _SPEEDS = np.array(sorted(_SPEED_TABLE))
 _ROWS = np.array([_SPEED_TABLE[v] for v in _SPEEDS])
 
 
-def walk_params(scale=GAIT_SCALE, speed=DEFAULT_SPEED_M_S):
+def disturbance_params(scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
     step_hz, x, y, z, roll, pitch, yaw = (
         np.interp(speed, _SPEEDS, _ROWS[:, i]) for i in range(7))
     stride_hz = 0.5 * step_hz
@@ -68,20 +68,20 @@ def level_label(speed):
     """Report-facing name of a disturbance condition: its frequency only.
     Report figures use the key-1.0 amplitude row (see
     tools/disturbance_freq_sweep.py); other keys also change amplitude."""
-    f = walk_params(speed=speed)["linear_frequency"][0]
+    f = disturbance_params(speed=speed)["linear_frequency"][0]
     return f"f = {f:.2g} Hz"
 
 
-def torso_pose_at(t, scale=GAIT_SCALE, speed=DEFAULT_SPEED_M_S):
-    return motion.torso_pose_at(t, **walk_params(scale, speed))
+def torso_pose_at(t, scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
+    return motion.torso_pose_at(t, **disturbance_params(scale, speed))
 
 
-def torso_twist_at(t, scale=GAIT_SCALE, speed=DEFAULT_SPEED_M_S):
-    return motion.torso_twist_at(t, **walk_params(scale, speed))
+def torso_twist_at(t, scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
+    return motion.torso_twist_at(t, **disturbance_params(scale, speed))
 
 
-def describe(scale=GAIT_SCALE, speed=DEFAULT_SPEED_M_S):
-    p = walk_params(scale, speed)
+def describe(scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
+    p = disturbance_params(scale, speed)
     return (
         f"Scripted periodic mount disturbance, level {level_label(speed)} "
         f"(amplitude scale {scale:g}):\n"
@@ -125,7 +125,7 @@ def install_clean_overlay():
     human_safety_view.draw = draw_when_active
 
 
-def install_walking_torso(scale=GAIT_SCALE, speed=DEFAULT_SPEED_M_S):
+def install_mount_disturbance(scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
     """main() installs motion's zero-amplitude defaults; make the scripted disturbance win."""
     configure = world.backend.configure_torso_driver
     world.backend.configure_torso_driver = lambda pose_at, twist_at: configure(
@@ -144,12 +144,12 @@ def pop_float_option(argv, name, default):
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
-    scale = pop_float_option(argv, "scale", GAIT_SCALE)
+    scale = pop_float_option(argv, "scale", AMPLITUDE_SCALE)
     speed = pop_float_option(argv, "speed", DEFAULT_SPEED_M_S)
     if "--full-overlay" in argv:
         argv.remove("--full-overlay")
     else:
         install_clean_overlay()
     print(describe(scale, speed))
-    install_walking_torso(scale, speed)
+    install_mount_disturbance(scale, speed)
     main.main(argv)

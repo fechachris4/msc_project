@@ -10,7 +10,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import FancyBboxPatch  # noqa: E402
 
-OUT = Path("media")
+OUT = Path(__file__).resolve().parents[1] / "media"
 OUT.mkdir(parents=True, exist_ok=True)
 BOX = dict(boxstyle="round,pad=0.25", linewidth=1.0, edgecolor="black")
 CTRL, MEAS, PLANT = "#E8F1FA", "#F2F2F2", "#FBEFE3"
@@ -48,7 +48,7 @@ box(ax, xs[1], y0, w, h, "Errors", "$e_p,\\ e_R,\\ e_\\xi$\nin $W$", CTRL)
 box(ax, xs[2], y0, w, h, "PD law", "$\\dot x = Ke + K_d e_\\xi$\n$-\\ \\xi_{E,mount}$", CTRL)
 box(ax, xs[3], y0, w, h, "DLS, null space", "$\\dot q = J^{\\#}\\dot x$\n$+ (I-J^{\\#}J)\\,u$", CTRL)
 box(ax, xs[4], y0, w, h, "Safety filter", "arm spheres vs\nwearer cylinder,\njoint limits", CTRL)
-box(ax, xs[5], y0, w, h, "Integrate", "$q_{cmd} \\leftarrow q_{cmd}+\\dot q\\Delta t$\nrunaway stop", CTRL)
+box(ax, xs[5], y0, w, h, "Integrate", "$q_{cmd} \\leftarrow q_{cmd}+\\dot q\\Delta t$\nstop on runaway", CTRL)
 labels = [None, None, None, None, None]
 for i in range(5):
     arrow(ax, (xs[i] + w, y0 + h / 2), (xs[i + 1], y0 + h / 2), labels[i])
@@ -80,7 +80,7 @@ ax.plot([xk, xk, xe, xe], [y1 + h1, y1 + h1 + 1.5, y1 + h1 + 1.5, y0 - 0.02],
         color="black", linewidth=1.0)
 ax.annotate("", xy=(xe, y0), xytext=(xe, y0 - 0.3),
             arrowprops=dict(arrowstyle="-|>", linewidth=1.0, color="black"))
-ax.text(xe + 0.25, y1 + h1 + 1.6, "measured pose, twist",
+ax.text(xe + 0.15, y1 + h1 + 1.6, "measured pose, twist",
         ha="left", va="bottom", fontsize=FS_L - 0.5)
 xj = xs[3] + w / 2
 ax.plot([bx["kin"] + bw["kin"] - 1.2, bx["kin"] + bw["kin"] - 1.2, xj, xj],

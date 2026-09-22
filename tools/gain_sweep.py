@@ -184,7 +184,7 @@ def _conditions(speed):
 
 def kp_curves(rows, speed, path):
     import mount_disturbance
-    p = mount_disturbance.walk_params(speed=speed)
+    p = mount_disturbance.disturbance_params(speed=speed)
     import report_style
     report_style.apply()
     fig, ax = plt.subplots(figsize=(report_style.FULL_WIDTH_IN, 3.9),

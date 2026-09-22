@@ -363,7 +363,7 @@ def comparison_figure(results, arms, path):
     for speed in speeds:
         rows = results[speed]["rows"]
         t = _stack(rows, "t")
-        stride_s = 1.0 / mount_disturbance.walk_params(speed=speed)[
+        stride_s = 1.0 / mount_disturbance.disturbance_params(speed=speed)[
             "linear_frequency"][1]
         worst = max(arms, key=lambda a: results[speed]["summary"][a]["rms"])
         series = {
@@ -439,7 +439,7 @@ def _report_one(arms, scale, speed, record_gif):
 def main(argv):
     record_gif = "--no-gif" not in argv
     argv = [a for a in argv if a != "--no-gif"]
-    scale = mount_disturbance.pop_float_option(argv, "scale", mount_disturbance.GAIT_SCALE)
+    scale = mount_disturbance.pop_float_option(argv, "scale", mount_disturbance.AMPLITUDE_SCALE)
     speeds = [mount_disturbance.DEFAULT_SPEED_M_S]
     for a in list(argv):
         if a.startswith("--speeds="):
