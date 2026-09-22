@@ -4,7 +4,7 @@ Christian Akabueze · MSc Human and Biological Robotics, Imperial College London
 
 Two Kinova Gen3 arms are mounted on a person's torso as supernumerary robotic limbs. When the wearer walks, the mount bounces and sways, and anything the arms hold moves with it. I wanted to know how much of that motion a reactive controller can cancel, so the end-effectors stay fixed in the world rather than on the body.
 
-This repo is the MuJoCo simulation and controller I built for my MSc project, "World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Based Motion". Everything here runs in simulation. The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine.
+This repo is the MuJoCo simulation and controller I built for my MSc project, "World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Based Motion". The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine.
 
 ![Arms locked vs reactive vs reactive + feedforward](media/hold_pose.gif)
 

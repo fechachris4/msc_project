@@ -206,3 +206,14 @@ acceleration. Its convention is ascending-power quintic coefficients, global
 minimum-integrated-squared-jerk translation, zero endpoint derivatives, and
 principal-log SO(3) orientation legs. A C++ port compares with relative
 tolerance `1e-10` and absolute tolerance `1e-11`.
+
+## Look-at orientation
+
+An optional `[targets.<arm>.trajectory.orientation]` table replaces the
+segment RPY with a look-at policy: `"look_at_sim_object"` faces a named moving
+MuJoCo body (driven by `[simulation.look_at_object_motion]`), and
+`"look_at_fixed_world_point"` faces `object_position_world_m`. The tool's
+forward and up axes are given in the `left_pinch_site` frame
+(`tool_forward_axis`, `tool_up_axis`) and roll is resolved with
+`world_up_direction`. It cannot be combined with `end_rpy_rad` / `rpy_rad`.
+The commented block in `config/control.toml` is a working example.

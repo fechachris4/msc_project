@@ -3,8 +3,8 @@
 Disturbance model: each mount axis is A*sin(2*pi*f*t), at either a
 fundamental frequency f or its sub-harmonic f/2; no net translation. This is
 NOT a gait simulation and claims no biomechanical validity: amplitudes and
-frequencies are hand-chosen (_SPEED_TABLE) to give three reproducible
-disturbance conditions. Report figures hold the key-1.0 amplitudes fixed and
+frequencies are hand-chosen (_SPEED_TABLE) to give reproducible
+disturbance levels. Report figures hold the key-1.0 amplitudes fixed and
 vary only frequency (tools/disturbance_freq_sweep.py); --speed= is only the
 legacy key into that table. --scale=
 exaggerates the amplitudes for on-screen visibility only. Frame: torso home
