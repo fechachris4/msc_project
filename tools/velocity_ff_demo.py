@@ -43,7 +43,7 @@ SETTLE_TIMEOUT_S = 15.0
 SETTLE_POS_TOL_M = 0.002
 SETTLE_ROT_TOL_RAD = np.deg2rad(0.5)
 SETTLE_DWELL_S = 0.5
-DEFAULT_SPEED_M_S = 0.10
+DEFAULT_LEVEL = 0.10
 DEFAULT_DURATION_S = 3.0
 STEADY_STATE_FRACTION = 0.5  # ignore the initial transient when averaging
 
@@ -200,7 +200,7 @@ def compare(side, speed, duration_s):
 
 def main(argv):
     side = argv[0] if argv and not argv[0].startswith("--") else "right"
-    speed = DEFAULT_SPEED_M_S
+    speed = DEFAULT_LEVEL
     duration = DEFAULT_DURATION_S
     for a in list(argv):
         if a.startswith("--speed="):

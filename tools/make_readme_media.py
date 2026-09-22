@@ -68,7 +68,7 @@ class _StateRecorder:
         pass
 
 
-def record(ff_enabled):
+def record(ff_enabled, f_hz):
     config = dataclasses.replace(
         servo.CONTROL, velocity_feedforward_enabled=ff_enabled)
     real_renderer = mujoco.Renderer
@@ -77,7 +77,7 @@ def record(ff_enabled):
     try:
         settled, _, rows, _ = disturbance_run.run(
             world.SIDES, 1.0, sweep.AMPLITUDE_KEY, record_gif=True,
-            controller_config=config)
+            controller_config=config, f_hz=f_hz)
     finally:
         mujoco.Renderer = real_renderer
     assert settled, "arms did not settle before the disturbance"
@@ -209,12 +209,10 @@ def compose(panels, chart, x_of, y_span, t, readouts):
 
 def main(argv):
     f_hz = mount_disturbance.pop_float_option(argv, "f", 1.8)
-    sweep._fundamental_hz[0] = f_hz
-    mount_disturbance.disturbance_params = sweep.fixed_amplitude_params
     OUT.mkdir(exist_ok=True)
 
-    rows_r, snaps_r = record(ff_enabled=False)
-    rows_f, snaps_f = record(ff_enabled=True)
+    rows_r, snaps_r = record(ff_enabled=False, f_hz=f_hz)
+    rows_f, snaps_f = record(ff_enabled=True, f_hz=f_hz)
     series = {"locked": worst_error_mm(rows_r, "rigid_err"),
               "reactive": worst_error_mm(rows_r, "e_pos"),
               "ff": worst_error_mm(rows_f, "e_pos")}

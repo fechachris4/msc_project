@@ -48,11 +48,12 @@ def _stack(rows, key, side):
     return np.array([r[side][key] for r in rows])
 
 
-def _run_variant(arms, scale, speed, enabled, record_gif):
+def _run_variant(arms, scale, speed, enabled, record_gif, f_hz=None):
     config = dataclasses.replace(
         servo.CONTROL, velocity_feedforward_enabled=enabled)
     settled, settle_s, rows, frames_out = disturbance_run.run(
-        arms, scale, speed, record_gif=record_gif, controller_config=config)
+        arms, scale, speed, record_gif=record_gif, controller_config=config,
+        f_hz=f_hz)
     return settled, settle_s, rows, frames_out
 
 
@@ -63,13 +64,13 @@ def _save_gif(frames_out, path):
     print(f"  gif: {len(frames_out)} frames -> {path}")
 
 
-def compare_one_speed(arms, scale, speed, record_gif):
-    print(mount_disturbance.describe(scale, speed))
+def compare_one_speed(arms, scale, speed, record_gif, f_hz=None):
+    print(mount_disturbance.describe(scale, speed, f_hz))
     tag = f"v{speed:g}" + (f"_scale{scale:g}" if scale != 1.0 else "")
     results = {}
     for name, enabled, style, label in VARIANTS:
         settled, settle_s, rows, frames_out = _run_variant(
-            arms, scale, speed, enabled, record_gif)
+            arms, scale, speed, enabled, record_gif, f_hz)
         print(f"  [{name}] settled: {settled} after {settle_s:.2f} s")
         results[name] = rows
         if frames_out:
@@ -110,7 +111,7 @@ def compare_one_speed(arms, scale, speed, record_gif):
     change = 100.0 * (1.0 - ff_rms / base_rms) if base_rms else 0.0
     path = OUT / f"disturbance_ff_compare_{tag}.png"
     report_style.save(fig, path)
-    print(f"  caption facts: {side} arm, {mount_disturbance.level_label(speed)}, position "
+    print(f"  caption facts: {side} arm, {mount_disturbance.level_label(speed, f_hz)}, position "
           f"RMS {base_rms:.1f} -> {ff_rms:.1f} mm ({change:.0f}% lower)")
     print(f"  baseline  |e| RMS {summary['baseline']['rms']:.1f} mm, peak "
           f"{summary['baseline']['peak']:.1f} mm, rot RMS "
@@ -126,7 +127,7 @@ def main(argv):
     record_gif = "--no-gif" not in argv
     argv = [a for a in argv if a != "--no-gif"]
     scale = mount_disturbance.pop_float_option(argv, "scale", mount_disturbance.AMPLITUDE_SCALE)
-    speeds = [mount_disturbance.DEFAULT_SPEED_M_S]
+    speeds = [mount_disturbance.DEFAULT_LEVEL]
     for a in list(argv):
         if a.startswith("--speeds="):
             speeds = [float(v) for v in a.split("=", 1)[1].split(",")]
@@ -136,15 +137,12 @@ def main(argv):
         speeds = [speed]
     f_hz = mount_disturbance.pop_float_option(argv, "f", None)
     if f_hz is not None:
-        import disturbance_freq_sweep as sweep
-        sweep._fundamental_hz[0] = f_hz
-        mount_disturbance.disturbance_params = sweep.fixed_amplitude_params
-        speeds = [sweep.AMPLITUDE_KEY]
+        speeds = [mount_disturbance.DEFAULT_LEVEL]   # README amplitudes
     choice = argv[0] if argv else "both"
     arms = world.SIDES if choice == "both" else (choice,)
     OUT.mkdir(parents=True, exist_ok=True)
     for v in speeds:
-        compare_one_speed(arms, scale, v, record_gif)
+        compare_one_speed(arms, scale, v, record_gif, f_hz)
 
 
 if __name__ == "__main__":

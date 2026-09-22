@@ -39,7 +39,7 @@ from sim import (  # noqa: E402
 # Hand-chosen disturbance table, keyed by a legacy selector (not a physical
 # speed). x, z and pitch oscillate at the fundamental f; y, roll and yaw at
 # the sub-harmonic f/2. Values between keys are linearly interpolated.
-DEFAULT_SPEED_M_S = 1.0     # row used in the README: f = 1.8 Hz
+DEFAULT_LEVEL = 1.0         # row used in the README: f = 1.8 Hz
 AMPLITUDE_SCALE = 1.0           # multiplier on all amplitudes; >1 only for visibility
 _SPEED_TABLE = {           # key : (fundamental Hz, x, y, z mm, roll, pitch, yaw deg)
     0.5: (1.4, 4.0, 28.0, 8.0, 1.5, 1.0, 2.0),
@@ -52,9 +52,13 @@ _SPEEDS = np.array(sorted(_SPEED_TABLE))
 _ROWS = np.array([_SPEED_TABLE[v] for v in _SPEEDS])
 
 
-def disturbance_params(scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
+def disturbance_params(scale=AMPLITUDE_SCALE, speed=DEFAULT_LEVEL, f_hz=None):
+    """Amplitudes and frequencies for one level. f_hz, if given, keeps that
+    level's amplitudes and replaces its frequency (the frequency sweep)."""
     step_hz, x, y, z, roll, pitch, yaw = (
         np.interp(speed, _SPEEDS, _ROWS[:, i]) for i in range(7))
+    if f_hz is not None:
+        step_hz = f_hz
     stride_hz = 0.5 * step_hz
     return dict(
         linear_amplitude=scale * 1e-3 * np.array([x, y, z]),
@@ -64,26 +68,26 @@ def disturbance_params(scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
     )
 
 
-def level_label(speed):
+def level_label(speed, f_hz=None):
     """Report-facing name of a disturbance condition: its frequency only.
     Report figures use the key-1.0 amplitude row (see
     tools/disturbance_freq_sweep.py); other keys also change amplitude."""
-    f = disturbance_params(speed=speed)["linear_frequency"][0]
+    f = disturbance_params(speed=speed, f_hz=f_hz)["linear_frequency"][0]
     return f"f = {f:.2g} Hz"
 
 
-def torso_pose_at(t, scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
-    return motion.torso_pose_at(t, **disturbance_params(scale, speed))
+def torso_pose_at(t, scale=AMPLITUDE_SCALE, speed=DEFAULT_LEVEL, f_hz=None):
+    return motion.torso_pose_at(t, **disturbance_params(scale, speed, f_hz))
 
 
-def torso_twist_at(t, scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
-    return motion.torso_twist_at(t, **disturbance_params(scale, speed))
+def torso_twist_at(t, scale=AMPLITUDE_SCALE, speed=DEFAULT_LEVEL, f_hz=None):
+    return motion.torso_twist_at(t, **disturbance_params(scale, speed, f_hz))
 
 
-def describe(scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
-    p = disturbance_params(scale, speed)
+def describe(scale=AMPLITUDE_SCALE, speed=DEFAULT_LEVEL, f_hz=None):
+    p = disturbance_params(scale, speed, f_hz)
     return (
-        f"Scripted periodic mount disturbance, level {level_label(speed)} "
+        f"Scripted periodic mount disturbance, level {level_label(speed, f_hz)} "
         f"(amplitude scale {scale:g}):\n"
         f"  linear amp (mm)      {np.round(1e3 * p['linear_amplitude'], 1)}"
         f"  @ {p['linear_frequency']} Hz\n"
@@ -125,7 +129,7 @@ def install_clean_overlay():
     human_safety_view.draw = draw_when_active
 
 
-def install_mount_disturbance(scale=AMPLITUDE_SCALE, speed=DEFAULT_SPEED_M_S):
+def install_mount_disturbance(scale=AMPLITUDE_SCALE, speed=DEFAULT_LEVEL):
     """main() installs motion's zero-amplitude defaults; make the scripted disturbance win."""
     configure = world.backend.configure_torso_driver
     world.backend.configure_torso_driver = lambda pose_at, twist_at: configure(
@@ -145,7 +149,7 @@ def pop_float_option(argv, name, default):
 if __name__ == "__main__":
     argv = sys.argv[1:]
     scale = pop_float_option(argv, "scale", AMPLITUDE_SCALE)
-    speed = pop_float_option(argv, "speed", DEFAULT_SPEED_M_S)
+    speed = pop_float_option(argv, "speed", DEFAULT_LEVEL)
     if "--full-overlay" in argv:
         argv.remove("--full-overlay")
     else:

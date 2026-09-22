@@ -34,16 +34,6 @@ OUT = Path("analysis/output/disturbance")
 AMPLITUDE_KEY = 1.0        # table row whose amplitudes are held fixed
 FREQS_HZ = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]   # add 1.8 to re-check vs --speed=1.0
 
-_table_params = mount_disturbance.disturbance_params
-_fundamental_hz = [None]
-
-
-def fixed_amplitude_params(scale=mount_disturbance.AMPLITUDE_SCALE, speed=None):
-    p = _table_params(scale=scale, speed=AMPLITUDE_KEY)
-    f = _fundamental_hz[0]
-    p["linear_frequency"] = np.array([f, 0.5 * f, f])
-    p["rotational_frequency"] = np.array([0.5 * f, f, 0.5 * f])
-    return p
 
 
 def _per_period_rms(t, series, period_s, dt=0.002):
@@ -59,13 +49,8 @@ def _per_period_rms(t, series, period_s, dt=0.002):
 
 
 def run_one(f_hz, arms):
-    _fundamental_hz[0] = f_hz
-    mount_disturbance.disturbance_params = fixed_amplitude_params
-    try:
-        settled, settle_s, rows, _ = disturbance_run.run(
-            arms, 1.0, AMPLITUDE_KEY, record_gif=False)
-    finally:
-        mount_disturbance.disturbance_params = _table_params
+    settled, settle_s, rows, _ = disturbance_run.run(
+        arms, 1.0, AMPLITUDE_KEY, record_gif=False, f_hz=f_hz)
     t = disturbance_run._stack(rows, "t")
     on = t >= 0.0
     # Worst arm. Value = RMS over the whole 8 s; *_sd = SD of the RMS of each
@@ -111,10 +96,8 @@ def figure(rows, path):
     axes = [fig.add_subplot(grid[1, 0]), fig.add_subplot(grid[1, 1])]
     ts = np.linspace(0.0, 2.0, 600)
     for f_hz, col in ((f.min(), "0.6"), (f.max(), "black")):
-        _fundamental_hz[0] = f_hz
-        mount_disturbance.disturbance_params = fixed_amplitude_params
-        z = [mount_disturbance.torso_pose_at(s, speed=AMPLITUDE_KEY)[0][2] for s in ts]
-        mount_disturbance.disturbance_params = _table_params
+        z = [mount_disturbance.torso_pose_at(s, speed=AMPLITUDE_KEY, f_hz=f_hz)[0][2]
+             for s in ts]
         ax_how.plot(ts, 1e3 * (np.array(z) - z[0]), color=col, linewidth=1.4,
                     label=f"f = {f_hz:g} Hz")
     ax_how.set_xlabel("time [s]")
@@ -146,7 +129,7 @@ def figure(rows, path):
 
 def write_report_text(rows, path):
     """Markdown table, LaTeX tabular and caption for the report."""
-    p = _table_params(speed=AMPLITUDE_KEY)
+    p = mount_disturbance.disturbance_params(speed=AMPLITUDE_KEY)
     lin = 1e3 * p["linear_amplitude"]
     rot = np.degrees(p["rotational_amplitude"])
     md = ["| f [Hz] | position RMS [mm] | removed | orientation RMS [deg] "

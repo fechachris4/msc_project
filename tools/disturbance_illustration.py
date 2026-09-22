@@ -61,12 +61,11 @@ if __name__ == "__main__":
     disturbance_run.world.model.vis.global_.offwidth = RENDER_SIZE[0]
     disturbance_run.world.model.vis.global_.offheight = RENDER_SIZE[1]
     disturbance_run.GIF_FRAME_S = 0.02
-    sweep._fundamental_hz[0] = f_hz
-    mount_disturbance.disturbance_params = sweep.fixed_amplitude_params
     settled, settle_s, rows, frames = disturbance_run.run(
-        disturbance_run.world.SIDES, scale, sweep.AMPLITUDE_KEY, record_gif=True)
-    p = mount_disturbance.disturbance_params(scale=scale)
-    mount_disturbance.disturbance_params = sweep._table_params
+        disturbance_run.world.SIDES, scale, sweep.AMPLITUDE_KEY, record_gif=True,
+        f_hz=f_hz)
+    p = mount_disturbance.disturbance_params(scale=scale, speed=sweep.AMPLITUDE_KEY,
+                                             f_hz=f_hz)
 
     t = disturbance_run._stack(rows, "t")
     on = t >= 0.0

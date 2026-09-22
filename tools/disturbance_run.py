@@ -29,7 +29,6 @@ import report_style  # noqa: E402
 import mount_disturbance  # noqa: E402
 from controller import desired_pos, frames, reactive_controller  # noqa: E402
 from controller.runner import ReactivePositionRunner  # noqa: E402
-from controller.transforms import rotation_from_rpy  # noqa: E402
 from sim import motion, world  # noqa: E402
 
 OUT = Path("analysis/output/disturbance")
@@ -50,9 +49,10 @@ ARM_STYLE = {"right": dict(color="black", linestyle="-"),
 class WalkingTorsoDriver:
     """Static until start_walking(t0); then the disturbance, phase-aligned to t0."""
 
-    def __init__(self, scale, speed):
+    def __init__(self, scale, speed, f_hz=None):
         self.scale = scale
         self.speed = speed
+        self.f_hz = f_hz
         self.t0 = None
 
     def start_walking(self, t0):
@@ -61,12 +61,14 @@ class WalkingTorsoDriver:
     def pose_at(self, t):
         if self.t0 is None or t < self.t0:
             return motion.HOME_POS.copy(), motion.HOME_RPY.copy()
-        return mount_disturbance.torso_pose_at(t - self.t0, scale=self.scale, speed=self.speed)
+        return mount_disturbance.torso_pose_at(
+            t - self.t0, scale=self.scale, speed=self.speed, f_hz=self.f_hz)
 
     def twist_at(self, t):
         if self.t0 is None or t < self.t0:
             return np.zeros(3), np.zeros(3)
-        return mount_disturbance.torso_twist_at(t - self.t0, scale=self.scale, speed=self.speed)
+        return mount_disturbance.torso_twist_at(
+            t - self.t0, scale=self.scale, speed=self.speed, f_hz=self.f_hz)
 
 
 def _within_tolerance(runner, targets, arms):
@@ -93,12 +95,12 @@ def _camera():
     return cam
 
 
-def run(arms, scale, speed, record_gif=True, controller_config=None):
+def run(arms, scale, speed, record_gif=True, controller_config=None, f_hz=None):
     world.backend.release()
     world.backend.configure_torso_driver(None, None)
     world.backend.reset()
     targets = desired_pos.apply()
-    driver = WalkingTorsoDriver(scale, speed)
+    driver = WalkingTorsoDriver(scale, speed, f_hz)
     world.backend.configure_torso_driver(driver.pose_at, driver.twist_at)
     runner_kwargs = {}
     if controller_config is not None:
@@ -263,8 +265,6 @@ def figure(rows, arms, path, speed):
         ax.axvline(0.0, color="0.6", linewidth=0.8, linestyle=":")
         ax.axhline(0.0, color="0.7", linewidth=0.5, zorder=0)
     report_style.panel_letters(axes, x=-0.07)
-    worst = max(summary.values(), key=lambda s: s["rms"])
-    reduction = 100.0 * (1.0 - worst["rms"] / worst["rigid_rms"])
     fig.savefig(path, dpi=200)
     fig.savefig(Path(path).with_suffix(".pdf"))
     plt.close(fig)
@@ -440,7 +440,7 @@ def main(argv):
     record_gif = "--no-gif" not in argv
     argv = [a for a in argv if a != "--no-gif"]
     scale = mount_disturbance.pop_float_option(argv, "scale", mount_disturbance.AMPLITUDE_SCALE)
-    speeds = [mount_disturbance.DEFAULT_SPEED_M_S]
+    speeds = [mount_disturbance.DEFAULT_LEVEL]
     for a in list(argv):
         if a.startswith("--speeds="):
             speeds = [float(v) for v in a.split("=", 1)[1].split(",")]
