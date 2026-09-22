@@ -139,8 +139,8 @@ def twist_error(state, target):
     )
 
 
-def task_twist_terms(e_pos, e_rot, e_v, e_w, config):
-    """Equation 3: xdot_task = Kp * pose_error + Kd * twist_error."""
+def task_twist_terms(e_pos, e_rot, e_v, e_w, target_v, target_w, config):
+    """Equation 3: xdot_task = Kp*pose_error + Kd*twist_error + ff*target_twist."""
     p_twist = np.concatenate([
         config.kp_position_s_inv * e_pos
         if config.position_enabled else np.zeros(3),
@@ -154,7 +154,11 @@ def task_twist_terms(e_pos, e_rot, e_v, e_w, config):
         ])
         if config.velocity_enabled else np.zeros(6)
     )
-    return p_twist, d_twist
+    ff_twist = (
+        np.concatenate([target_v, target_w])
+        if config.velocity_feedforward_enabled else np.zeros(6)
+    )
+    return p_twist, d_twist, ff_twist
 
 
 def solve_reactive_velocity(
@@ -163,19 +167,21 @@ def solve_reactive_velocity(
     e_rot,
     e_v,
     e_w,
+    target_v,
+    target_w,
     joint_position_rad,
     joint_midpoint_rad,
     null_gain_s_inv,
     config,
     damping=None,
 ):
-    """Equations 3-6: PD + DLS + null-space requested joint velocity."""
+    """Equations 3-6: PD + FF + DLS + null-space requested joint velocity."""
     damping = config.dls_damping if damping is None else damping
 
     # Equation 3: desired world-frame task twist.
-    p_twist, d_twist = task_twist_terms(
-        e_pos, e_rot, e_v, e_w, config)
-    task_twist = p_twist + d_twist
+    p_twist, d_twist, ff_twist = task_twist_terms(
+        e_pos, e_rot, e_v, e_w, target_v, target_w, config)
+    task_twist = p_twist + d_twist + ff_twist
 
     # Equation 4: damped least-squares inverse kinematics.
     qdot_task = jacobian_world.T @ np.linalg.solve(
@@ -197,6 +203,7 @@ def solve_reactive_velocity(
     return ReactiveSolve(
         p_twist=p_twist,
         d_twist=d_twist,
+        ff_twist=ff_twist,
         task_twist=task_twist,
         qdot_task=qdot_task,
         qdot_null_objective=qdot_null_objective,
@@ -474,12 +481,26 @@ class ReactiveController:
     def compute(self, state, target):
         e_pos, e_rot = pose_error(state, target)
         e_v, e_w = twist_error(state, target)
+        # The mount (torso) keeps moving the EE regardless of what the arm
+        # is commanded to do; the arm's own contribution to ee_twist_world
+        # is jacobian_world @ qdot, so subtracting it from the measured
+        # total isolates the currently-known torso-induced EE velocity.
+        # Feeding forward target_twist minus this disturbance commands the
+        # arm to pre-empt the mount's motion instead of only reacting to
+        # the pose/twist error it leaves behind.
+        arm_twist = state.jacobian_world @ state.joints.velocity_rad_s
+        mount_disturbance_v = state.ee_twist_world.linear_m_s - arm_twist[:3]
+        mount_disturbance_w = state.ee_twist_world.angular_rad_s - arm_twist[3:]
+        target_v = target.twist_world.linear_m_s - mount_disturbance_v
+        target_w = target.twist_world.angular_rad_s - mount_disturbance_w
         solve = solve_reactive_velocity(
             state.jacobian_world,
             e_pos,
             e_rot,
             e_v,
             e_w,
+            target_v,
+            target_w,
             state.joints.position_rad,
             self._centering.midpoint_rad,
             self._centering.enabled * self._config.null_gain_s_inv,
@@ -519,6 +540,7 @@ class JointCentering:
 class ReactiveSolve:
     p_twist: np.ndarray
     d_twist: np.ndarray
+    ff_twist: np.ndarray
     task_twist: np.ndarray
     qdot_task: np.ndarray
     qdot_null_objective: np.ndarray

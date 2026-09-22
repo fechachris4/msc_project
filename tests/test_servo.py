@@ -34,6 +34,8 @@ def _solve_qdot(
     null_gain,
     control,
     damping=None,
+    target_v=None,
+    target_w=None,
 ):
     return reactive_controller.solve_reactive_velocity(
         J,
@@ -41,6 +43,8 @@ def _solve_qdot(
         e_rot,
         e_v,
         e_w,
+        np.zeros(3) if target_v is None else target_v,
+        np.zeros(3) if target_w is None else target_w,
         q,
         q_mid,
         null_gain,

@@ -53,6 +53,7 @@ class ControlTrace:
     e_w: np.ndarray
     p_twist: np.ndarray
     d_twist: np.ndarray
+    ff_twist: np.ndarray
     task_twist: np.ndarray
     q: np.ndarray
     qdot_measured: np.ndarray
@@ -221,6 +222,7 @@ class ArmControlPipeline:
             e_w=output.e_w,
             p_twist=output.solve.p_twist,
             d_twist=output.solve.d_twist,
+            ff_twist=output.solve.ff_twist,
             task_twist=output.solve.task_twist,
             q=state.joints.position_rad,
             qdot_measured=state.joints.velocity_rad_s,

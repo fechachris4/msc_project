@@ -9,6 +9,8 @@ cannot pass the suite unnoticed.
 
 import unittest
 from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -156,6 +158,46 @@ class BuildFlowsCompositionTest(unittest.TestCase):
             plan.goal_pose_world.position_m, (0.50, -0.30, 0.90),
             rtol=0.0, atol=1e-12,
         )
+
+    def test_failed_plan_is_rejected_before_it_becomes_a_target_source(self):
+        config = replace(
+            CONFIG,
+            planning=replace(
+                CONFIG.planning, enabled=True, arm="right"
+            ),
+            right_target=replace(CONFIG.right_target, trajectory=None),
+        )
+        failed = SimpleNamespace(
+            result=SimpleNamespace(
+                success=False,
+                message="requested clearance was not met",
+                collision_free=True,
+                margin_met=False,
+                final_min_clearance_m=0.042496,
+            )
+        )
+        plant = _fresh_default_plant()
+        static_targets = desired_pos.configured_targets(config)
+        keepout = arm_flow.keepout_from_config(
+            config.cylinder_keepout
+        )
+
+        with patch.object(
+            arm_flow.planner, "plan_arm", return_value=failed
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "right planner rejected.*margin_met=False",
+            ):
+                arm_flow.build_arm_flow(
+                    world.backend,
+                    world.MOUNT_CALIBRATION,
+                    "right",
+                    plant,
+                    static_targets,
+                    keepout,
+                    config=config,
+                )
 
 
 if __name__ == "__main__":

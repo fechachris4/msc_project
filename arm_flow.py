@@ -256,6 +256,15 @@ def build_arm_flow(
             target_config=config.target(side),
             human_safety_config=config.human_safety,
         )
+        if not plan.result.success:
+            raise RuntimeError(
+                f"{side} planner rejected its path: "
+                f"{plan.result.message}; "
+                f"collision_free={plan.result.collision_free}, "
+                f"margin_met={plan.result.margin_met}, "
+                f"final_clearance_m="
+                f"{plan.result.final_min_clearance_m:.6f}"
+            )
         return ArmFlow(
             side=side,
             kind="planned",

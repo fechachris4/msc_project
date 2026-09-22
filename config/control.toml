@@ -22,6 +22,10 @@ dls_damping = 0.05
 position_enabled = true
 orientation_enabled = true
 velocity_enabled = true
+# Adds target.twist_world (path velocity and/or torso-motion cross term)
+# directly into the commanded task twist, undamped. Off = current baseline
+# (PD-on-error only). See tools/walk_sim.py for scenario-isolated testing.
+velocity_feedforward_enabled = false
 
 [limits]
 joint_velocity_rad_s = [
@@ -64,7 +68,7 @@ constraint_tolerance_m_s = 1e-6
 # path. Configured trajectories and planned paths are not routed: their
 # authors (or the planner) own their clearance.
 [cylinder_keepout]
-cylinder_keepout_enabled = false
+cylinder_keepout_enabled = true
 cylinder_keepout_center_x_m = 0.0
 cylinder_keepout_center_y_m = 0.0
 cylinder_keepout_radius_m = 0.25
@@ -117,13 +121,15 @@ max_angular_acceleration_rad_s2 = 1.5
 [targets.right]
 reference_frame = "world"
 # Active right-arm planner goal.
-position_m = [0.3, -0.04, 1.4]
-rpy_rad = [0.0, 1.6, 1.3]
+position_m = [0.40, -0.30, 1.30]
+rpy_rad = [1.5708, 0.0, 1.5708]
 
 [targets.left]
 reference_frame = "world"
-position_m = [0.45, 0.30, 1.20]
-rpy_rad = [0.0, 0.0, 0.0]
+position_m = [0.40, 0.30, 1.30]
+# Mirror of the right-arm goal orientation across the torso xz-plane, so the
+# left tool faces the wearer the same way the right one does.
+rpy_rad = [1.5708, 0.0, 1.5708]
 
 # LEFT POSITION TRAJECTORY
 #

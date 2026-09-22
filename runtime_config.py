@@ -49,6 +49,7 @@ class ReactivePoseConfig:
     position_enabled: bool
     orientation_enabled: bool
     velocity_enabled: bool
+    velocity_feedforward_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -270,6 +271,7 @@ _REACTIVE_KEYS = {
     "position_enabled",
     "orientation_enabled",
     "velocity_enabled",
+    "velocity_feedforward_enabled",
 }
 _LIMIT_KEYS = {"joint_velocity_rad_s", "position_lead_rad"}
 _CYLINDER_KEEPOUT_KEYS = {
@@ -473,6 +475,10 @@ def _parse_reactive_pose(table):
         velocity_enabled=_boolean(
             table["velocity_enabled"],
             "controller.reactive_pose.velocity_enabled",
+        ),
+        velocity_feedforward_enabled=_boolean(
+            table["velocity_feedforward_enabled"],
+            "controller.reactive_pose.velocity_feedforward_enabled",
         ),
     )
     if config.position_enabled and config.kp_position_s_inv <= 0.0:

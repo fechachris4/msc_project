@@ -112,7 +112,7 @@ class ControlTraceTest(unittest.TestCase):
             [field.name for field in dataclasses.fields(trace)],
             [
                 "J", "e_pos", "e_rot", "e_v", "e_w",
-                "p_twist", "d_twist", "task_twist", "q",
+                "p_twist", "d_twist", "ff_twist", "task_twist", "q",
                 "qdot_measured", "qdot_raw", "qdot_speed_clipped",
                 "qdot_safety_filtered", "qdot_effective",
                 "ctrl_before", "ctrl_after",
@@ -296,6 +296,7 @@ class ControlTraceTest(unittest.TestCase):
             trace.qdot_raw,
             reactive_controller.solve_reactive_velocity(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
+                np.zeros(3), np.zeros(3),
                 trace.q, centering.midpoint_rad, null_gain,
                 servo.CONTROL,
             ).qdot_raw,
@@ -372,7 +373,8 @@ class ControlTraceTest(unittest.TestCase):
         expected_shapes = {
             "J": (6, 7),
             "e_pos": (3,), "e_rot": (3,), "e_v": (3,), "e_w": (3,),
-            "p_twist": (6,), "d_twist": (6,), "task_twist": (6,),
+            "p_twist": (6,), "d_twist": (6,), "ff_twist": (6,),
+            "task_twist": (6,),
             "q": (7,), "qdot_measured": (7,), "qdot_raw": (7,),
             "qdot_speed_clipped": (7,),
             "qdot_safety_filtered": (7,), "qdot_effective": (7,),
@@ -424,6 +426,7 @@ class ComponentTogglesTest(unittest.TestCase):
             trace.qdot_raw,
             reactive_controller.solve_reactive_velocity(
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
+                np.zeros(3), np.zeros(3),
                 trace.q, centering.midpoint_rad, null_gain,
                 self.control,
             ).qdot_raw,
