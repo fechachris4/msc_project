@@ -33,7 +33,7 @@ from sim import motion, targets, world
 # Pinned scenario (independent of the motion module's research levers):
 # rotation nonzero to exercise the w x r transport term, but modest —
 # the right arm hits the torso near +15.6 deg roll
-# (docs/diagnosis.md) and this comparison wants no contact.
+# (a torso-contact regime) and this comparison wants no contact.
 SCENARIO = dict(
     linear_amplitude=np.array([0.05, 0.02, 0.01]),   # m
     linear_frequency=0.5,                            # Hz

@@ -9,8 +9,8 @@ one or both arms.
 
 Base motion follows the public research levers in sim.motion. Every
 per-tick quantity comes from the explicit controller state and immutable
-ControlTrace produced by the real pipeline — the analysis/diagnose.py
-convention: the dashboard shows exactly what the controller saw.
+ControlTrace produced by the real pipeline, so the dashboard shows
+exactly what the controller saw.
 
 Panels (top to bottom), sharing the time axis:
   1-3. world x, y, z: signed per-axis error (mm, e = ref - actual) —
@@ -19,8 +19,7 @@ Panels (top to bottom), sharing the time axis:
      Monospace readout on panel 1: RMS / peak / rejection % per side
      over the current window (rejection = 1 - peak|e|/peak|base disp|,
      both norm-based — analysis/metrics.py's windowed_stats).
-  4. |e_rot| per side (deg) — orientation error, plotted nowhere else in
-     this repo (only printed in diagnose.py's summary).
+  4. |e_rot| per side (deg): orientation error.
   5. Saturation headroom: 100 * max_i|qdot_raw_i|/QDOT_LIMIT_i per side,
      pre-clip, red 100% line (the one physical-limit line on this figure).
   6. sigma_min(J) per side, semilogy, grey lines at the configured DLS
@@ -288,7 +287,7 @@ def run(arms, save_seconds=None):
         if save_seconds is None:
             plt.pause(0.001)
 
-    # --- main loop (mirrors analysis/diagnose.py's ordering) -------------
+    # --- main loop (same ordering as main.py) -------------
     step = 0
     while True:
         if n_steps is not None:
@@ -300,7 +299,7 @@ def run(arms, save_seconds=None):
         t = world.data.time - t_start
         motion.set_torso_pose(t)
         # refresh xpos/xmat so every quantity below sees the torso pose
-        # at t, not the previous step's (main.py / diagnose.py pattern)
+        # at t, not the previous step's (main.py pattern)
         mujoco.mj_kinematics(world.model, world.data)
         # set_torso_pose (mocap write) and torso_twist_at (feedforward)
         # must stay a matched pair — same scenario, same instant t.

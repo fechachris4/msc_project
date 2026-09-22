@@ -9,7 +9,6 @@ from controller import desired_pos
 from controller.state import Pose, Twist
 from controller.trajectory_config import materialize_trajectory
 from runtime_config import (
-    CONFIG,
     TargetTrajectoryConfig,
     TrajectoryConstraintsConfig,
     TrajectorySegmentConfig,
@@ -20,6 +19,10 @@ from sim.target_trajectory import (
     apply_initial_postures,
     prepare_target_trajectory,
 )
+
+FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "control.toml"
+CONFIG = load_config(FIXTURE_CONFIG)
+
 
 
 def _without_left_trajectory(source):

@@ -11,7 +11,6 @@ from controller.runner import ReactivePositionRunner
 from controller.state import Pose, Twist
 from controller.trajectory import IndependentArmTargetSource, StaticTargetSource
 from runtime_config import (
-    CONFIG,
     LookAtObjectMotionConfig,
     TargetTrajectoryConfig,
     TrajectoryConstraintsConfig,
@@ -28,6 +27,10 @@ from sim.target_trajectory import (
     apply_initial_postures,
     prepare_target_trajectory,
 )
+
+FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "control.toml"
+CONFIG = load_config(FIXTURE_CONFIG)
+
 
 
 def _replace_left_trajectory(source, trajectory):

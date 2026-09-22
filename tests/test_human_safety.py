@@ -17,7 +17,15 @@ from controller.state import (
     Twist,
 )
 from controller.trajectory import StaticDualArmTargetSource
-from runtime_config import CONFIG, HumanSafetyConfig
+from pathlib import Path
+
+from runtime_config import HumanSafetyConfig, load_config
+
+# Frozen envelope (radius 0.25 m, activation 0.10 m) so the avoidance
+# scenarios keep exercising the filter when the tuned config changes.
+CONFIG = load_config(
+    Path(__file__).resolve().parent / "fixtures" / "control.toml"
+)
 from sim.world import MujocoBackend
 
 

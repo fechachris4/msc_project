@@ -10,6 +10,14 @@ from controller.transforms import rotation_about_axis
 from controller import reactive_controller
 from controller.position_actuation import PositionIntegrator
 from tests.control_test_support import apply_cycle, reconstruct_pipeline
+from pathlib import Path
+from runtime_config import load_config
+
+# Pinned expected values below were computed with these fixture gains, so
+# retuning config/control.toml does not invalidate the math checks.
+FIXTURE_CONTROL = load_config(
+    Path(__file__).resolve().parent / "fixtures" / "control.toml"
+).reactive_pose
 
 
 HOME = np.array([
@@ -58,7 +66,7 @@ def _setup_scene():
     """Right arm at HOME with a known joint velocity and a known pose
     offset to the target — shared by ControlTraceTest and
     ComponentTogglesTest."""
-    from controller import frames, servo
+    from controller import frames
     from sim import targets, world
 
     mujoco.mj_resetData(world.model, world.data)
@@ -83,7 +91,7 @@ def _setup_scene():
     mujoco.mju_mat2Quat(quat, ref_rot.flatten())
     targets.set_target("right", pos + np.array([0.35, -0.22, 0.18]))
     targets.set_target_quat("right", quat)
-    return reconstruct_pipeline()
+    return reconstruct_pipeline(FIXTURE_CONTROL)
 
 
 class ControlTraceTest(unittest.TestCase):
@@ -176,7 +184,6 @@ class ControlTraceTest(unittest.TestCase):
         )
 
     def test_trace_owns_read_only_arrays_and_is_frozen(self):
-        from controller import servo
         from sim import world
 
         traces = apply_cycle(
@@ -208,7 +215,6 @@ class ControlTraceTest(unittest.TestCase):
             np.testing.assert_array_equal(getattr(trace, name), expected)
 
     def test_trace_array_buffers_cannot_be_made_writeable(self):
-        from controller import servo
         from sim import world
 
         trace = apply_cycle(
@@ -222,7 +228,6 @@ class ControlTraceTest(unittest.TestCase):
                 getattr(trace, field.name).setflags(write=True)
 
     def test_invalid_dt_fails_before_ctrl_mutation(self):
-        from controller import servo
         from sim import world
 
         ctrl_before = world.data.ctrl.copy()
@@ -234,7 +239,6 @@ class ControlTraceTest(unittest.TestCase):
                 np.testing.assert_array_equal(world.data.ctrl, ctrl_before)
 
     def test_pd_twist_terms_follow_gains(self):
-        from controller import servo
         from sim import world
 
         trace = apply_cycle(
@@ -247,8 +251,8 @@ class ControlTraceTest(unittest.TestCase):
             trace.p_twist,
             np.concatenate(
                 [
-                    servo.CONTROL.kp_position_s_inv * trace.e_pos,
-                    servo.CONTROL.kp_rotation_s_inv * trace.e_rot,
+                    FIXTURE_CONTROL.kp_position_s_inv * trace.e_pos,
+                    FIXTURE_CONTROL.kp_rotation_s_inv * trace.e_rot,
                 ]
             ),
         )
@@ -256,8 +260,8 @@ class ControlTraceTest(unittest.TestCase):
             trace.d_twist,
             np.concatenate(
                 [
-                    servo.CONTROL.kd_position * trace.e_v,
-                    servo.CONTROL.kd_rotation * trace.e_w,
+                    FIXTURE_CONTROL.kd_position * trace.e_v,
+                    FIXTURE_CONTROL.kd_rotation * trace.e_w,
                 ]
             ),
         )
@@ -269,7 +273,6 @@ class ControlTraceTest(unittest.TestCase):
         and apply_ctrl's inlined control law must stay numerically
         identical to the standalone qdot_from_error the analysis
         scripts use."""
-        from controller import servo
         from sim import world
 
         trace = apply_cycle(
@@ -280,12 +283,12 @@ class ControlTraceTest(unittest.TestCase):
         )["right"]
 
         qdot_task = trace.J.T @ np.linalg.solve(
-            trace.J @ trace.J.T + servo.CONTROL.dls_damping**2 * np.eye(6),
+            trace.J @ trace.J.T + FIXTURE_CONTROL.dls_damping**2 * np.eye(6),
             trace.task_twist,
         )
         projector = np.eye(7) - np.linalg.pinv(trace.J) @ trace.J
         centering = world.PIPELINE_SETUP.right.centering
-        null_gain = centering.enabled * servo.CONTROL.null_gain_s_inv
+        null_gain = centering.enabled * FIXTURE_CONTROL.null_gain_s_inv
         qdot_null = -null_gain * (
             trace.q - centering.midpoint_rad)
         np.testing.assert_allclose(
@@ -298,12 +301,11 @@ class ControlTraceTest(unittest.TestCase):
                 trace.J, trace.e_pos, trace.e_rot, trace.e_v, trace.e_w,
                 np.zeros(3), np.zeros(3),
                 trace.q, centering.midpoint_rad, null_gain,
-                servo.CONTROL,
+                FIXTURE_CONTROL,
             ).qdot_raw,
             atol=1e-12, rtol=0.0)
 
     def test_lead_clamp_mask_and_effective_rate(self):
-        from controller import servo
 
         trace = apply_cycle(
             self.pipeline, 1.0, BASE_TWIST, arms=("right",))["right"]
@@ -334,7 +336,6 @@ class ControlTraceTest(unittest.TestCase):
             atol=1e-12, rtol=0.0)
 
     def test_actuator_range_clamp_mask_and_effective_rate(self):
-        from controller import servo
         from sim import world
 
         dt = world.model.opt.timestep
@@ -361,7 +362,6 @@ class ControlTraceTest(unittest.TestCase):
             actuation.range_clamped, expected_range_clamped)
 
     def test_field_shapes_and_dtypes(self):
-        from controller import servo
         from sim import world
 
         trace = apply_cycle(
@@ -400,8 +400,7 @@ class ComponentTogglesTest(unittest.TestCase):
 
     def setUp(self):
         _setup_scene()
-        from controller import servo
-        self.control = servo.CONTROL
+        self.control = FIXTURE_CONTROL
 
     def tearDown(self):
         from sim import world
@@ -410,7 +409,6 @@ class ComponentTogglesTest(unittest.TestCase):
         mujoco.mj_forward(world.model, world.data)
 
     def _trace_matching_standalone_law(self):
-        from controller import servo
         from sim import world
 
         pipeline = reconstruct_pipeline(self.control)
@@ -434,32 +432,29 @@ class ComponentTogglesTest(unittest.TestCase):
         return trace
 
     def test_flags_default_enabled(self):
-        from controller import servo
 
-        self.assertTrue(servo.CONTROL.position_enabled)
-        self.assertTrue(servo.CONTROL.orientation_enabled)
-        self.assertTrue(servo.CONTROL.velocity_enabled)
+        self.assertTrue(FIXTURE_CONTROL.position_enabled)
+        self.assertTrue(FIXTURE_CONTROL.orientation_enabled)
+        self.assertTrue(FIXTURE_CONTROL.velocity_enabled)
 
     def test_position_only(self):
-        from controller import servo
 
         self.control = dataclasses.replace(
-            servo.CONTROL,
+            FIXTURE_CONTROL,
             orientation_enabled=False,
             velocity_enabled=False,
         )
         trace = self._trace_matching_standalone_law()
         np.testing.assert_array_equal(
             trace.p_twist[:3],
-            servo.CONTROL.kp_position_s_inv * trace.e_pos)
+            FIXTURE_CONTROL.kp_position_s_inv * trace.e_pos)
         np.testing.assert_array_equal(trace.p_twist[3:], np.zeros(3))
         np.testing.assert_array_equal(trace.d_twist, np.zeros(6))
 
     def test_orientation_only(self):
-        from controller import servo
 
         self.control = dataclasses.replace(
-            servo.CONTROL,
+            FIXTURE_CONTROL,
             position_enabled=False,
             velocity_enabled=False,
         )
@@ -467,14 +462,13 @@ class ComponentTogglesTest(unittest.TestCase):
         np.testing.assert_array_equal(trace.p_twist[:3], np.zeros(3))
         np.testing.assert_array_equal(
             trace.p_twist[3:],
-            servo.CONTROL.kp_rotation_s_inv * trace.e_rot)
+            FIXTURE_CONTROL.kp_rotation_s_inv * trace.e_rot)
         np.testing.assert_array_equal(trace.d_twist, np.zeros(6))
 
     def test_velocity_only(self):
-        from controller import servo
 
         self.control = dataclasses.replace(
-            servo.CONTROL,
+            FIXTURE_CONTROL,
             position_enabled=False,
             orientation_enabled=False,
         )
@@ -484,8 +478,8 @@ class ComponentTogglesTest(unittest.TestCase):
             trace.d_twist,
             np.concatenate(
                 [
-                    servo.CONTROL.kd_position * trace.e_v,
-                    servo.CONTROL.kd_rotation * trace.e_w,
+                    FIXTURE_CONTROL.kd_position * trace.e_v,
+                    FIXTURE_CONTROL.kd_rotation * trace.e_w,
                 ]
             ))
 

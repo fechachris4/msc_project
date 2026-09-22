@@ -19,8 +19,13 @@ from controller import desired_pos, frames
 from controller.state import Twist
 from controller.transforms import rotation_from_rpy
 from planning import planner
-from runtime_config import CONFIG
 from sim import world
+from pathlib import Path
+from runtime_config import load_config
+
+FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "control.toml"
+CONFIG = load_config(FIXTURE_CONFIG)
+
 
 
 def _fresh_default_plant():
@@ -40,9 +45,10 @@ class BuildFlowsCompositionTest(unittest.TestCase):
         default_states = frames.controller_states(
             _fresh_default_plant(), world.MOUNT_CALIBRATION
         )
-        static_targets = desired_pos.configured_targets()
+        static_targets = desired_pos.configured_targets(CONFIG)
         flow = arm_flow.build_flows(
-            world.backend, world.MOUNT_CALIBRATION, static_targets
+            world.backend, world.MOUNT_CALIBRATION, static_targets,
+            config=CONFIG,
         )
         self.assertEqual(flow.right.kind, "routed_reach")
         self.assertEqual(flow.left.kind, "trajectory")
@@ -87,9 +93,10 @@ class BuildFlowsCompositionTest(unittest.TestCase):
         )
 
     def test_routed_reach_interpolates_to_the_goal_orientation(self):
-        static_targets = desired_pos.configured_targets()
+        static_targets = desired_pos.configured_targets(CONFIG)
         flow = arm_flow.build_flows(
-            world.backend, world.MOUNT_CALIBRATION, static_targets
+            world.backend, world.MOUNT_CALIBRATION, static_targets,
+            config=CONFIG,
         )
         self.assertEqual(flow.right.kind, "routed_reach")
         goal_rotation = rotation_from_rpy(CONFIG.target("right").rpy_rad)
@@ -115,7 +122,7 @@ class BuildFlowsCompositionTest(unittest.TestCase):
             arm_flow.build_flows(
                 world.backend,
                 world.MOUNT_CALIBRATION,
-                desired_pos.configured_targets(),
+                desired_pos.configured_targets(CONFIG),
                 config=config,
             )
 
@@ -126,7 +133,7 @@ class BuildFlowsCompositionTest(unittest.TestCase):
         flow = arm_flow.build_flows(
             world.backend,
             world.MOUNT_CALIBRATION,
-            desired_pos.configured_targets(),
+            desired_pos.configured_targets(CONFIG),
             config=config,
         )
         self.assertEqual(flow.right.kind, "planned")

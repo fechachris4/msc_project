@@ -73,9 +73,8 @@ DEFAULT_OUTPUT = Path("analysis/output/planning")
 
 # The scripted torso disturbance for ``--base-motion``.  ``sim/motion.py``
 # ships all-zero amplitudes (static base), so a non-zero scenario has to
-# be stated somewhere; these are the values the existing gain sweeps and
-# the golden trace already use (analysis/position_gain_sweep.py,
-# tests/golden_trace.py), so the planning results stay comparable with
+# be stated somewhere; these are the values the golden trace already
+# uses (tests/golden_trace.py), so the planning results stay comparable with
 # the reactive baseline results rather than inventing a new scenario.
 BASE_LINEAR_AMPLITUDE_M = np.array([0.18, 0.04, 0.05])
 BASE_ROTATIONAL_AMPLITUDE_RAD = np.array([0.0, 0.0, -0.2])

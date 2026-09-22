@@ -16,13 +16,16 @@ from controller.trajectory import (
 )
 from controller.trajectory_config import materialize_trajectory
 from runtime_config import (
-    CONFIG,
     TargetTrajectoryConfig,
     TrajectoryConstraintsConfig,
     TrajectoryOrientationConfig,
     TrajectorySegmentConfig,
     load_config,
 )
+
+FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "control.toml"
+CONFIG = load_config(FIXTURE_CONFIG)
+
 
 
 def _pose(position):

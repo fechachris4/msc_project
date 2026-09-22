@@ -1,3 +1,8 @@
+# Frozen configuration for the parser and composition tests.
+# It exercises every section (a left-arm trajectory, keep-out routing,
+# planning off) and is independent of the tuned config/control.toml,
+# so retuning gains does not break the parser tests.
+
 # MSc reactive-baseline configuration.
 # All runtime values use SI units: metres, seconds and radians.
 # Supported choices are listed beside each selector so this file remains the
@@ -10,21 +15,18 @@
 [run]
 nominal_dt_s = 0.002
 # Arm choices: "right", "left", "both". A CLI arm argument overrides this.
-arm = "right"
+arm = "both"
 
 [controller.reactive_pose]
-kp_position_s_inv = 32.00
-kp_rotation_s_inv = 2.1
-kd_position = 0.9
-kd_rotation = 0.9
-null_gain_s_inv = 2.0
+kp_position_s_inv = 2.0
+kp_rotation_s_inv = 2.0
+kd_position = 0.3
+kd_rotation = 0.3
+null_gain_s_inv = 1.0
 dls_damping = 0.05
 position_enabled = true
 orientation_enabled = true
 velocity_enabled = true
-# Adds target.twist_world (path velocity and/or torso-motion cross term)
-# directly into the commanded task twist, undamped. Off = current baseline
-# (PD-on-error only). See tools/walk_sim.py for scenario-isolated testing.
 velocity_feedforward_enabled = false
 
 [limits]
@@ -49,12 +51,12 @@ position_lead_rad = 0.2
 [human_safety]
 enabled = true
 center_xy_torso_m = [0.0, 0.0]
-radius_m = 0.20
+radius_m = 0.25
 z_min_torso_m = -1.10
 z_max_torso_m = 0.70
-clearance_m = 0.01
+clearance_m = 0.02
 control_margin_m = 0.02
-activation_distance_m = 0.01
+activation_distance_m = 0.10
 recovery_gain_s_inv = 4.0
 approach_velocity_damping = 0.0
 projection_iterations = 50
@@ -92,10 +94,10 @@ arm = "right"
 waypoint_count = 3
 dense_samples = 60
 clearance_margin_m = 0.05
-smoothness_weight = 10.0
+smoothness_weight = 1.0
 obstacle_weight = 40.0
 max_iterations = 200
-tool_radius_m = 0.05
+tool_radius_m = 0.0
 # Weak pull toward the straight line: without it the obstacle hinge has
 # no finite basin and can route the path outside the arm's workspace.
 deviation_weight = 0.5
@@ -107,10 +109,10 @@ include_floor = true
 floor_height_world_m = 0.0
 include_torso_box = true
 torso_box_half_extent_m = [0.12, 0.18, 0.28]
-max_linear_speed_m_s = 3.0
-max_linear_acceleration_m_s2 = 1.0
-max_angular_speed_rad_s = 2.0
-max_angular_acceleration_rad_s2 = 1.5
+max_linear_speed_m_s = 0.2
+max_linear_acceleration_m_s2 = 0.5
+max_angular_speed_rad_s = 0.5
+max_angular_acceleration_rad_s2 = 1.0
 
 # ---------------------------------------------------------------------------
 # Targets and motion plans
@@ -121,15 +123,13 @@ max_angular_acceleration_rad_s2 = 1.5
 [targets.right]
 reference_frame = "world"
 # Active right-arm planner goal.
-position_m = [0.40, -0.30, 1.30]
-rpy_rad = [1.5708, 0.0, 1.5708]
+position_m = [0.20, 0.40, 1.10]
+rpy_rad = [0.0, 1.6, 0.8]
 
 [targets.left]
 reference_frame = "world"
-position_m = [0.40, 0.30, 1.30]
-# Mirror of the right-arm goal orientation across the torso xz-plane, so the
-# left tool faces the wearer the same way the right one does.
-rpy_rad = [1.5708, 0.0, 1.5708]
+position_m = [0.45, 0.30, 1.20]
+rpy_rad = [0.0, 0.0, 0.0]
 
 # LEFT POSITION TRAJECTORY
 #
@@ -147,8 +147,13 @@ rpy_rad = [1.5708, 0.0, 1.5708]
 # Optional [targets.left.trajectory.constraints] fields:
 #   max_linear_speed_m_s, max_linear_acceleration_m_s2,
 #   max_angular_speed_rad_s, max_angular_acceleration_rad_s2
-# LEFT ORIENTATION POLICY — optional; no table keeps the start/segment
-# orientation for the whole trajectory (the current behaviour).
+[targets.left.trajectory]
+reference_frame = "world"
+start = "measured"
+loop = true
+open_live_path_plot = true
+
+# LEFT ORIENTATION POLICY — active for the complete trajectory.
 #
 # Supported policies:
 #   no orientation table             keep the start/segment orientation
@@ -157,17 +162,27 @@ rpy_rad = [1.5708, 0.0, 1.5708]
 #
 # Look-at replaces segment RPY and cannot be combined with end_rpy_rad/rpy_rad.
 # The tool axes are local left_pinch_site axes. The forward axis faces the
-# object; tool-up and world-up resolve roll. To re-enable, uncomment:
-# [targets.left.trajectory.orientation]
-# policy = "look_at_sim_object"
-# object_body = "look_at_object"
-# tool_forward_axis = [0.0, 0.0, 1.0]
-# tool_up_axis = [0.0, 1.0, 0.0]
-# world_up_direction = [0.0, 0.0, 1.0]
-#
-# Or the fixed-point policy: replace the two fields above with:
+# object; tool-up and world-up resolve roll.
+[targets.left.trajectory.orientation]
+policy = "look_at_sim_object"
+object_body = "look_at_object"
+tool_forward_axis = [0.0, 0.0, 1.0]
+tool_up_axis = [0.0, 1.0, 0.0]
+world_up_direction = [0.0, 0.0, 1.0]
+
+# To use the fixed-point policy, replace the two fields above with:
 # policy = "look_at_fixed_world_point"
 # object_position_world_m = [0.30, 0.00, 1.10]
+
+[[targets.left.trajectory.segments]]
+type = "line"
+displacement_m = [0.40, 0.0, 0.0]
+duration_s = 10.0
+
+[[targets.left.trajectory.segments]]
+type = "line"
+displacement_m = [-0.40, 0.0, 0.0]
+duration_s = 10.0
 
 # ---------------------------------------------------------------------------
 # Simulation-only inputs

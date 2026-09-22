@@ -23,14 +23,23 @@ import mujoco
 import numpy as np
 import pinocchio as pin
 
+from pathlib import Path
+
+from runtime_config import load_config
 from tests.control_test_support import apply_cycle, reconstruct_pipeline
+
+# Kinematics check, not a controller check: the frozen fixture gains keep
+# the arm smooth enough that finite differences are a clean reference.
+FIXTURE_CONTROL = load_config(
+    Path(__file__).resolve().parent / "fixtures" / "control.toml"
+).reactive_pose
 
 HOME = [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109,
         1.57079633]
 
 # Pinned scenario, independent of the motion module's research levers.
 # Rotation nonzero (the whole point) but modest: the right arm hits the
-# torso near +15.6 deg roll (docs/diagnosis.md), and this
+# torso near +15.6 deg roll (torso contact), and this
 # comparison wants a contact-free rollout.
 SCENARIO = dict(
     linear_amplitude=np.array([0.05, 0.02, 0.01]),
@@ -178,7 +187,7 @@ class ComposedVsMeasuredFDTest(unittest.TestCase):
     LIN_FLOOR = 0.05  # m/s: peak measured speed must show real motion
 
     def test_composed_matches_measured_fd(self):
-        from controller import frames, servo
+        from controller import frames
         from controller.state import Twist
         from sim import motion, targets, world
 
@@ -201,7 +210,7 @@ class ComposedVsMeasuredFDTest(unittest.TestCase):
             mujoco.mju_mat2Quat(quat, rot.flatten())
             targets.set_target(side, pos)
             targets.set_target_quat(side, quat)
-        pipeline = reconstruct_pipeline()
+        pipeline = reconstruct_pipeline(FIXTURE_CONTROL)
 
         dt = world.model.opt.timestep
         for _ in range(int(self.SETTLE_SECONDS / dt)):

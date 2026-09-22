@@ -32,8 +32,12 @@ from controller.state import (
     Twist,
 )
 from controller.trajectory import IndependentArmTargetSource, StaticTargetSource
-from runtime_config import CONFIG, load_config
+from runtime_config import load_config
 from sim import cylinder_view, world
+
+FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "control.toml"
+CONFIG = load_config(FIXTURE_CONFIG)
+
 
 
 CYLINDER_KEYS = (

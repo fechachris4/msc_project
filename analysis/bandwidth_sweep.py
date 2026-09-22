@@ -1,7 +1,5 @@
 """Reactive-loop reference-tracking bandwidth: EE-target tracking-error
-amplitude and phase lag vs. commanded sinusoid frequency. Companion to
-analysis/diagnose.py, but a different research question — diagnose.py
-investigates a torso-collision failure under base motion; this script
+amplitude and phase lag vs. commanded sinusoid frequency. This script
 characterizes the closed loop's own tracking bandwidth with the base
 held static and one EE target driven sinusoidally instead
 (sim/target_motion.py, tests/test_target_motion.py's

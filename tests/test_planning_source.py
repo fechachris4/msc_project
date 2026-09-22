@@ -23,8 +23,12 @@ import numpy as np
 from controller.trajectory import TrajectoryLimits
 from planning import planner
 from planning.path_optimizer import OptimizerParams
-from runtime_config import CONFIG, PlanningConfig, load_config
+from runtime_config import PlanningConfig, load_config
 from sim import world
+
+FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "control.toml"
+CONFIG = load_config(FIXTURE_CONFIG)
+
 
 
 class PlanArmTest(unittest.TestCase):

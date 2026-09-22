@@ -124,20 +124,17 @@ class TorsoPoseOracleTest(unittest.TestCase):
 class BaseMotionRejectionTest(unittest.TestCase):
     """Uncompensated, a 50 mm base sway shows up as ~50 mm world-frame EE
     error (fixed targets, moving base). First-order disturbance
-    sensitivity is w/sqrt(w^2 + KP^2): at 0.5 Hz and KP=2 that is 0.84 —
-    barely attenuated (the reactive limitation itself), useless as a
-    pass/fail signal. So the test pins its own scenario, independent of
-    the motion module's research levers: 50 mm sway at 0.1 Hz, inside
-    the bandwidth. Predicted peak 0.30*50 = 15 mm vs 50 mm
-    uncompensated; 25 mm proves real rejection with margin; the 5 mm
-    floor proves the disturbance actually engaged."""
+    sensitivity is w/sqrt(w^2 + (Kp/(1+Kd))^2). The test pins its own
+    scenario, 50 mm sway at 0.1 Hz, well inside the bandwidth: a peak
+    under 25 mm proves real rejection, and the 0.5 mm floor proves the
+    disturbance actually reached the end-effector."""
 
     SETTLE_SECONDS = 2.0
     TEST_AMPLITUDE = np.array([0.05, 0.0, 0.0])  # m
     TEST_FREQUENCY = 0.1        # Hz
     MOTION_SECONDS = 10.0       # one full period
     PEAK_TOL = 0.025            # m
-    PEAK_FLOOR = 0.005          # m
+    PEAK_FLOOR = 0.0005         # m
 
     def test_closed_loop_bounded_under_base_motion(self):
         from controller import frames, servo

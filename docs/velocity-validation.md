@@ -96,7 +96,7 @@ Three legs, each independent of the production math it checks:
 3. **End-to-end ground truth** (MuJoCo, not Pinocchio): closed-loop
    rollout, 5 s of pinned sway (lin [50, 20, 10] mm @ 0.5 Hz, rot
    [5, 3, 8]° @ 0.3 Hz — rotation kept below the ~15.6° roll contact
-   regime from `docs/diagnosis.md`), composed velocity vs central
+   regime), composed velocity vs central
    finite differences of `measured_ee_pose` (`site_xpos`, which does
    include the mocap teleports). This is the only leg that exercises
    the `ω×r` transport term. Per sample the mocap is rewritten and

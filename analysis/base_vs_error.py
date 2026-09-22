@@ -1,6 +1,6 @@
 """Base motion vs. end-effector error, live: the thesis success criterion
 made visible while the sim runs. Read-only, same pattern as
-analysis/diagnose.py and analysis/validate_velocity.py: the controller
+analysis/validate_velocity.py: the controller
 runs unmodified, and logged errors come from the same explicit state and
 pure world-frame error function used by the controller.
 

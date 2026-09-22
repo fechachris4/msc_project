@@ -4,12 +4,15 @@ import unittest
 from unittest import mock
 
 from runtime_config import (
-    CONFIG,
     control_with_legacy_overrides,
     effective_config_dict,
     load_config,
     print_effective_config,
 )
+
+FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "control.toml"
+CONFIG = load_config(FIXTURE_CONFIG)
+
 
 
 class RuntimeConfigTest(unittest.TestCase):
