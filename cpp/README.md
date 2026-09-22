@@ -221,23 +221,21 @@ One command runs the whole gate:
 bash cpp/tools/verify_parity.sh
 ```
 
-It builds, runs the 336 unit assertions, and then performs four
-Python-vs-C++ comparisons at `rtol = atol = 1e-12`: the same tolerance the
-Python golden trace holds itself to:
+It builds and runs the 10 C++ unit-test suites, then compares against Python:
 
 1. **Effective configuration**: byte-identical, including CPython float
    `repr()` and the config SHA-256.
-2. **Golden trace**: 250 cycles × 2 arms against the *committed*
-   `tests/golden/reactive_current.csv`: 105,000 fields, worst difference
-   2.167e-13.
-3. **Headless default-config trace**: 2,000 closed-loop cycles with human
-   safety, cylinder routing and the configured trajectory all enabled:
-   236,000 fields, worst difference 4.441e-13, and **every discrete column
-   identical** (safety-ladder branch, stop flags, active constraint counts,
-   route kinds).
-4. **Trajectory generation**: hold + line + 4-point C² spline + 2-revolution
+2. **Golden trace**: 250 cycles × 2 arms against the committed
+   `tests/golden/reactive_current.csv` on the tuned config: 105,000 fields,
+   worst difference 2.4e-12, checked at 1e-11.
+3. **Trajectory generation**: hold + line + 4-point C² spline + 2-revolution
    circle: durations, boundaries, rate bounds and all rotational quantities
-   bit-identical; translation residual ≤ 1.13e-14.
+   bit-identical; translation residual ≤ 1.13e-14, checked at 1e-12.
+
+The 2,000-cycle headless comparison with the safety filter engaged is
+skipped: the Python trace format changed after the port. Its last result
+(worst difference 4.4e-13, every discrete column identical) is in
+[`docs/04-parity-report.md`](docs/04-parity-report.md).
 
 The residual traces to one-ULP differences in dense matrix products,
 amplified by the conditioning of the damped-least-squares solve. Full
