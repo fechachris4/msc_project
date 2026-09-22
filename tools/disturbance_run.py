@@ -5,10 +5,10 @@ while the mount is disturbed, and how much residual error remains compared with
 doing nothing (arms rigid on the torso)?
 
 Protocol: settle on the static torso until both arms are within tolerance,
-then apply the scripted disturbance from tools/walk_sim.py for EVALUATION_S seconds.
+then apply the scripted disturbance from tools/mount_disturbance.py for EVALUATION_S seconds.
 Outputs go to analysis/output/disturbance/.
 
-usage: python tools/walk_report.py [right|left|both] [--no-gif]
+usage: python tools/disturbance_run.py [right|left|both] [--no-gif]
          [--speed=V | --speeds=V1,V2,...] [--scale=S]
 """
 
@@ -26,7 +26,7 @@ from PIL import Image  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import report_style  # noqa: E402
-import walk_sim  # noqa: E402
+import mount_disturbance  # noqa: E402
 from controller import desired_pos, frames, reactive_controller  # noqa: E402
 from controller.runner import ReactivePositionRunner  # noqa: E402
 from controller.transforms import rotation_from_rpy  # noqa: E402
@@ -61,12 +61,12 @@ class WalkingTorsoDriver:
     def pose_at(self, t):
         if self.t0 is None or t < self.t0:
             return motion.HOME_POS.copy(), motion.HOME_RPY.copy()
-        return walk_sim.torso_pose_at(t - self.t0, scale=self.scale, speed=self.speed)
+        return mount_disturbance.torso_pose_at(t - self.t0, scale=self.scale, speed=self.speed)
 
     def twist_at(self, t):
         if self.t0 is None or t < self.t0:
             return np.zeros(3), np.zeros(3)
-        return walk_sim.torso_twist_at(t - self.t0, scale=self.scale, speed=self.speed)
+        return mount_disturbance.torso_twist_at(t - self.t0, scale=self.scale, speed=self.speed)
 
 
 def _within_tolerance(runner, targets, arms):
@@ -107,7 +107,7 @@ def run(arms, scale, speed, record_gif=True, controller_config=None):
         world.backend, world.MOUNT_CALIBRATION, world.PIPELINE_SETUP,
         targets, arms, **runner_kwargs)
     runner.start()
-    walk_sim.hide_look_at_object()
+    mount_disturbance.hide_look_at_object()
     renderer = None
     if record_gif:
         renderer = mujoco.Renderer(world.model, GIF_SIZE[1], GIF_SIZE[0])
@@ -323,10 +323,10 @@ def comparison_figure(results, arms, path):
         e_rot = np.degrees(np.linalg.norm(_stack(rows, "e_rot", side), axis=1))
         rigid_rot = np.degrees(_stack(rows, "rigid_rot_err", side))
         ax_pos.plot(t, e, color=col, linewidth=1.5,
-                    label=walk_sim.level_label(speed))
+                    label=mount_disturbance.level_label(speed))
         ax_pos.plot(t, rigid, color=col, linewidth=0.8, linestyle="--")
         ax_rot.plot(t, e_rot, color=col, linewidth=1.5,
-                    label=walk_sim.level_label(speed))
+                    label=mount_disturbance.level_label(speed))
         ax_rot.plot(t, rigid_rot, color=col, linewidth=0.8, linestyle="--")
     ax_pos.plot([], [], color="0.3", linewidth=0.8, linestyle="--",
                 label="rigid arm (EE fixed to mount, no control)")
@@ -363,7 +363,7 @@ def comparison_figure(results, arms, path):
     for speed in speeds:
         rows = results[speed]["rows"]
         t = _stack(rows, "t")
-        stride_s = 1.0 / walk_sim.walk_params(speed=speed)[
+        stride_s = 1.0 / mount_disturbance.walk_params(speed=speed)[
             "linear_frequency"][1]
         worst = max(arms, key=lambda a: results[speed]["summary"][a]["rms"])
         series = {
@@ -404,14 +404,14 @@ def comparison_figure(results, arms, path):
         ax.set_xlabel("disturbance condition")
         ax.set_ylim(bottom=0)
         ax.set_xticks(speeds)
-        ax.set_xticklabels([walk_sim.level_label(v) for v in speeds])
+        ax.set_xticklabels([mount_disturbance.level_label(v) for v in speeds])
     fig.savefig(path, dpi=200)
     fig.savefig(Path(path).with_suffix(".pdf"))
     plt.close(fig)
 
 
 def _report_one(arms, scale, speed, record_gif):
-    print(walk_sim.describe(scale, speed))
+    print(mount_disturbance.describe(scale, speed))
     tag = f"v{speed:g}" + (f"_scale{scale:g}" if scale != 1.0 else "")
     settled, settle_s, rows, frames_out = run(arms, scale, speed, record_gif)
     print(f"settled: {settled} after {settle_s:.2f} s; "
@@ -439,13 +439,13 @@ def _report_one(arms, scale, speed, record_gif):
 def main(argv):
     record_gif = "--no-gif" not in argv
     argv = [a for a in argv if a != "--no-gif"]
-    scale = walk_sim.pop_float_option(argv, "scale", walk_sim.GAIT_SCALE)
-    speeds = [walk_sim.DEFAULT_SPEED_M_S]
+    scale = mount_disturbance.pop_float_option(argv, "scale", mount_disturbance.GAIT_SCALE)
+    speeds = [mount_disturbance.DEFAULT_SPEED_M_S]
     for a in list(argv):
         if a.startswith("--speeds="):
             speeds = [float(v) for v in a.split("=", 1)[1].split(",")]
             argv.remove(a)
-    speed = walk_sim.pop_float_option(argv, "speed", None)
+    speed = mount_disturbance.pop_float_option(argv, "speed", None)
     if speed is not None:
         speeds = [speed]
     choice = argv[0] if argv else "both"

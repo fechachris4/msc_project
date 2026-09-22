@@ -1,11 +1,11 @@
 """Reactive disturbance rejection vs disturbance frequency (one thing varies).
 
 Every run uses the SAME mount-motion amplitudes (AMPLITUDE_KEY row of
-walk_sim._SPEED_TABLE); only the fundamental frequency f changes. x, z and
+mount_disturbance._SPEED_TABLE); only the fundamental frequency f changes. x, z and
 pitch oscillate at f; y, roll and yaw at f/2. Each run is one
-walk_report.run: settle on the static mount, then 8 s of disturbance.
+disturbance_run.run: settle on the static mount, then 8 s of disturbance.
 
-Check: at f = 1.8 Hz this is identical to walk_report.py --speed=1.0.
+Check: at f = 1.8 Hz this is identical to disturbance_run.py --speed=1.0.
 
 Outputs (analysis/output/disturbance/):
   freq_sweep.png / .pdf   position and orientation error RMS vs frequency
@@ -27,18 +27,18 @@ import numpy as np  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import report_style  # noqa: E402
-import walk_report  # noqa: E402
-import walk_sim  # noqa: E402
+import disturbance_run  # noqa: E402
+import mount_disturbance  # noqa: E402
 
 OUT = Path("analysis/output/disturbance")
 AMPLITUDE_KEY = 1.0        # table row whose amplitudes are held fixed
 FREQS_HZ = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]   # add 1.8 to re-check vs --speed=1.0
 
-_table_params = walk_sim.walk_params
+_table_params = mount_disturbance.walk_params
 _fundamental_hz = [None]
 
 
-def fixed_amplitude_params(scale=walk_sim.GAIT_SCALE, speed=None):
+def fixed_amplitude_params(scale=mount_disturbance.GAIT_SCALE, speed=None):
     p = _table_params(scale=scale, speed=AMPLITUDE_KEY)
     f = _fundamental_hz[0]
     p["linear_frequency"] = np.array([f, 0.5 * f, f])
@@ -60,13 +60,13 @@ def _per_period_rms(t, series, period_s, dt=0.002):
 
 def run_one(f_hz, arms):
     _fundamental_hz[0] = f_hz
-    walk_sim.walk_params = fixed_amplitude_params
+    mount_disturbance.walk_params = fixed_amplitude_params
     try:
-        settled, settle_s, rows, _ = walk_report.run(
+        settled, settle_s, rows, _ = disturbance_run.run(
             arms, 1.0, AMPLITUDE_KEY, record_gif=False)
     finally:
-        walk_sim.walk_params = _table_params
-    t = walk_report._stack(rows, "t")
+        mount_disturbance.walk_params = _table_params
+    t = disturbance_run._stack(rows, "t")
     on = t >= 0.0
     # Worst arm. Value = RMS over the whole 8 s; *_sd = SD of the RMS of each
     # complete pattern period (2/f), n_periods of them.
@@ -78,17 +78,17 @@ def run_one(f_hz, arms):
         out[key + "_sd"] = 0.0
     for side in arms:
         out["saturated_pct"] = max(out["saturated_pct"], 100.0 * float(np.mean(
-            walk_report._stack(rows, "speed_saturated", side)[on])))
+            disturbance_run._stack(rows, "speed_saturated", side)[on])))
         out["qdot_peak_deg_s"] = max(out["qdot_peak_deg_s"], float(np.degrees(
-            walk_report._stack(rows, "qdot_max", side)[on].max())))
+            disturbance_run._stack(rows, "qdot_max", side)[on].max())))
         series = dict(
             pos=1e3 * np.linalg.norm(
-                walk_report._stack(rows, "e_pos", side), axis=1),
+                disturbance_run._stack(rows, "e_pos", side), axis=1),
             pos_free=1e3 * np.linalg.norm(
-                walk_report._stack(rows, "rigid_err", side), axis=1),
+                disturbance_run._stack(rows, "rigid_err", side), axis=1),
             rot=np.degrees(np.linalg.norm(
-                walk_report._stack(rows, "e_rot", side), axis=1)),
-            rot_free=np.degrees(walk_report._stack(rows, "rigid_rot_err", side)))
+                disturbance_run._stack(rows, "e_rot", side), axis=1)),
+            rot_free=np.degrees(disturbance_run._stack(rows, "rigid_rot_err", side)))
         for key, v in series.items():
             rms = float(np.sqrt(np.mean(v[on] ** 2)))
             if rms > out[key]:
@@ -112,9 +112,9 @@ def figure(rows, path):
     ts = np.linspace(0.0, 2.0, 600)
     for f_hz, col in ((f.min(), "0.6"), (f.max(), "black")):
         _fundamental_hz[0] = f_hz
-        walk_sim.walk_params = fixed_amplitude_params
-        z = [walk_sim.torso_pose_at(s, speed=AMPLITUDE_KEY)[0][2] for s in ts]
-        walk_sim.walk_params = _table_params
+        mount_disturbance.walk_params = fixed_amplitude_params
+        z = [mount_disturbance.torso_pose_at(s, speed=AMPLITUDE_KEY)[0][2] for s in ts]
+        mount_disturbance.walk_params = _table_params
         ax_how.plot(ts, 1e3 * (np.array(z) - z[0]), color=col, linewidth=1.4,
                     label=f"f = {f_hz:g} Hz")
     ax_how.set_xlabel("time [s]")
@@ -216,7 +216,7 @@ if __name__ == "__main__":
         rows = [r for r in rows if r["f_hz"] in FREQS_HZ]
         freqs = []
     for f_hz in freqs:
-        rows.append(run_one(f_hz, walk_report.world.SIDES))
+        rows.append(run_one(f_hz, disturbance_run.world.SIDES))
         r = rows[-1]
         print(f"f = {f_hz:g} Hz: sat {r['saturated_pct']:.1f}%, qdot peak "
               f"{r['qdot_peak_deg_s']:.1f} deg/s, "

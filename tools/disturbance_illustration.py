@@ -1,6 +1,6 @@
 """Report illustration of the task: the mount moves, the end-effectors hold.
 
-One walk_report.run with the fixed-amplitude disturbance of
+One disturbance_run.run with the fixed-amplitude disturbance of
 disturbance_freq_sweep.py at F_HZ, amplitudes multiplied by SCALE so the
 motion is visible in print (stated on the figure). Frames are taken at the
 four extreme mount poses of one pattern period (2/f), where z and y are both
@@ -28,8 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import disturbance_freq_sweep as sweep  # noqa: E402
 import report_style  # noqa: E402
-import walk_report  # noqa: E402
-import walk_sim  # noqa: E402
+import disturbance_run  # noqa: E402
+import mount_disturbance  # noqa: E402
 
 OUT = Path("analysis/output/disturbance")
 RENDER_SIZE = (1280, 960)
@@ -51,32 +51,32 @@ def close_camera():
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
-    scale = walk_sim.pop_float_option(argv, "scale", 3.0)
-    f_hz = walk_sim.pop_float_option(argv, "f", 1.0)
+    scale = mount_disturbance.pop_float_option(argv, "scale", 3.0)
+    f_hz = mount_disturbance.pop_float_option(argv, "f", 1.0)
     OUT.mkdir(parents=True, exist_ok=True)
 
-    walk_report._camera = close_camera
-    walk_report.GIF_SIZE = RENDER_SIZE
-    walk_report.world.model.vis.global_.offwidth = RENDER_SIZE[0]
-    walk_report.world.model.vis.global_.offheight = RENDER_SIZE[1]
-    walk_report.GIF_FRAME_S = 0.02
+    disturbance_run._camera = close_camera
+    disturbance_run.GIF_SIZE = RENDER_SIZE
+    disturbance_run.world.model.vis.global_.offwidth = RENDER_SIZE[0]
+    disturbance_run.world.model.vis.global_.offheight = RENDER_SIZE[1]
+    disturbance_run.GIF_FRAME_S = 0.02
     sweep._fundamental_hz[0] = f_hz
-    walk_sim.walk_params = sweep.fixed_amplitude_params
-    settled, settle_s, rows, frames = walk_report.run(
-        walk_report.world.SIDES, scale, sweep.AMPLITUDE_KEY, record_gif=True)
-    p = walk_sim.walk_params(scale=scale)
-    walk_sim.walk_params = sweep._table_params
+    mount_disturbance.walk_params = sweep.fixed_amplitude_params
+    settled, settle_s, rows, frames = disturbance_run.run(
+        disturbance_run.world.SIDES, scale, sweep.AMPLITUDE_KEY, record_gif=True)
+    p = mount_disturbance.walk_params(scale=scale)
+    mount_disturbance.walk_params = sweep._table_params
 
-    t = walk_report._stack(rows, "t")
+    t = disturbance_run._stack(rows, "t")
     on = t >= 0.0
     rms = max(np.sqrt(np.mean((1e3 * np.linalg.norm(
-        walk_report._stack(rows, "e_pos", s), axis=1))[on] ** 2))
-        for s in walk_report.world.SIDES)
+        disturbance_run._stack(rows, "e_pos", s), axis=1))[on] ** 2))
+        for s in disturbance_run.world.SIDES)
     free = max(np.sqrt(np.mean((1e3 * np.linalg.norm(
-        walk_report._stack(rows, "rigid_err", s), axis=1))[on] ** 2))
-        for s in walk_report.world.SIDES)
-    safety = max(np.mean(walk_report._stack(rows, "safety_active", s))
-                 for s in walk_report.world.SIDES)
+        disturbance_run._stack(rows, "rigid_err", s), axis=1))[on] ** 2))
+        for s in disturbance_run.world.SIDES)
+    safety = max(np.mean(disturbance_run._stack(rows, "safety_active", s))
+                 for s in disturbance_run.world.SIDES)
     print(f"settled {settled}; scale {scale:g}, f = {f_hz:g} Hz: EE error RMS "
           f"{rms:.1f} mm vs {free:.1f} mm uncontrolled; safety active "
           f"{100 * safety:.0f}%")
@@ -84,12 +84,12 @@ if __name__ == "__main__":
     period_s = 2.0 / f_hz
 
     def frame_at(t_s):
-        k = int(round((walk_report.GIF_LEAD_S + t_s) / walk_report.GIF_FRAME_S))
+        k = int(round((disturbance_run.GIF_LEAD_S + t_s) / disturbance_run.GIF_FRAME_S))
         return np.asarray(frames[min(k, len(frames) - 1)], dtype=float)
 
     t0 = START_PERIODS * period_s
-    n = int(round(period_s / walk_report.GIF_FRAME_S))
-    blur = np.mean([frame_at(t0 + i * walk_report.GIF_FRAME_S)
+    n = int(round(period_s / disturbance_run.GIF_FRAME_S))
+    blur = np.mean([frame_at(t0 + i * disturbance_run.GIF_FRAME_S)
                     for i in range(n)], axis=0)
 
     report_style.apply()
@@ -112,7 +112,7 @@ if __name__ == "__main__":
           f"{rms:.0f} mm RMS vs {free:.0f} mm with no control")
     report_style.save(fig, OUT / "task_illustration.png")
 
-    k0 = int(round(walk_report.GIF_LEAD_S / walk_report.GIF_FRAME_S))
+    k0 = int(round(disturbance_run.GIF_LEAD_S / disturbance_run.GIF_FRAME_S))
     clip = [f.resize((640, 480)) for f in frames[k0:k0 + 2 * n:2]]
     clip[0].save(OUT / "task_illustration.gif", save_all=True,
                  append_images=clip[1:], duration=40, loop=0, optimize=True)

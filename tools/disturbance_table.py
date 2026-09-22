@@ -5,7 +5,7 @@ Outputs (analysis/output/disturbance/):
                              two pattern periods at each disturbance level
   base_disturbance_table.md  amplitudes, frequencies, peak velocities per level
 
-usage: python tools/walk_disturbance.py [--speeds=0.5,1.0,1.5]
+usage: python tools/disturbance_table.py [--speeds=0.5,1.0,1.5]
 """
 
 import os
@@ -19,7 +19,7 @@ import numpy as np  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import walk_sim  # noqa: E402
+import mount_disturbance  # noqa: E402
 from sim import motion  # noqa: E402
 
 OUT = Path("analysis/output/disturbance")
@@ -30,13 +30,13 @@ AXIS_STYLE = (("black", "-"), ("0.55", "-"), ("black", "--"))
 
 
 def profile(speed, strides=2, n=800):
-    p = walk_sim.walk_params(speed=speed)
+    p = mount_disturbance.walk_params(speed=speed)
     stride_s = 1.0 / p["linear_frequency"][1]
     t = np.linspace(0.0, strides * stride_s, n)
-    pos = np.array([walk_sim.torso_pose_at(s, speed=speed)[0] for s in t])
-    rpy = np.array([walk_sim.torso_pose_at(s, speed=speed)[1] for s in t])
-    v = np.array([walk_sim.torso_twist_at(s, speed=speed)[0] for s in t])
-    w = np.array([walk_sim.torso_twist_at(s, speed=speed)[1] for s in t])
+    pos = np.array([mount_disturbance.torso_pose_at(s, speed=speed)[0] for s in t])
+    rpy = np.array([mount_disturbance.torso_pose_at(s, speed=speed)[1] for s in t])
+    v = np.array([mount_disturbance.torso_twist_at(s, speed=speed)[0] for s in t])
+    w = np.array([mount_disturbance.torso_twist_at(s, speed=speed)[1] for s in t])
     return p, t, pos - motion.HOME_POS, rpy, v, w
 
 
@@ -82,7 +82,7 @@ def write_table(rows, path):
         "Mount frame at rest is the world frame: x forward, y left, z up. "
         "Each axis is A·sin(2πft); no net translation. x, z and pitch "
         "oscillate at the fundamental f; y, roll and yaw at the sub-harmonic "
-        "f/2. Scripted, hand-chosen values (tools/walk_sim.py); not a gait "
+        "f/2. Scripted, hand-chosen values (tools/mount_disturbance.py); not a gait "
         "model.",
     ]
     path.write_text("\n".join(lines) + "\n")

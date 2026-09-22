@@ -24,7 +24,7 @@ orientation_enabled = true
 velocity_enabled = true
 # Adds target.twist_world (path velocity and/or torso-motion cross term)
 # directly into the commanded task twist, undamped. Off = current baseline
-# (PD-on-error only). See tools/walk_sim.py for scenario-isolated testing.
+# (PD-on-error only). See tools/mount_disturbance.py for scenario-isolated testing.
 velocity_feedforward_enabled = false
 
 [limits]

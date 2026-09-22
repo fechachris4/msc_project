@@ -1,6 +1,6 @@
 """Kp x Kd sweep of the reactive controller under the scripted mount disturbance.
 
-Each episode is one tools/walk_report.run: settle on the static mount,
+Each episode is one tools/disturbance_run.run: settle on the static mount,
 then disturb at level key SPEED_M_S for 8 s with the given position gains (rotation,
 null-space and damping gains stay at the config values). Metrics are the
 worst-arm position RMS/peak, orientation RMS, joint-speed saturation, and
@@ -15,7 +15,7 @@ Outputs (analysis/output/disturbance/gain_sweep/):
   gain_sweep_qdot_curves.png   peak / RMS commanded joint speed vs Kp,
                                against the robot and sim velocity caps
 
-usage: python tools/walk_gain_sweep.py [--speed=1.0] [--workers=4]
+usage: python tools/gain_sweep.py [--speed=1.0] [--workers=4]
                                        [--fresh] [--plots-only]
 """
 
@@ -49,14 +49,14 @@ SIM_QDOT_CAP_DEG_S = (69.9, 79.6)  # config joint_velocity_rad_s, small/large
 
 def episode(job):
     kp, kd, speed = job
-    import walk_report  # noqa: E402  (fresh MuJoCo world per process)
+    import disturbance_run  # noqa: E402  (fresh MuJoCo world per process)
     from runtime_config import CONFIG, control_with_legacy_overrides
     control = control_with_legacy_overrides(
         CONFIG.reactive_pose, {"KP_POS": kp, "KD_POS": kd})
     arms = ("right", "left")
-    settled, settle_s, rows, _ = walk_report.run(
+    settled, settle_s, rows, _ = disturbance_run.run(
         arms, 1.0, speed, record_gif=False, controller_config=control)
-    t = walk_report._stack(rows, "t")
+    t = disturbance_run._stack(rows, "t")
     walking = t >= 0.0
     steady = t >= ONSET_S
     worst = dict(pos_rms=0.0, pos_peak=0.0, rot_rms=0.0, rot_peak=0.0,
@@ -64,13 +64,13 @@ def episode(job):
                  qdot_rms=0.0, over=0.0, rigid=0.0)
     for side in arms:
         e = 1e3 * np.linalg.norm(
-            walk_report._stack(rows, "e_pos", side), axis=1)[walking]
+            disturbance_run._stack(rows, "e_pos", side), axis=1)[walking]
         r = np.degrees(np.linalg.norm(
-            walk_report._stack(rows, "e_rot", side), axis=1))[walking]
+            disturbance_run._stack(rows, "e_rot", side), axis=1))[walking]
         rigid = 1e3 * np.linalg.norm(
-            walk_report._stack(rows, "rigid_err", side), axis=1)[walking]
-        sat = walk_report._stack(rows, "speed_saturated", side)[walking]
-        qd_all = walk_report._stack(rows, "qdot_max", side)
+            disturbance_run._stack(rows, "rigid_err", side), axis=1)[walking]
+        sat = disturbance_run._stack(rows, "speed_saturated", side)[walking]
+        qd_all = disturbance_run._stack(rows, "qdot_max", side)
         qd = qd_all[steady]
         worst["qdot_onset"] = max(
             worst["qdot_onset"], np.degrees(qd_all[walking].max()))
@@ -80,8 +80,8 @@ def episode(job):
         worst["rot_peak"] = max(worst["rot_peak"], r.max())
         worst["sat"] = max(worst["sat"], 100.0 * np.mean(sat))
         worst["qdot"] = max(worst["qdot"], np.degrees(qd.max()))
-        qraw = walk_report._stack(rows, "qdot_raw_max", side)[steady]
-        qrms = walk_report._stack(rows, "qdot_rms", side)[steady]
+        qraw = disturbance_run._stack(rows, "qdot_raw_max", side)[steady]
+        qrms = disturbance_run._stack(rows, "qdot_rms", side)[steady]
         worst["qdot_raw"] = max(worst["qdot_raw"], np.degrees(qraw.max()))
         worst["qdot_rms"] = max(
             worst["qdot_rms"], np.degrees(np.sqrt(np.mean(qrms**2))))
@@ -168,8 +168,8 @@ def heatmaps(rows, speed, path):
 
 
 def _level(speed):
-    import walk_sim
-    return walk_sim.level_label(speed)
+    import mount_disturbance
+    return mount_disturbance.level_label(speed)
 
 
 def _conditions(speed):
@@ -183,8 +183,8 @@ def _conditions(speed):
 
 
 def kp_curves(rows, speed, path):
-    import walk_sim
-    p = walk_sim.walk_params(speed=speed)
+    import mount_disturbance
+    p = mount_disturbance.walk_params(speed=speed)
     import report_style
     report_style.apply()
     fig, ax = plt.subplots(figsize=(report_style.FULL_WIDTH_IN, 3.9),
@@ -214,9 +214,9 @@ def kp_curves(rows, speed, path):
     dt = 0.002
     t = np.arange(0.0, 8.0, dt)
     rigid = np.array([
-        walk_sim.torso_pose_at(s, speed=speed)[0]
+        mount_disturbance.torso_pose_at(s, speed=speed)[0]
         + transforms.rotation_from_rpy(
-            walk_sim.torso_pose_at(s, speed=speed)[1]) @ r0
+            mount_disturbance.torso_pose_at(s, speed=speed)[1]) @ r0
         for s in t]) - target
     v_rigid = np.gradient(rigid, dt, axis=0)
     kp_line = np.geomspace(min(KP_POS_GRID), max(KP_POS_GRID), 30)

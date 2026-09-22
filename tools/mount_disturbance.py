@@ -14,7 +14,7 @@ The viewer overlay is reduced to what a report figure needs: torso, arms
 and target markers. The human-safety envelope is drawn only while the
 filter is actually constraining an arm (--full-overlay restores everything).
 
-usage: mjpython tools/walk_sim.py [right|left|both] [--trajectory-plot]
+usage: mjpython tools/mount_disturbance.py [right|left|both] [--trajectory-plot]
                                   [--full-overlay] [--speed=V] [--scale=S]
 """
 

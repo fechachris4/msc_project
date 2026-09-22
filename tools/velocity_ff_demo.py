@@ -4,7 +4,7 @@ controller.reactive_pose.velocity_feedforward_enabled off (baseline PD-on-
 error) and on (target.twist_world added to the commanded task twist).
 
 Static torso means the mount-disturbance-cancellation source of feedforward
-(see tools/walk_ff_compare.py) is exactly zero here — this isolates the
+(see tools/feedforward_compare.py) is exactly zero here — this isolates the
 other source: a target that itself carries nonzero path velocity.
 
 Classic PD-only steady-state tracking lag for a constant-velocity target is

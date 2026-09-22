@@ -1,5 +1,5 @@
 """Mount-disturbance feedforward vs baseline: same scripted-disturbance scenario as
-walk_report.py, run twice with controller.reactive_pose.velocity_feedforward_
+disturbance_run.py, run twice with controller.reactive_pose.velocity_feedforward_
 enabled off (baseline PD) and on (torso-twist cancellation added to the task
 twist), so the effect can be read directly off matching axes.
 
@@ -11,8 +11,11 @@ currently-known torso-induced EE velocity from the commanded task twist).
 This isolates that source; see tools/velocity_ff_demo.py for the other
 source (a target that itself carries nonzero path velocity).
 
-usage: python tools/walk_ff_compare.py [right|left|both]
+usage: python tools/feedforward_compare.py [right|left|both] [--f=HZ]
          [--speed=V | --speeds=V1,V2,...] [--scale=S] [--no-gif]
+
+--f=HZ uses the fixed-amplitude disturbance of disturbance_freq_sweep.py at
+that frequency (the README figure is --f=1.8).
 """
 
 import dataclasses
@@ -28,8 +31,8 @@ import numpy as np  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import report_style  # noqa: E402
-import walk_report  # noqa: E402
-import walk_sim  # noqa: E402
+import disturbance_run  # noqa: E402
+import mount_disturbance  # noqa: E402
 from controller import servo  # noqa: E402
 from sim import world  # noqa: E402
 
@@ -48,7 +51,7 @@ def _stack(rows, key, side):
 def _run_variant(arms, scale, speed, enabled, record_gif):
     config = dataclasses.replace(
         servo.CONTROL, velocity_feedforward_enabled=enabled)
-    settled, settle_s, rows, frames_out = walk_report.run(
+    settled, settle_s, rows, frames_out = disturbance_run.run(
         arms, scale, speed, record_gif=record_gif, controller_config=config)
     return settled, settle_s, rows, frames_out
 
@@ -56,12 +59,12 @@ def _run_variant(arms, scale, speed, enabled, record_gif):
 def _save_gif(frames_out, path):
     frames_out[0].save(
         path, save_all=True, append_images=frames_out[1:],
-        duration=int(1000 * walk_report.GIF_FRAME_S), loop=0, optimize=True)
+        duration=int(1000 * disturbance_run.GIF_FRAME_S), loop=0, optimize=True)
     print(f"  gif: {len(frames_out)} frames -> {path}")
 
 
 def compare_one_speed(arms, scale, speed, record_gif):
-    print(walk_sim.describe(scale, speed))
+    print(mount_disturbance.describe(scale, speed))
     tag = f"v{speed:g}" + (f"_scale{scale:g}" if scale != 1.0 else "")
     results = {}
     for name, enabled, style, label in VARIANTS:
@@ -107,7 +110,7 @@ def compare_one_speed(arms, scale, speed, record_gif):
     change = 100.0 * (1.0 - ff_rms / base_rms) if base_rms else 0.0
     path = OUT / f"disturbance_ff_compare_{tag}.png"
     report_style.save(fig, path)
-    print(f"  caption facts: {side} arm, {walk_sim.level_label(speed)}, position "
+    print(f"  caption facts: {side} arm, {mount_disturbance.level_label(speed)}, position "
           f"RMS {base_rms:.1f} -> {ff_rms:.1f} mm ({change:.0f}% lower)")
     print(f"  baseline  |e| RMS {summary['baseline']['rms']:.1f} mm, peak "
           f"{summary['baseline']['peak']:.1f} mm, rot RMS "
@@ -122,15 +125,21 @@ def compare_one_speed(arms, scale, speed, record_gif):
 def main(argv):
     record_gif = "--no-gif" not in argv
     argv = [a for a in argv if a != "--no-gif"]
-    scale = walk_sim.pop_float_option(argv, "scale", walk_sim.GAIT_SCALE)
-    speeds = [walk_sim.DEFAULT_SPEED_M_S]
+    scale = mount_disturbance.pop_float_option(argv, "scale", mount_disturbance.GAIT_SCALE)
+    speeds = [mount_disturbance.DEFAULT_SPEED_M_S]
     for a in list(argv):
         if a.startswith("--speeds="):
             speeds = [float(v) for v in a.split("=", 1)[1].split(",")]
             argv.remove(a)
-    speed = walk_sim.pop_float_option(argv, "speed", None)
+    speed = mount_disturbance.pop_float_option(argv, "speed", None)
     if speed is not None:
         speeds = [speed]
+    f_hz = mount_disturbance.pop_float_option(argv, "f", None)
+    if f_hz is not None:
+        import disturbance_freq_sweep as sweep
+        sweep._fundamental_hz[0] = f_hz
+        mount_disturbance.walk_params = sweep.fixed_amplitude_params
+        speeds = [sweep.AMPLITUDE_KEY]
     choice = argv[0] if argv else "both"
     arms = world.SIDES if choice == "both" else (choice,)
     OUT.mkdir(parents=True, exist_ok=True)
