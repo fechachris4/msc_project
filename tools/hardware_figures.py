@@ -25,50 +25,62 @@ def letters(axes, x=-0.08, y=1.02):
 d = pd.read_csv(S + "F2_example_walking_trial_data.csv")
 t = d.time_s.values
 win = (t >= 10) & (t <= 20)
-fig, axes = plt.subplots(3, 1, figsize=(7.5, 4.6), sharex=True, layout="constrained")
+steady = t >= 5          # the extract starts after gait initiation; centre both traces on it
+fig, axes = plt.subplots(3, 1, figsize=(7.5, 5.0), sharex=True, sharey=True, layout="constrained")
 for ax, ax_name, lab in zip(axes, "xyz", ["forward [mm]", "left [mm]", "up [mm]"]):
-    lk = d[f"locked_{ax_name}_mm"].values; lk = medfilt(lk - lk.mean(), 11)
+    lk = d[f"locked_{ax_name}_mm"].values; lk = medfilt(lk - lk[steady].mean(), 11)
     ee = d[f"ee_minus_goal_{ax_name}_mm"].values
-    ee = ee - ee[(t >= 5)].mean()
+    ee = ee - ee[steady].mean()
     ax.plot(t[win], lk[win], label="arm locked to the mount (computed)", **LOCKED)
     ax.plot(t[win], ee[win], label="arm under control (measured, Vicon)", **CTRL)
     ax.axhline(0, color="0.8", linewidth=0.6, zorder=0)
     ax.set_ylabel(lab)
+axes[0].set_ylim(-110, 110); axes[0].set_yticks([-100, -50, 0, 50, 100])
 axes[0].legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2)
 axes[-1].set_xlabel("time in trial [s]")
 fig.savefig(OUT + "hw_walking_trial.png"); plt.close(fig)
 
-# 2. rejection by speed and by frequency
+# 2. rejection by speed, and frequency response (amplitude and phase) at 1.0 m/s
 f4 = pd.read_csv(S + "F4_motion_and_attenuation_by_speed_data.csv")
 f5 = pd.read_csv(S + "F5_attenuation_vs_frequency_data.csv")
-pooled = [p for p in f4.participant.unique() if p != "P1"]
-fig, axes = plt.subplots(1, 2, figsize=(7.5, 3.2), layout="constrained", gridspec_kw=dict(width_ratios=[1, 1.35]))
-ax = axes[0]
+pooled = [p for p in f4.participant.unique() if p != "P1"]   # P1: mount-tracking fault
+LATE = dict(color="#009E73", linewidth=1.5)
+KD0 = dict(color="0.35", linestyle=":", linewidth=1.4)
+LOGGED = dict(color="0.35", linestyle="--", linewidth=1.2)
+fig = plt.figure(figsize=(7.5, 3.9), layout="constrained")
+gs = fig.add_gridspec(2, 2, width_ratios=[1, 1.35])
+ax = fig.add_subplot(gs[:, 0])
 speeds = [0.5, 1.0, 1.5]
 for p in pooled:
-    s = f4[(f4.participant == p) & f4.speed_m_s.isin(speeds)].sort_values("speed_m_s")
-    ax.plot(s.speed_m_s, 100 * (1 - s.attenuation_ratio), color="0.75", linewidth=0.9, marker="o", markersize=3)
+    s_ = f4[(f4.participant == p) & f4.speed_m_s.isin(speeds)].sort_values("speed_m_s")
+    ax.plot(s_.speed_m_s, 100 * (1 - s_.attenuation_ratio), color="0.75", linewidth=0.9, marker="o", markersize=3)
 gm = [100 * (1 - np.exp(np.log(f4[(f4.speed_m_s == v) & f4.participant.isin(pooled)].attenuation_ratio).mean())) for v in speeds]
 ax.plot(speeds, gm, color=CTRL["color"], linewidth=2.2, marker="o", markersize=6, label="all participants")
 for v, g in zip(speeds, gm):
-    ax.annotate(f"{g:.0f} %", (v, g), textcoords="offset points", xytext=(9, -14), ha="left", fontsize=9, color=CTRL["color"])
+    ax.annotate(f"{g:.0f}%", (v, g), textcoords="offset points", xytext=(9, -14), ha="left", fontsize=9, color=CTRL["color"])
 ax.set_ylim(0, 100); ax.set_xticks(speeds); ax.set_xlim(0.35, 1.65)
 ax.set_xlabel("treadmill speed [m/s]"); ax.set_ylabel("mount motion removed [%]")
-ax.plot([], [], color="0.75", marker="o", markersize=3, linewidth=0.9, label="one participant")
+ax.plot([], [], color="0.75", marker="o", markersize=3, linewidth=0.9, label="each participant")
 ax.legend(loc="lower left")
-ax = axes[1]
 g = f5[f5.participant.isin(pooled) & (f5.freq_hz <= 2.0)]
-med = g.groupby("freq_hz").gain.median()
-mod = g.groupby("freq_hz")[["model_logged", "model_kd0", "model_delayed"]].median()
-ax.plot(med.index, med.values, color=CTRL["color"], linewidth=2.2, label="measured (median of 6)")
-ax.plot(mod.index, mod.model_logged, color="0.35", linestyle="--", linewidth=1.3, label="model, velocity term on time")
-ax.plot(mod.index, mod.model_delayed, color="#D55E00", linewidth=1.4, label="model, velocity signal 65-90 ms late")
-ax.axhline(1.0, color="0.6", linestyle=":", linewidth=1.0)
-ax.text(2.0, 1.02, "no benefit", fontsize=8.5, color="0.45", va="bottom", ha="right")
-ax.set_xscale("log"); ax.set_xticks([0.125, 0.25, 0.5, 1, 2]); ax.set_xticklabels(["0.125", "0.25", "0.5", "1", "2"])
-ax.set_ylim(0, 1.12); ax.set_xlim(0.12, 2.05)
-ax.set_xlabel("frequency [Hz], walking at 1.0 m/s"); ax.set_ylabel("motion left / motion imposed")
-ax.legend(loc="upper left", bbox_to_anchor=(0.0, 0.93))
-letters(axes, x=-0.12)
+med = g.groupby("freq_hz")[["gain", "phase_deg"]].median()
+mod = g.groupby("freq_hz")[["model_logged", "model_kd0", "model_delayed",
+                            "phase_logged_deg", "phase_kd0_deg", "phase_delayed_deg"]].median()
+axb = fig.add_subplot(gs[0, 1]); axc = fig.add_subplot(gs[1, 1], sharex=axb)
+axb.plot(med.index, med.gain, color=CTRL["color"], linewidth=2.2, label="measured (median of 6)")
+axb.plot(mod.index, mod.model_logged, label="model, logged gains", **LOGGED)
+axb.plot(mod.index, mod.model_kd0, label="model, no velocity term", **KD0)
+axb.plot(mod.index, mod.model_delayed, label="model, velocity signal late", **LATE)
+axb.set_ylim(0, 1.0); axb.set_ylabel("motion left /\nmotion imposed")
+axb.legend(loc="upper left", fontsize=8.5)
+axc.plot(med.index, med.phase_deg, color=CTRL["color"], linewidth=2.2)
+axc.plot(mod.index, mod.phase_logged_deg, **LOGGED)
+axc.plot(mod.index, mod.phase_kd0_deg, **KD0)
+axc.plot(mod.index, mod.phase_delayed_deg, **LATE)
+axc.set_ylim(0, 95); axc.set_yticks([0, 30, 60, 90]); axc.set_ylabel("phase [deg]")
+axc.set_xscale("log"); axc.set_xticks([0.125, 0.25, 0.5, 1, 2]); axc.set_xticklabels(["0.125", "0.25", "0.5", "1", "2"])
+axc.set_xlim(0.12, 2.05); axc.set_xlabel("frequency [Hz], walking at 1.0 m/s")
+plt.setp(axb.get_xticklabels(), visible=False)
+letters([ax, axb, axc], x=-0.12)
 fig.savefig(OUT + "hw_rejection.png"); plt.close(fig)
 print("mount motion removed [%]:", [round(g) for g in gm])

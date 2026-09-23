@@ -18,12 +18,13 @@ T0, T1, FPS, TRAIL = 10.0, 20.0, 20, 1.0
 
 d = pd.read_csv(S)
 t = d.time_s.values
-def locked(a):
+steady = t >= 5          # centre both traces on the same span, as in hardware_figures.py
+def locked(a):           # computed point is noisier; 11-frame median filter, display only
     v = d[f"locked_{a}_mm"].values
-    return medfilt(v - v.mean(), 11)
+    return medfilt(v - v[steady].mean(), 11)
 def ee(a):
     v = d[f"ee_minus_goal_{a}_mm"].values
-    return v - v[t >= 5].mean()
+    return v - v[steady].mean()
 L = {a: locked(a) for a in "xyz"}
 E = {a: ee(a) for a in "xyz"}
 
@@ -32,11 +33,11 @@ idx = np.searchsorted(t, frames)
 tr = int(TRAIL * 100)
 
 plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False})
-fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.25), dpi=130, layout="constrained")
+fig, axes = plt.subplots(1, 2, figsize=(7.2, 2.95), dpi=130, layout="constrained")
 views = [("y", "z", "seen from behind", "left-right [mm]"), ("x", "z", "seen from the side", "forward-back [mm]")]
 art = []
 for ax, (h, v, title, xl) in zip(axes, views):
-    ax.set_xlim(-110, 110); ax.set_ylim(-80, 80); ax.set_aspect("equal")
+    ax.set_xlim(-110, 110); ax.set_ylim(-70, 70); ax.set_aspect("equal")
     ax.set_title(title, fontsize=10, color="0.25")
     ax.set_xlabel(xl); ax.set_ylabel("up-down [mm]")
     ax.axhline(0, color="0.9", lw=0.6, zorder=0); ax.axvline(0, color="0.9", lw=0.6, zorder=0)
