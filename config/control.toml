@@ -22,9 +22,10 @@ dls_damping = 0.05
 position_enabled = true
 orientation_enabled = true
 velocity_enabled = true
-# Adds target.twist_world (path velocity and/or torso-motion cross term)
-# directly into the commanded task twist, undamped. Off = current baseline
-# (PD-on-error only). See tools/mount_disturbance.py for scenario-isolated testing.
+# Adds target.twist_world minus the mount-induced EE velocity (measured EE
+# twist minus J*qdot) into the commanded task twist, undamped, so the arm
+# cancels the mount's motion as it happens. Off = PD-on-error only (the
+# hardware baseline). See tools/feedforward_compare.py and tests/test_feedforward.py.
 velocity_feedforward_enabled = false
 
 [limits]
