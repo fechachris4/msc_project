@@ -28,7 +28,7 @@ Six participants wore the arms on an instrumented treadmill and walked at 0.5, 1
 
 *The first seconds of a trial, filmed from behind on a phone: a participant walks on the treadmill with both arms on.*
 
-The arms ran a 400 Hz world-frame Cartesian controller, with a Kalman filter estimating the mount pose and velocity from Vicon. It had no mount-velocity feedforward; its velocity term was the K_d gain on the world-frame velocity error. That controller is a separate codebase and is not in this repo. The analysis is mine. Participant data are not public, so the repo has the figures and the scripts that drew them (`tools/hardware_figures.py`, `tools/hardware_replay.py`), not the data.
+The arms ran a 400 Hz world-frame Cartesian controller, with a Kalman filter estimating the mount pose and velocity from Vicon. It had no mount-velocity feedforward; its velocity term was the K_d gain on the world-frame velocity error. That controller runs on the MUVE Lab machine and is not public. The analysis is mine. Participant data are not public, so the repo has the figures and the scripts that drew them (`tools/hardware_figures.py`, `tools/hardware_replay.py`), not the data.
 
 To score a trial I compare two things: where Vicon saw the end-effector go, and where it would have gone if the arm were locked to the mount. The second is computed by carrying the end-effector point along with the measured mount pose. That model checks out: on arms that were not being controlled, it predicts their motion to within 0.5% (median over 126 arms). The ratio of the two motions is the share of mount motion left over.
 
@@ -167,6 +167,10 @@ Feedforward with the exact velocity also cuts orientation error at 1.8 Hz, from 
 | `tools/disturbance_freq_sweep.py` | Frequency sweep (results table and figure) |
 | `tools/feedforward_compare.py` | Reactive vs feedforward, error over time |
 | `tools/gain_sweep.py` | Kp × Kd sweep behind the chosen position gains |
+| `tools/disturbance_run.py` | Headless disturbance run: report figure, GIF and CSV |
+| `tools/velocity_ff_demo.py` | Trajectory-velocity feedforward on a moving target, static mount |
+| `main.py`, `arm_flow.py` | Viewer entry point; per-arm reference composition (goal or trajectory, optional planner) |
+| `runtime_config.py` | Strict loader for the control TOML shared with the C++ port |
 | `tools/make_readme_media.py` | The simulation video |
 | `tools/hardware_figures.py`, `hardware_replay.py` | The hardware figures and replay (need the thesis data, not included) |
 | `analysis/` | FK against MuJoCo, end-effector velocity ([docs/velocity-validation.md](docs/velocity-validation.md)), tracking bandwidth, live dashboard |
@@ -178,7 +182,7 @@ Two FK implementations exist on purpose: `pin_fk.py` (Pinocchio) is the control 
 
 ## Running
 
-Tested on Python 3.14.4 with `mujoco`, `pin`, `numpy`, `scipy`, `osqp`, `matplotlib` (`requirements.txt`; pinned versions in `requirements-lock.txt`). Run from the repo root.
+Tested on Python 3.14.4 with `mujoco`, `pin`, `numpy`, `scipy`, `osqp`, `matplotlib`, and `pandas` for the hardware figure scripts (`requirements.txt`; pinned versions in `requirements-lock.txt`). Run from the repo root.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
