@@ -10,7 +10,7 @@ Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks
 
 **On hardware**, six participants walked on a treadmill while the arms, mostly one at a time, held a fixed point in the room. The arm removed 72% of the mount motion at 0.5 m/s, 68% at 1.0 m/s and 56% at 1.5 m/s. What it missed was mostly fast motion. The controller's velocity term (a gain K_d on the world-frame velocity error, which should damp the mount's motion) did far less than it should, and the mount-velocity signal it relies on reached the arm 60-70 ms late.
 
-**In simulation**, where that signal is exact, the same K_d term lowers the error at 1.8 Hz from 7.5 to 6.7 mm, and adding mount-velocity feedforward (a term the hardware controller did not use) brings it to 2.6 mm. Delay the signal by 60 ms, about what the hardware measured, and both gains are gone: 8.6 mm with the K_d term alone, 8.2 mm with feedforward. So the next thing I would change on hardware is the velocity estimate, not the control law.
+**In simulation**, where that signal is exact, the same K_d term lowers the error at 1.8 Hz from 7.5 to 6.7 mm, and adding mount-velocity feedforward (a term the hardware controller did not use) brings it to 2.6 mm. Delay the signal by 60 ms, about what the hardware measured, and both benefits are gone: 8.6 mm with the K_d term alone, 8.2 mm with feedforward. So the next thing I would change on hardware is the velocity estimate, not the control law.
 
 This repo is the MuJoCo simulation and controller I built for the project ("World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Based Motion"), plus the scripts behind the hardware figures. The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine.
 
@@ -36,14 +36,14 @@ Across participants the frequency response shows the same split:
 
 ![Share of mount motion removed, by speed; frequency response at 1.0 m/s](media/hw_rejection.png)
 
-*(a) Share of mount motion removed over the whole trial. Blue: geometric mean across participants. (b, c) Amplitude and phase of the motion left over relative to the motion imposed, at 1.0 m/s, median of 6 participants. Green: the logged gains with the mount-velocity signal late by a delay fitted per participant (65-90 ms). Above 2 Hz the locked-arm estimate is not accurate enough to interpret.*
+*(a) Share of mount motion removed over the whole trial, by treadmill speed. (b, c) Amplitude and phase of the motion left over relative to the motion imposed, at 1.0 m/s, median of 6 participants. Green: the logged gains with the mount-velocity signal late by a delay fitted per participant (65-90 ms); with the measured 61-71 ms and nothing fitted, the curve is almost the same (complex error 0.15 against 0.13). Above 2 Hz the locked-arm estimate is not accurate enough to interpret.*
 
 At 1.0 m/s the arm cancels about 85% of the motion below 0.5 Hz but only about 25% at 2 Hz. Around the constant offset, the end-effector moved 16-17 mm RMS at 0.5 and 1.0 m/s (five participants) and 20-39 mm at 1.5 m/s, depending on the participant (three participants). Standing on the tilting and swaying platform it stayed within 9-12 mm RMS while the locked point moved 64-68 mm (exploratory, five participants).
 
 ### What limited it
 
-- **The velocity term did far less than the model predicts.** With the logged gains, the ideal model (dashed in b and c) predicts much better rejection above 0.5 Hz than the arm achieved. The same model with no velocity term (dotted) matches the amplitude. In a pilot session with one wearer, K_d was stepped from 0.8 to 2.6: the response near 1 Hz fell by 9%, where the model predicts 38%.
-- **One account that fits: the mount velocity arrives late.** The Kalman estimate that feeds the velocity term lags the mount's motion by 35-50 ms. Adding the sensing age (about 10 ms) and the joint response time (about 15 ms) gives 61-71 ms in total. With that measured delay and nothing fitted, the model reproduces the response in amplitude and phase, better than the no-velocity-term model in 6 of 6 participants; the two differ mainly in phase (c). This is an account, not a proven cause: no trial changed the estimator.
+- **The velocity term did far less than the model predicts.** With the logged gains, the ideal model (dash-dot in b and c) predicts much better rejection above 0.5 Hz than the arm achieved. The same model with no velocity term (dotted) matches the amplitude. In a pilot session with one wearer, K_d was stepped from 0.8 to 2.6: the response near 1 Hz fell by 9%, where the model predicts 38%.
+- **One account that fits: the mount velocity arrives late.** The Kalman estimate that feeds the velocity term lags the mount's motion by 35-50 ms. Adding the sensing age (about 10 ms) and the joint response time (about 15 ms) gives 61-71 ms in total. With that measured delay and nothing fitted, the model reproduces the response in amplitude and phase, better than the no-velocity-term model in 6 of 6 participants; the two differ mainly in phase (c, which shows the fitted version). This is an account, not a proven cause: no trial changed the estimator.
 - **Re-planning.** The worst holding came when the hardware controller's motion planner moved the arm's internal target mid-trial (18 of 181 arms). The arm followed the moved target as well as usual; the target itself moved. Those arms kept 66% of the mount motion against 31% for the rest.
 - **Absolute accuracy is set by calibration.** Each arm sat a constant 13-36 mm from its goal. That offset matches the disagreement between the arm's kinematic model and Vicon, so it is calibration, not control: the controller saw itself on target to within 1 mm.
 
@@ -61,7 +61,7 @@ The hardware left one question open: if the mount velocity arrived on time, how 
 
 With the exact velocity, the K_d term alone gives 6.7 mm against 7.5 mm with no velocity term, and feedforward brings it to 2.6 mm. Each 10 ms of delay costs the feedforward about 1 mm. Past about 30 ms the K_d term does worse than no velocity term at all; past about 45 ms the feedforward does worse than the K_d term with an exact velocity. At 60 ms both sit at 8.2-8.6 mm.
 
-Why a delay does this much damage: an estimate that is d seconds late cancels the true velocity only up to a phase error, and what is left over is |1 − e^(−jωd)| = 2 sin(ωd/2) of it. At 1.8 Hz and 60 ms that is two thirds; at 0.9 Hz, a third. The fraction depends on frequency and delay, not on the controller's gains. The simulation does not prove the hardware diagnosis, but it shows that a delay of the size measured there is enough to remove the benefit of a velocity term.
+Why a delay does this much damage: an estimate that is d seconds late cancels the true velocity only up to a phase error, and what is left over is |1 − e^(−jωd)| = 2 sin(ωd/2) of it. At 1.8 Hz and 60 ms that is two thirds; at 0.9 Hz, a third. For the feedforward, which only cancels, that fraction depends on frequency and delay alone; the K_d term sits inside the feedback loop, so how much a delay costs it also depends on the gains. In the simulation it ends up slightly worse than no velocity term, where the hardware response sits about at the no-velocity-term model; the simulated gains are stiffer. The simulation does not prove the hardware diagnosis, but it shows that a delay of the size measured there is enough to remove the benefit of a velocity term.
 
 ### How the simulation works
 
@@ -69,7 +69,7 @@ Why a delay does this much damage: an estimate that is d seconds late cancels th
 
 *Same mount motion in all three columns (f = 1.8 Hz, true amplitude). Top: the whole robot. Middle: a camera fixed in the world at the left arm's target (red sphere). Number: RMS position error of the worse arm since the disturbance started (the clip is 2.3 s including the onset transient; the full 8 s values are 31.0, 6.7 and 2.6 mm). Strip: that arm's instantaneous error; dashed grey is arms locked. [MP4](media/hold_pose.mp4)*
 
-With the arms locked, the end-effectors move with the mount: 31 mm RMS position error. The reactive controller removes 94% of that at 0.5 Hz and 63% at 3 Hz.
+With the arms locked, the end-effectors move with the mount: 31 mm RMS position error. The reactive controller (the PD law with the K_d term, no feedforward) removes 94% of that at 0.5 Hz and 63% at 3 Hz.
 
 The mount is a mocap body standing in for the wearer's torso. Both arms are kinematic children of it, and each end-effector has a target pose fixed in the world frame. The mount follows one sinusoid per axis. The amplitudes are hand-chosen to look like walking (a few centimetres of bounce and sway, a few degrees of rotation); this is not a gait model. Bounce, fore-aft and pitch run at f; lateral sway, roll and yaw at f/2, once per stride, as in walking.
 
