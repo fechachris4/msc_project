@@ -1,0 +1,33 @@
+name: tests
+on: [push, pull_request]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements-lock.txt
+      - run: python -m unittest discover tests
+
+  cpp-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: System libraries (LAPACK, GLFW build deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblapack-dev libblas-dev xorg-dev libwayland-dev libxkbcommon-dev
+      - name: Python venv the C++ build links against
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements-lock.txt
+      - name: Build, C++ unit tests, Python vs C++ parity
+        run: bash cpp/tools/verify_parity.sh
