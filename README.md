@@ -12,18 +12,19 @@ Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks
 
 **In simulation**, where that signal is exact, the same K_d term lowers the error at 1.8 Hz from 7.5 to 6.7 mm, and adding mount-velocity feedforward (a term the hardware controller did not use) brings it to 2.6 mm. Delay the signal by 60 ms, about what the hardware measured, and both benefits are gone: 8.6 mm with the K_d term alone, 8.2 mm with feedforward. So the next thing I would change on hardware is the velocity estimate, not the control law.
 
-<p align="center">
-  <img src="media/hw_walk.gif" height="360" alt="A participant walking on the treadmill with both arms on">
-  <img src="media/hw_turn.gif" height="360" alt="The wearer turns his torso while both end-effectors stay nearly still">
-</p>
+<p align="center"><img src="media/hw_turn.gif" width="480" alt="The wearer twists his torso; the end-effectors move much less"></p>
 
-*Phone video from the lab. Left: a participant walking on the treadmill with both arms on, filmed from behind as the camera moves round. Right: world hold during setup; the wearer twists his torso, the elbows move and the end-effectors stay nearly still (camera shake removed).*
+*Phone video from the lab, stabilised on the background. The controller is in world hold during setup (not a recorded trial). The wearer twists his torso by about 60°; the elbows swing, while the end-effectors move much less than the torso.*
 
 This repo is the MuJoCo simulation and controller I built for the project ("World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Based Motion"), plus the scripts behind the hardware figures. The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine.
 
 ## Hardware trials
 
 Six participants wore the arms on an instrumented treadmill and walked at 0.5, 1.0 and 1.5 m/s (four of them at 1.5 m/s). Five also stood on the treadmill platform while it pitched and swayed. A seventh session had a fault in the mount tracking and is left out of the pooled numbers. Most trials ran one arm at a time (19 of 128 walking trials had both arms servoing), so these are one-arm results.
+
+<p align="center"><img src="media/hw_walk.gif" width="300" alt="A participant walking on the treadmill with both arms on"></p>
+
+*The first seconds of a trial, filmed from behind on a phone: a participant walks on the treadmill with both arms on.*
 
 The arms ran a 400 Hz world-frame Cartesian controller, with a Kalman filter estimating the mount pose and velocity from Vicon. It had no mount-velocity feedforward; its velocity term was the K_d gain on the world-frame velocity error. That controller is a separate codebase and is not in this repo. The analysis is mine. Participant data are not public, so the repo has the figures and the scripts that drew them (`tools/hardware_figures.py`, `tools/hardware_replay.py`), not the data.
 
