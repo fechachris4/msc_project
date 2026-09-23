@@ -22,7 +22,7 @@ This repo is the MuJoCo simulation and controller I built for the project ("Worl
 
 Six participants wore the arms on an instrumented treadmill and walked at 0.5, 1.0 and 1.5 m/s (four of them at 1.5 m/s). Five also stood on the treadmill platform while it pitched and swayed. A seventh session had a fault in the mount tracking and is left out of the pooled numbers. Most trials ran one arm at a time (19 of 128 walking trials had both arms servoing), so these are one-arm results.
 
-<p align="center"><img src="media/hw_walk.gif" width="300" alt="A participant walking on the treadmill with both arms on"></p>
+<p align="center"><img src="media/hw_walk.gif" width="240" alt="A participant walking on the treadmill with both arms on"></p>
 
 *The first seconds of a trial, filmed from behind on a phone: a participant walks on the treadmill with both arms on.*
 

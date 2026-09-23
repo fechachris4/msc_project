@@ -14,7 +14,7 @@ from scipy.signal import medfilt
 S = (sys.argv[1] if len(sys.argv) > 1 else "hardware_data") + "/F2_example_walking_trial_data.csv"
 OUT = "media/hw_replay.gif"
 GREY, BLUE = "0.45", "#0072B2"
-T0, T1, FPS, TRAIL = 10.0, 20.0, 12, 1.0
+T0, T1, FPS, TRAIL = 10.0, 20.0, 10, 1.0
 
 d = pd.read_csv(S)
 t = d.time_s.values
