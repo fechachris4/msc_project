@@ -12,6 +12,13 @@ Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks
 
 **In simulation**, where that signal is exact, the same K_d term lowers the error at 1.8 Hz from 7.5 to 6.7 mm, and adding mount-velocity feedforward (a term the hardware controller did not use) brings it to 2.6 mm. Delay the signal by 60 ms, about what the hardware measured, and both benefits are gone: 8.6 mm with the K_d term alone, 8.2 mm with feedforward. So the next thing I would change on hardware is the velocity estimate, not the control law.
 
+<p align="center">
+  <img src="media/hw_walk.gif" height="360" alt="A participant walking on the treadmill with both arms on">
+  <img src="media/hw_turn.gif" height="360" alt="The wearer turns his torso while both end-effectors stay nearly still">
+</p>
+
+*Phone video from the lab. Left: a participant walking on the treadmill with both arms on, filmed from behind as the camera moves round. Right: world hold during setup; the wearer twists his torso, the elbows move and the end-effectors stay nearly still (camera shake removed).*
+
 This repo is the MuJoCo simulation and controller I built for the project ("World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Based Motion"), plus the scripts behind the hardware figures. The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine.
 
 ## Hardware trials
@@ -61,7 +68,9 @@ The hardware left one question open: if the mount velocity arrived on time, how 
 
 With the exact velocity, the K_d term alone gives 6.7 mm against 7.5 mm with no velocity term, and feedforward brings it to 2.6 mm. Each 10 ms of delay costs the feedforward about 1 mm. Past about 30 ms the K_d term does worse than no velocity term at all; past about 45 ms the feedforward does worse than the K_d term with an exact velocity. At 60 ms both sit at 8.2-8.6 mm.
 
-Why a delay does this much damage: an estimate that is d seconds late cancels the true velocity only up to a phase error, and what is left over is |1 − e^(−jωd)| = 2 sin(ωd/2) of it. At 1.8 Hz and 60 ms that is two thirds; at 0.9 Hz, a third. For the feedforward, which only cancels, that fraction depends on frequency and delay alone; the K_d term sits inside the feedback loop, so how much a delay costs it also depends on the gains. In the simulation it ends up slightly worse than no velocity term, where the hardware response sits about at the no-velocity-term model; the simulated gains are stiffer. The simulation does not prove the hardware diagnosis, but it shows that a delay of the size measured there is enough to remove the benefit of a velocity term.
+Why a delay does this much damage: an estimate that is d seconds late cancels the true velocity only up to a phase error, and what is left over is |1 − e^(−jωd)| = 2 sin(ωd/2) of it. At 1.8 Hz and 60 ms that is two thirds; at 0.9 Hz, a third. For the feedforward that is the whole story. The K_d term sits inside the feedback loop, so what a delay costs it also depends on the gains: in the simulation it ends up slightly worse than no velocity term, while on hardware the response sits about at the no-velocity-term model.
+
+The simulation does not prove the hardware diagnosis, but it shows that a delay of the size measured there is enough to remove the benefit of a velocity term.
 
 ### How the simulation works
 
