@@ -3,7 +3,7 @@
 Written before any C++ was authored. Everything here was read out of the
 Python sources; nothing is inferred from the C++ port.
 
-Source of truth: `/Users/christian/Projects/Code/msc_project` (Python).
+Source of truth: the Python code at the repo root.
 Baseline verified at discovery time: `python -m tests.golden_trace --check`
 → `PASS: 500 rows match (rtol=1e-12, atol=1e-12)`.
 
