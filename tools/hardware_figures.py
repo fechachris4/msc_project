@@ -56,10 +56,9 @@ for p in pooled:
     ax.plot(s_.speed_m_s, 100 * (1 - s_.attenuation_ratio), color="0.75", linewidth=0.9, marker="o", markersize=3)
 gm = [100 * (1 - np.exp(np.log(f4[(f4.speed_m_s == v) & f4.participant.isin(pooled)].attenuation_ratio).mean())) for v in speeds]
 ax.plot(speeds, gm, color=CTRL["color"], linewidth=2.2, marker="o", markersize=6, label="geometric mean")
-for v, g in zip(speeds, gm):
-    ax.text(v, 34, f"{g:.0f}%", ha="center", va="center", fontsize=10, fontweight="bold", color=CTRL["color"])
 ax.set_ylim(0, 100); ax.set_xticks(speeds); ax.set_xlim(0.3, 1.7)
-ax.set_xlabel("treadmill speed [m/s]"); ax.set_ylabel("mount motion removed [%]")
+ax.set_xticklabels([f"{v:.1f}\n{g:.0f}%" for v, g in zip(speeds, gm)])
+ax.set_xlabel("treadmill speed [m/s]\nand mean removed"); ax.set_ylabel("mount motion removed [%]")
 ax.plot([], [], color="0.75", marker="o", markersize=3, linewidth=0.9, label="each participant")
 ax.legend(loc="upper right")
 g = f5[f5.participant.isin(pooled) & (f5.freq_hz <= 2.0)]
