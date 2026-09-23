@@ -10,7 +10,7 @@ Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks
 
 *The rig. Left: a participant walking on the treadmill with both arms on. Right: the same rig from the front. Vicon cameras on the truss and on tripods track the mount and the end-effectors.*
 
-**On hardware**, six participants walked on a treadmill while the arms, mostly one at a time, held a fixed point in the room. The arm removed 72% of the mount motion at 0.5 m/s, 68% at 1.0 m/s and 56% at 1.5 m/s. The remaining motion is concentrated at higher frequencies, and I traced it to timing: the mount-velocity signal behind the controller's velocity term (a gain K_d on the world-frame velocity error) reached the arm 60-70 ms after the motion.
+**On hardware**, seven participants walked on a treadmill while the arms, mostly one at a time, held a fixed point in the room. Across the six in the pooled results, the arm removed 71% of the mount motion at 0.5 m/s, 63% at 1.0 m/s and 56% at 1.5 m/s, and 78% while standing on a moving platform. Slow sway was mostly removed; motion at step rate largely was not. The measured response matches a model in which the mount-velocity signal behind the controller's velocity term (a gain K_d on the world-frame velocity error) reaches the arm 61-71 ms after the motion, which is the delay I measured on the rig.
 
 **In simulation**, where that signal is exact, the same K_d term lowers the error at 1.8 Hz from 7.5 to 6.7 mm, and adding mount-velocity feedforward (a term the hardware controller did not use) brings it to 2.6 mm. With a 60 ms delay, about what the hardware measured, the error returns to 8.2-8.6 mm. That points the next hardware improvement at the velocity estimate rather than the control law.
 
@@ -18,11 +18,11 @@ Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks
 
 *Phone video from the lab, stabilised on the background. The controller is in world hold during setup (not a recorded trial). The wearer twists his torso by about 60°; the elbows swing, while the end-effectors move much less than the torso.*
 
-This repo is the MuJoCo simulation and controller I built for the project ("World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Scale Base Motion"), plus the scripts behind the hardware figures. The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine.
+This repo is the MuJoCo simulation and controller I built for the project ("World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Scale Base Motion"), plus the scripts behind the hardware figures. The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine. The hardware numbers here match the thesis, which is under examination; I will link it once it is marked.
 
 ## Hardware trials
 
-Six participants wore the arms on an instrumented treadmill and walked at 0.5, 1.0 and 1.5 m/s (four of them at 1.5 m/s). Five also stood on the treadmill platform while it pitched and swayed. A seventh session is excluded from the pooled numbers because of a mount-tracking fault. Most trials ran one arm at a time (19 of 128 walking trials had both arms servoing), so these are one-arm results.
+Seven participants wore the arms on an instrumented treadmill and walked at 0.5, 1.0 and 1.5 m/s. The first session is reported separately and is not in the pooled numbers, so the means are over six participants (four of them at 1.5 m/s). Five also stood on the treadmill platform while it pitched and swayed. Most trials ran one arm at a time (19 of 128 walking trials had both arms servoing), so these are one-arm results.
 
 <p align="center"><img src="media/hw_walk.gif" width="240" alt="A participant walking on the treadmill with both arms on"></p>
 
@@ -46,16 +46,17 @@ Across participants the frequency response shows the same split:
 
 ![Share of mount motion removed, by speed; frequency response at 1.0 m/s](media/hw_rejection.png)
 
-*(a) Share of mount motion removed over the whole trial, by treadmill speed. (b, c) Amplitude and phase of the motion left over relative to the motion imposed, at 1.0 m/s, median of 6 participants. Green: the logged gains with the mount-velocity signal late by a delay fitted per participant (65-90 ms); with the measured 61-71 ms and nothing fitted, the curve is almost the same (complex error 0.15 against 0.13). Above 2 Hz the locked-arm estimate is not accurate enough to interpret.*
+*(a) Share of mount motion removed over the whole trial, by treadmill speed. The blue line is a geometric mean of the motion left over, so it reads a few points higher than the arithmetic means quoted in the text (71, 63 and 56%). (b, c) Amplitude and phase of the motion left over relative to the motion imposed, at 1.0 m/s, median of 6 participants. Green: the logged gains with the mount-velocity signal late by a delay fitted per participant (65-90 ms); with the measured 61-71 ms and nothing fitted, the curve is almost the same (complex error 0.15 against 0.13). Above 2 Hz the locked-arm estimate is not accurate enough to interpret.*
 
-At 1.0 m/s the arm cancels about 85% of the motion below 0.5 Hz and about 25% at 2 Hz. Around the constant offset, the end-effector moved 16-17 mm RMS at 0.5 and 1.0 m/s (five participants) and 20-39 mm at 1.5 m/s, depending on the participant (three participants). Standing on the tilting and swaying platform it stayed within 9-12 mm RMS while the locked point moved 64-68 mm (exploratory, five participants).
+At 1.0 m/s the arm removes 85% of the motion at 0.25 Hz, 58% at 1 Hz and 29% at 2 Hz. Walking moved the locked point 63-68 mm RMS at every speed; faster walking moved it faster, not further. Around a constant offset of 18-21 mm, the end-effector moved 16.9 mm RMS at 0.5 m/s, 20.8 mm at 1.0 m/s (five participants) and 27.8 mm at 1.5 m/s (three). On the pitching and swaying platform the arm removed 78% (five participants): the pitch steps moved the locked point 94 mm RMS and the end-effector 14 mm, the sway steps 81 mm and 17 mm.
 
 ### What sets the limit, and how to raise it
 
 - **The velocity term has the most headroom.** With the logged gains, the ideal model (dash-dot in b and c) predicts stronger rejection above 0.5 Hz than the arm reached, and the model without a velocity term (dotted) matches the measured amplitude. In a pilot session with one wearer, K_d was stepped from 0.8 to 2.6: the response near 1 Hz fell by 9%, against 38% predicted.
-- **The explanation that fits: the mount velocity arrives late.** The Kalman estimate that feeds the velocity term lags the mount's motion by 35-50 ms. Adding the sensing age (about 10 ms) and the joint response time (about 15 ms) gives 61-71 ms in total. With that measured delay and nothing fitted, the model reproduces the response in amplitude and phase, better than the no-velocity-term model in 6 of 6 participants; the two differ mainly in phase (c, which shows the fitted version). Confirming it directly means changing the estimator on hardware, which is the next experiment.
-- **Re-planning.** In 18 of 181 arms the hardware controller's motion planner moved the arm's internal target mid-trial. The arm tracked the moved target as well as usual, so this is a planner setting rather than a control issue: the other arms left 31% of the mount motion, against 66% for these.
-- **Absolute accuracy is set by calibration.** Each arm sat a constant 13-36 mm from its goal. That offset matches the disagreement between the arm's kinematic model and Vicon, so it is calibration, not control: the controller saw itself on target to within 1 mm.
+- **The explanation that fits: the mount velocity arrives late.** The Kalman estimate that feeds the velocity term lags the mount's motion by 36-46 ms. Adding the sensing age (about 10 ms) and the joint response time (about 15 ms) gives 61-71 ms in total. With that measured delay and nothing fitted, the model reproduces the response in amplitude and phase, better than the no-velocity-term model in 6 of 6 participants; the two differ mainly in phase (c, which shows the fitted version). Confirming it directly means changing the estimator on hardware, which is the next experiment.
+- **Re-planning.** In 12 of 128 walking trials the hardware controller's motion planner moved the arm's reference more than 100 mm from the target, and those trials had the largest end-effector motion. The worst holding came from the reference, not the wearer, so this is a planner setting rather than a control issue.
+- **Wrist speed at the fastest walk.** At 1.5 m/s a commanded joint speed was at its limit 32% of the time, mostly in the wrist, against about 10% at the slower speeds.
+- **Absolute accuracy is set by calibration.** The end-effector sat a constant 18-21 mm from its goal. Arm by arm, that offset follows the disagreement between the arm's kinematic model and Vicon (the two differ by 1.6 ± 5.5 mm over seven arms), so it is calibration, not control.
 
 ## Simulation
 
@@ -145,7 +146,7 @@ Feedforward with the exact velocity also cuts orientation error at 1.8 Hz, from 
 
 ## Scope and next steps
 
-- Hardware results come from six participants, mostly one arm at a time. Next: both arms together, randomised speed order, and a trial that changes the velocity estimator.
+- Hardware results come from seven participants (six in the pooled means), mostly one arm at a time. Next: both arms together, randomised speed order, and a trial that changes the velocity estimator.
 - Feedforward is validated in simulation; running it on hardware is the natural next test.
 - The simulated disturbance is a controlled sum of sinusoids. Replaying recorded gait from the Vicon data is the next step.
 - The simulated delay is a pure delay; adding the estimator's noise and filtering would match hardware more closely.
