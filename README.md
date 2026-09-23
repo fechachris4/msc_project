@@ -1,5 +1,7 @@
 # Holding a robot's hand still while its wearer moves
 
+[![tests](https://github.com/fechachris4/msc_project/actions/workflows/tests.yml/badge.svg)](https://github.com/fechachris4/msc_project/actions/workflows/tests.yml)
+
 Christian Akabueze · MSc Human and Biological Robotics, Imperial College London (MUVE Lab) · 2026
 
 Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks, the mount on their back bounces and sways, and anything the arms hold moves with it. My MSc project asked how much of that motion the arms can cancel, so their end-effectors (the "hands") stay fixed in the room rather than on the body.
@@ -26,7 +28,7 @@ Six participants wore the arms on an instrumented treadmill and walked at 0.5, 1
 
 *The first seconds of a trial, filmed from behind on a phone: a participant walks on the treadmill with both arms on.*
 
-The arms ran a 400 Hz world-frame Cartesian controller, with a Kalman filter estimating the mount pose and velocity from Vicon. It had no mount-velocity feedforward; its velocity term was the K_d gain on the world-frame velocity error. That controller is a separate codebase: [`Christian_control`](https://github.com/fechachris4/HumanSL_MAIN/tree/master/Christian_control). The analysis is mine. Participant data are not public, so the repo has the figures and the scripts that drew them (`tools/hardware_figures.py`, `tools/hardware_replay.py`), not the data.
+The arms ran a 400 Hz world-frame Cartesian controller, with a Kalman filter estimating the mount pose and velocity from Vicon. It had no mount-velocity feedforward; its velocity term was the K_d gain on the world-frame velocity error. That controller is a separate codebase and is not in this repo. The analysis is mine. Participant data are not public, so the repo has the figures and the scripts that drew them (`tools/hardware_figures.py`, `tools/hardware_replay.py`), not the data.
 
 To score a trial I compare two things: where Vicon saw the end-effector go, and where it would have gone if the arm were locked to the mount. The second is computed by carrying the end-effector point along with the measured mount pose. That model checks out: on arms that were not being controlled, it predicts their motion to within 0.5% (median over 126 arms). The ratio of the two motions is the share of mount motion left over.
 
@@ -168,7 +170,7 @@ Feedforward with the exact velocity also cuts orientation error at 1.8 Hz, from 
 | `tools/make_readme_media.py` | The simulation video |
 | `tools/hardware_figures.py`, `hardware_replay.py` | The hardware figures and replay (need the thesis data, not included) |
 | `analysis/` | FK against MuJoCo, end-effector velocity ([docs/velocity-validation.md](docs/velocity-validation.md)), tracking bandwidth, live dashboard |
-| `tests/` | 258 unit and closed-loop tests |
+| `tests/` | 261 unit and closed-loop tests |
 
 Also in the repo, not used for the results: Cartesian target trajectories, including look-at orientation targets ([docs/cartesian-trajectories.md](docs/cartesian-trajectories.md)) and a collision-aware path planner above the controller (`planning/`, [docs/planning.md](docs/planning.md)).
 
