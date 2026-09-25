@@ -18,7 +18,7 @@ Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks
 
 *Phone video from the lab, stabilised on the background. The controller is in world hold during setup (not a recorded trial). The wearer twists his torso by about 60°; the elbows swing, while the end-effectors move much less than the torso.*
 
-This repo is the MuJoCo simulation and controller I built for the project ("World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Scale Base Motion"), plus the scripts behind the hardware figures. The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine. The hardware numbers here match the thesis, which is under examination; I will link it once it is marked.
+This repo is the MuJoCo simulation and controller I built for the project ("World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Scale Base Motion"), plus the scripts behind the hardware figures. To run it, see [Run the simulation](#run-the-simulation). The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine. The hardware numbers here match the thesis, which is under examination; I will link it once it is marked.
 
 ## Hardware trials
 
@@ -80,7 +80,7 @@ The simulation shows that a delay of the size measured on hardware is enough on 
 
 ![Arms locked vs reactive vs reactive + feedforward](media/hold_pose.gif)
 
-*Same mount motion in all three columns (f = 1.8 Hz, true amplitude). Top: the whole robot. Middle: a camera fixed in the world at the left arm's target (red sphere). Number: RMS position error of the worse arm since the disturbance started (the clip is 2.3 s including the onset transient; the full 8 s values are 31.0, 6.7 and 2.6 mm). Strip: that arm's instantaneous error; dashed grey is arms locked. [MP4](media/hold_pose.mp4)*
+*Same mount motion in all three columns (f = 1.8 Hz, true amplitude). Top: the whole robot. Middle: a camera fixed in the world at the left arm's target (red sphere). Number: RMS position error of the worse arm since the disturbance started (the clip is 2.3 s including the onset transient; the full 8 s values are 31.0, 6.7 and 2.6 mm). Strip: that arm's instantaneous error; dashed grey is arms locked. [MP4 version](media/hold_pose.mp4)*
 
 With the arms locked, the end-effectors move with the mount: 31 mm RMS position error. The reactive controller (the PD law with the K_d term, no feedforward) removes 94% of that at 0.5 Hz and 63% at 3 Hz.
 
@@ -181,7 +181,7 @@ Also in the repo, not used for the results: Cartesian target trajectories, inclu
 
 Two FK implementations exist on purpose: `pin_fk.py` (Pinocchio) is the control path, `kinematics.py` (analytical, from MuJoCo model constants) cross-checks it. Frames are written `T_A_B`: pose of frame B in frame A. Everything is SI internally; millimetres only in prints and plots. In the code the mount is also called the torso (`torso_pose_world`).
 
-## Running
+## Run the simulation
 
 Tested on Python 3.14.4 with `mujoco`, `pin`, `numpy`, `scipy`, `osqp`, `matplotlib`, and `pandas` for the hardware figure scripts (`requirements.txt`; pinned versions in `requirements-lock.txt`). Run from the repo root.
 
@@ -198,3 +198,7 @@ python -m unittest discover tests
 ```
 
 Gains, limits, targets and the safety envelope are in `config/control.toml`. The Kinova Gen3 model in `sim/assets/kinova_gen3/` is from MuJoCo Menagerie (BSD licence, Kinova). My code is MIT licensed.
+
+## Contact
+
+For questions about the project or the code, [open an issue](https://github.com/fechachris4/msc_project/issues) or email fecha412@gmail.com. The repository is maintained by Christian Akabueze.
