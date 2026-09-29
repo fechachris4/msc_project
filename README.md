@@ -4,15 +4,15 @@
 
 Christian Akabueze · MSc Human and Biological Robotics, Imperial College London (MUVE Lab) · 2026
 
-Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks, the mount on their back bounces and sways, and anything the arms hold moves with it. My MSc project asked how much of that motion the arms can cancel, so their end-effectors (the "hands") stay fixed in the room rather than on the body.
+Two Kinova Gen3 arms are worn on the torso as extra limbs. When the wearer walks, the mount bounces and sways, and anything the arms hold moves with it. My MSc project asked how much of that motion the arms can cancel, so their end-effectors stay fixed in the room rather than on the body.
 
 ![The rig: a participant walking on the treadmill with both arms on, and the same rig from the front](media/rig.jpg)
 
 *The rig. Left: a participant walking on the treadmill with both arms on. Right: the same rig from the front. Vicon cameras on the truss and on tripods track the mount and the end-effectors.*
 
-**On hardware**, seven participants walked on a treadmill while the arms, mostly one at a time, held a fixed point in the room. Across the six in the pooled results, the arm removed 71% of the mount motion at 0.5 m/s, 63% at 1.0 m/s and 56% at 1.5 m/s, and 78% while standing on a moving platform. Slow sway was mostly removed; motion at step rate largely was not. The measured response matches a model in which the mount-velocity signal behind the controller's velocity term (a gain K_d on the world-frame velocity error) reaches the arm 61-71 ms after the motion, which is the delay I measured on the rig.
+**On hardware**, six participants walked on a treadmill while the arms held a fixed point in the room. The arms removed 71% of the mount motion at 0.5 m/s, 63% at 1.0 m/s and 56% at 1.5 m/s. Slow sway was mostly removed; motion at step rate largely was not. The measured response matches a model in which the mount-velocity signal reaches the arm 61-71 ms late, which is the delay I measured on the rig.
 
-**In simulation**, where that signal is exact, the same K_d term lowers the error at 1.8 Hz from 7.5 to 6.7 mm, and adding mount-velocity feedforward (a term the hardware controller did not use) brings it to 2.6 mm. With a 60 ms delay, about what the hardware measured, the error returns to 8.2-8.6 mm. That points the next hardware improvement at the velocity estimate rather than the control law.
+**In simulation**, where that signal is exact, the velocity term lowers the error at 1.8 Hz from 7.5 to 6.7 mm, and adding mount-velocity feedforward (not used on hardware) brings it to 2.6 mm. With a 60 ms delay the error returns to 8.2-8.6 mm. That points the next hardware improvement at the velocity estimate rather than the control law.
 
 <p align="center"><img src="media/hw_turn.gif" width="480" alt="The wearer twists his torso; the end-effectors move much less"></p>
 
