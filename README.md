@@ -1,49 +1,74 @@
 # World-stable end-effectors for wearable robotic arms
 
-[![tests](https://github.com/fechachris4/msc_project/actions/workflows/tests.yml/badge.svg)](https://github.com/fechachris4/msc_project/actions/workflows/tests.yml)
-
 MSc thesis: "World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Scale Base Motion"
 
 Christian Akabueze · MSc Human and Biological Robotics, Imperial College London (MUVE Lab) · 2026
 
-A robot arm you wear is an extra pair of hands, until you take a step. Every step moves the mount on your back that carries the arms, and anything they hold moves with it. My MSc project asked how much of that motion two Kinova Gen3 arms worn on the back can cancel, so their end-effectors (the robot's hands) stay fixed in the room rather than on the body.
+A controller that keeps the hands of two wearable Kinova Gen3 robot arms fixed in the room while the person wearing them moves.
 
 <p align="center"><img src="media/hw_turn.gif" width="480" alt="The wearer twists his torso; the end-effectors move much less"></p>
 
-*Phone video from the lab, stabilised on the background. Filmed during setup with the controller holding position, not a recorded trial. The wearer twists his torso by about 60°; the elbows swing, while the end-effectors move much less than the torso.*
+*The wearer twists about 60°. The elbows swing and the hands stay close to where they were. Phone video from the lab, filmed during setup.*
 
-Seven participants walked on a treadmill while the arms held a fixed point in the room. At a normal walking speed (1.0 m/s) the arms cut the movement reaching the robot's hands by 63%. That is the average over six of the seven; the first session is reported separately. Slow sway was mostly removed. The faster bounce that comes with each step largely was not.
+## Why it is hard
 
-The likely cause is timing. The arm learns how the wearer is moving 61-71 ms late. In simulation, a delay of that size wipes out the gain from correcting for the wearer's movement. So the next thing to improve on hardware is how fast the arm senses that movement.
+A robot arm you wear is an extra pair of hands, until you take a step. Every step moves the mount on your back that carries the arms, and anything they hold moves with it. The controller has to measure that movement and move the arm against it as it happens.
 
-![The rig: a participant walking on the treadmill with both arms on, and the same rig from the front](media/rig.jpg)
+![Four mount positions in one cycle, and the average over the cycle](media/task_illustration.png)
 
-*The rig. Left: a participant walking on the treadmill with both arms on. Right: the same rig from the front. Vicon cameras on the truss and on tripods track the mount and the end-effectors.*
+*The mount in four positions of one walking cycle, with the controller on. In the average (e) the mount and upper arms blur. The hands stay sharp. The mount motion is enlarged 3x here so it shows in a still.*
+
+## How the controller works
+
+For each arm, on every control cycle (500 a second in simulation):
+
+1. Read where the mount on the wearer's back is, from motion capture.
+2. Work out where the robot's hand is in the room, through the mount and the arm's joints.
+3. Compare that with the point the hand should hold, and compute joint speeds that close the gap.
+4. Check the arm stays clear of the wearer. If a move would bring it too close, swap it for the nearest safe one.
+5. Send the command to the arm.
+
+![The control loop](media/control_loop.png)
+
+*The same loop as a diagram. The dashed orange path is feedforward: telling the controller how the mount is moving, so it cancels the motion instead of chasing the error it leaves.*
+
+## In simulation
+
+![Arms locked, the controller, and the controller with feedforward](media/hold_pose.gif)
+
+*The same mount motion three times: arms locked, the controller, and the controller with feedforward. The number is how far the hand strays from its target.*
+
+## On the real arms
+
+Seven people walked on a treadmill wearing the arms.
+
+<p align="center"><img src="media/hw_walk.gif" width="240" alt="A participant walking on the treadmill with both arms on"></p>
+
+| Walking speed | Movement removed |
+|---|---|
+| Slow (0.5 m/s) | 71% |
+| Normal (1.0 m/s) | 63% |
+| Fast (1.5 m/s) | 56% |
+
+These are averages over six of the seven. The [hardware page](docs/hardware-trials.md) has the detail.
+
+Slow sway is mostly removed. The bounce of each step is harder, because the arm learns how the wearer is moving 61-71 ms late.
+
+![One trial replayed from the motion-capture data](media/hw_replay.gif)
+
+*One trial at normal walking speed. Grey is where the hand would have gone with the arm locked. Blue is where it went.*
+
+## What I would do next
+
+- Speed up the motion sensing. In simulation, adding feedforward with no delay cuts the error from 6.7 mm to 2.6 mm.
+- Run feedforward on the real arms, then test both arms at once.
 
 ## Read more
 
 - [Hardware trials](docs/hardware-trials.md): how a trial is scored, results by speed and frequency, and what limits the arm.
-- [Simulation](docs/simulation.md): the delay experiment, how the controller works, and the frequency sweep.
+- [Simulation](docs/simulation.md): the delay experiment, the controller in detail, and the frequency sweep.
 - [Scope and next steps](docs/scope-and-next-steps.md): what these results cover and what comes next.
-- [Code map](docs/code-map.md): where things live in the repo.
-
-## About the code
-
-This repo holds the MuJoCo simulation and controller I built for the project, a C++20 port of them in [`cpp/`](cpp/README.md), and the scripts behind the hardware figures.
-
-## Run the simulation
-
-Run from the repo root.
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-mjpython tools/mount_disturbance.py both   # viewer (mjpython on macOS)
-python -m unittest discover tests
-```
-
-The commands that regenerate each figure are in the [code map](docs/code-map.md#regenerating-the-figures).
+- [Code map](docs/code-map.md): where things live in the repo, and how to run it.
 
 ## Contact
 

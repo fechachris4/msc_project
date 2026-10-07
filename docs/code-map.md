@@ -27,13 +27,24 @@ Also in the repo, not used for the results: Cartesian target trajectories, inclu
 
 Two FK implementations exist on purpose: `pin_fk.py` (Pinocchio) is the control path, `kinematics.py` (analytical, from MuJoCo model constants) cross-checks it. Frames are written `T_A_B`: pose of frame B in frame A. Everything is SI internally; millimetres only in prints and plots. In the code the mount is also called the torso (`torso_pose_world`).
 
+## Run the simulation
+
+Run from the repo root.
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+mjpython tools/mount_disturbance.py both   # viewer (mjpython on macOS)
+```
+
 ## Setup details
 
 Tested on Python 3.14.4 with `mujoco`, `pin`, `numpy`, `scipy`, `osqp`, `matplotlib`, and `pandas` for the hardware figure scripts (`requirements.txt`; pinned versions in `requirements-lock.txt`). Gains, limits, targets and the safety envelope are in `config/control.toml`. The Kinova Gen3 model is in `sim/assets/kinova_gen3/`.
 
 ## Regenerating the figures
 
-Run from the repo root, after the setup in the [README](../README.md#run-the-simulation).
+Run from the repo root, after the setup above.
 
 ```bash
 python tools/velocity_delay.py             # delay figure, about 4 minutes
