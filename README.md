@@ -1,6 +1,8 @@
-# Holding a robot's hand still while its wearer moves
+# World-stable end-effectors for wearable robotic arms
 
 [![tests](https://github.com/fechachris4/msc_project/actions/workflows/tests.yml/badge.svg)](https://github.com/fechachris4/msc_project/actions/workflows/tests.yml)
+
+MSc thesis: "World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Scale Base Motion"
 
 Christian Akabueze · MSc Human and Biological Robotics, Imperial College London (MUVE Lab) · 2026
 
@@ -22,7 +24,7 @@ The likely cause is timing. The arm learns how the mount is moving 61-71 ms late
 
 The MuJoCo simulation and controller I built for the project, a C++20 port of them in [`cpp/`](cpp/README.md), and the scripts behind the hardware figures. The controller that ran on the robot lives on the MUVE Lab machine and is not public, and neither are the participant data. The arm model is from MuJoCo Menagerie; the controller, safety filter, experiments and C++ port are mine.
 
-The thesis is "World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Scale Base Motion". It is under examination, and I will link it once it is marked. The hardware numbers here match it.
+The thesis is under examination, and I will link it once it is marked. The hardware numbers here match it.
 
 ## Read more
 
