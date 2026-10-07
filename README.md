@@ -47,8 +47,6 @@ python -m unittest discover tests
 
 The commands that regenerate each figure are in the [code map](docs/code-map.md#regenerating-the-figures).
 
-My code is MIT licensed. The Kinova Gen3 model is from MuJoCo Menagerie (BSD licence, Kinova).
-
 ## Contact
 
 For questions about the project or the code, [open an issue](https://github.com/fechachris4/msc_project/issues) or email fecha412@gmail.com.
