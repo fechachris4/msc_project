@@ -26,3 +26,14 @@ Where things live in the repo.
 Also in the repo, not used for the results: Cartesian target trajectories, including look-at orientation targets ([docs/cartesian-trajectories.md](cartesian-trajectories.md)) and a collision-aware path planner above the controller (`planning/`, [docs/planning.md](planning.md)).
 
 Two FK implementations exist on purpose: `pin_fk.py` (Pinocchio) is the control path, `kinematics.py` (analytical, from MuJoCo model constants) cross-checks it. Frames are written `T_A_B`: pose of frame B in frame A. Everything is SI internally; millimetres only in prints and plots. In the code the mount is also called the torso (`torso_pose_world`).
+
+## Regenerating the figures
+
+Run from the repo root, after the setup in the [README](../README.md#run-the-simulation).
+
+```bash
+python tools/velocity_delay.py             # delay figure, about 4 minutes
+python tools/disturbance_freq_sweep.py     # results table and sweep figure
+python tools/feedforward_compare.py right --f=1.8
+python tools/make_readme_media.py          # the simulation video
+```
