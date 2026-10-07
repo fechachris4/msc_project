@@ -35,7 +35,7 @@ The likely cause is timing. The arm learns how the wearer is moving 61-71 ms lat
 
 ## Run the simulation
 
-Tested on Python 3.14.4 with `mujoco`, `pin`, `numpy`, `scipy`, `osqp`, `matplotlib`, and `pandas` for the hardware figure scripts (`requirements.txt`; pinned versions in `requirements-lock.txt`). Run from the repo root.
+Run from the repo root.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -47,7 +47,7 @@ python -m unittest discover tests
 
 The commands that regenerate each figure are in the [code map](docs/code-map.md#regenerating-the-figures).
 
-Gains, limits, targets and the safety envelope are in `config/control.toml`. The Kinova Gen3 model in `sim/assets/kinova_gen3/` is from MuJoCo Menagerie (BSD licence, Kinova). My code is MIT licensed.
+My code is MIT licensed. The Kinova Gen3 model is from MuJoCo Menagerie (BSD licence, Kinova).
 
 ## Contact
 
