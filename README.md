@@ -29,9 +29,7 @@ The likely cause is timing. The arm learns how the wearer is moving 61-71 ms lat
 
 ## About the code
 
-- **In this repo:** the MuJoCo simulation and controller I built for the project, a C++20 port of them in [`cpp/`](cpp/README.md), and the scripts behind the hardware figures.
-- **Not in this repo:** the controller that ran on the robot, which lives on the MUVE Lab machine, and the participant data. Neither is public.
-- **Borrowed:** the Kinova Gen3 arm model, from MuJoCo Menagerie.
+This repo holds the MuJoCo simulation and controller I built for the project, a C++20 port of them in [`cpp/`](cpp/README.md), and the scripts behind the hardware figures.
 
 ## Run the simulation
 
