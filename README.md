@@ -33,8 +33,6 @@ The likely cause is timing. The arm learns how the wearer is moving 61-71 ms lat
 - **Not in this repo:** the controller that ran on the robot, which lives on the MUVE Lab machine, and the participant data. Neither is public.
 - **Borrowed:** the Kinova Gen3 arm model, from MuJoCo Menagerie.
 
-The thesis is under examination, and I will link it once it is marked. The hardware numbers here match it.
-
 ## Run the simulation
 
 Tested on Python 3.14.4 with `mujoco`, `pin`, `numpy`, `scipy`, `osqp`, `matplotlib`, and `pandas` for the hardware figure scripts (`requirements.txt`; pinned versions in `requirements-lock.txt`). Run from the repo root.
