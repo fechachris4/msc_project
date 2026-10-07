@@ -4,6 +4,10 @@ A modern C++20 port of the Python simulation in the parent directory: a
 torso-mounted dual Kinova Gen3 (supernumerary robotic limbs) holding a
 world-frame end-effector pose while the torso moves.
 
+The port covers the controller up to the mount-velocity feedforward term,
+which was added to the Python version later. Parity results are in
+[How behavioural parity was verified](#how-behavioural-parity-was-verified).
+
 Documentation, in reading order:
 
 | Document | Contents |
